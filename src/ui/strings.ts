@@ -82,6 +82,13 @@ export const strings = {
     passedWithoutCounts: 'Passed, but no test counts were recorded.',
     failedWithoutCounts: 'Failed. No test counts were recorded.',
   },
+  errors: {
+    workflowNotFound: 'That workflow does not exist.',
+    runNotFound: 'That run does not exist.',
+    nothingPublished: 'Publish the workflow before starting a run.',
+    cannotPublish: 'The workflow has problems that must be fixed before it can be published.',
+    invalidBody: 'The request was not in the expected shape.',
+  },
   demo: {
     projectName: 'Demo project',
     workflowName: 'Demo workflow',
