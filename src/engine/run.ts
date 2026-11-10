@@ -10,8 +10,9 @@ import { strings } from '@/ui/strings'
 // The boundary between designing and running. The draft is mutable; publishing freezes a version;
 // a run binds to a frozen version and never reads the draft again.
 
-// Placeholder until providers are selectable; the id is persisted, not assumed, so a later task can vary it.
-const DEFAULT_PROVIDER_ID = 'fake'
+// Every run in this milestone is simulated. The UI's Demo badge checks runs.providerId against this constant;
+// import it rather than retyping the string.
+export const DEMO_PROVIDER_ID = 'demo'
 
 export class WorkflowNotFoundError extends Error {
   constructor(id: string) {
@@ -136,7 +137,7 @@ export async function createRun(input: {
       versionId: version.id,
       status: 'queued',
       request: input.request,
-      providerId: DEFAULT_PROVIDER_ID,
+      providerId: DEMO_PROVIDER_ID,
       createdAt: now(),
     })
     .run()

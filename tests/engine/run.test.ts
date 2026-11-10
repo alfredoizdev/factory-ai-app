@@ -4,7 +4,7 @@ import { db, migrateDb } from '@/db/client'
 import { projects, workflows, workflowVersions, runs } from '@/db/schema'
 import { defaultGraph, type Graph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
-import { saveDraft, publishVersion, createRun, cancelRun, NothingPublishedError } from '@/engine/run'
+import { saveDraft, publishVersion, createRun, cancelRun, NothingPublishedError, DEMO_PROVIDER_ID } from '@/engine/run'
 
 beforeAll(() => {
   migrateDb()
@@ -125,6 +125,13 @@ test('a new run binds to the latest published version', async () => {
 
 test('creating a run with nothing published is refused', async () => {
   await expect(createRun({ workflowId: wf, request: 'x' })).rejects.toBeInstanceOf(NothingPublishedError)
+})
+
+test('a created run is persisted as a demo run', async () => {
+  await publishVersion(wf)
+  const { runId } = await createRun({ workflowId: wf, request: 'x' })
+  expect((await getRun(runId)).providerId).toBe(DEMO_PROVIDER_ID)
+  expect(DEMO_PROVIDER_ID).toBe('demo')
 })
 
 test('creating a run emits run.created as sequence 1', async () => {
