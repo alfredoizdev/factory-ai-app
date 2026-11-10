@@ -84,4 +84,13 @@ export function createDemoProvider(options: { stepDelayMs?: number } = {}): Agen
   }
 }
 
-export const demoProvider: AgentProvider = createDemoProvider()
+// The end-to-end test slows the Demo agent down so a block stays "running" long enough to be watched.
+// Anything that is not a positive number falls back to the default.
+export function stepDelayFromEnv(value: string | undefined): number | undefined {
+  const n = Number(value)
+  return value !== undefined && Number.isFinite(n) && n > 0 ? n : undefined
+}
+
+export const demoProvider: AgentProvider = createDemoProvider({
+  stepDelayMs: stepDelayFromEnv(process.env.FACTORY_DEMO_STEP_DELAY_MS),
+})

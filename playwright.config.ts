@@ -8,7 +8,7 @@ const DB = 'e2e/.tmp/factory.db'
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 60_000,
+  timeout: 90_000,
   fullyParallel: false,
   workers: 1,
   reporter: 'list',
@@ -18,6 +18,6 @@ export default defineConfig({
     url: `http://localhost:${PORT}/canvas/demo`,
     timeout: 120_000,
     reuseExistingServer: false,
-    env: { INNGEST_DEV: '1', FACTORY_DB_PATH: DB, NEXT_DIST_DIR: '.next-e2e' },
+    env: { FACTORY_DEMO_STEP_DELAY_MS: '600', INNGEST_DEV: '1', FACTORY_DB_PATH: DB, NEXT_DIST_DIR: '.next-e2e' },
   },
 })

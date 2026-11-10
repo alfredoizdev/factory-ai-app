@@ -79,6 +79,8 @@ Before running it:
 The test starts its own Next dev server on port 3100 with a throwaway database in `e2e/.tmp/` and its own
 build folder (`.next-e2e`), so it never touches `.factory/factory.db` and can run beside your own `npm run dev`.
 It does not start Inngest for you.
+It also slows the Demo agent (`FACTORY_DEMO_STEP_DELAY_MS=600`) so a block stays running long enough to be watched, and it checks
+that the flow particles sit on the real cable (within 2px) and move along it. Set that variable yourself to watch a Demo run in slow motion.
 
 If the browser cannot be downloaded or Inngest cannot be started, the test cannot run in that environment.
 It is not skipped silently: it fails at browser launch or at pressing Run.

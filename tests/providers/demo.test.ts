@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { BlockKind } from '@/domain/graph'
 import { DEMO_PROVIDER_ID } from '@/engine/run'
-import { createDemoProvider, demoProvider } from '@/providers/demo'
+import { createDemoProvider, demoProvider, stepDelayFromEnv } from '@/providers/demo'
 import type { AgentEvent } from '@/providers/types'
 import { strings } from '@/ui/strings'
 
@@ -90,5 +90,16 @@ describe('createDemoProvider', () => {
   test('keeps the demo identity whatever the delay', () => {
     const p = createDemoProvider({ stepDelayMs: 0 })
     expect(p).toMatchObject({ id: 'demo', isDemo: true })
+  })
+})
+
+describe('stepDelayFromEnv', () => {
+  test('uses a positive number and ignores anything else', () => {
+    expect(stepDelayFromEnv('600')).toBe(600)
+    expect(stepDelayFromEnv(undefined)).toBeUndefined()
+    expect(stepDelayFromEnv('')).toBeUndefined()
+    expect(stepDelayFromEnv('abc')).toBeUndefined()
+    expect(stepDelayFromEnv('0')).toBeUndefined()
+    expect(stepDelayFromEnv('-5')).toBeUndefined()
   })
 })
