@@ -115,26 +115,33 @@ function foldLog(prev: LogState, event: Wire): LogState {
   }
 }
 
-type Action = { type: 'event'; event: Wire } | { type: 'reset' }
-const reducer = (s: StreamState, a: Action): StreamState => (a.type === 'reset' ? emptyStream : foldEvent(s, a.event))
+// Everything folded from one run's log, stamped with that run's id. State stamped with a different id than the
+// run now being watched is treated as empty (see `held`), so a previous run's states can never be drawn on a new run,
+// not even for the render before an effect would have cleared them.
+type Held = { runId: string | null; stream: StreamState; log: LogState }
+const nothingHeld = (runId: string | null): Held => ({ runId, stream: emptyStream, log: emptyLog })
+
+type Action = { type: 'event'; runId: string; event: Wire } | { type: 'reset'; runId: string | null }
+function reducer(s: Held, a: Action): Held {
+  if (a.type === 'reset') return nothingHeld(a.runId)
+  const base = s.runId === a.runId ? s : nothingHeld(a.runId)
+  return { runId: a.runId, stream: foldEvent(base.stream, a.event), log: foldLog(base.log, a.event) }
+}
 
 export function useRunStream(
   /** Null: there is no run to watch, so nothing connects and nothing is shown. */
   runId: string | null,
   blocks?: readonly Block[],
 ): { views: Record<string, NodeRunView>; lastSequence: number; connected: boolean; events: readonly Wire[]; runStatus: RunStatus | null } {
-  const [stream, dispatch] = useReducer(reducer, emptyStream)
-  const [log, dispatchLog] = useReducer(
-    (s: LogState, a: Action) => (a.type === 'reset' ? emptyLog : foldLog(s, a.event)),
-    emptyLog,
-  )
+  const [state, dispatch] = useReducer(reducer, null, () => nothingHeld(runId))
+  const held = state.runId === runId ? state : nothingHeld(runId)
+  const { stream, log } = held
   const [connected, setConnected] = useReducer((_: boolean, v: boolean) => v, false)
   const cursor = useRef(0)
 
   useEffect(() => {
     cursor.current = 0
-    dispatch({ type: 'reset' })
-    dispatchLog({ type: 'reset' })
+    dispatch({ type: 'reset', runId })
     if (runId === null) {
       setConnected(false)
       return
@@ -160,8 +167,7 @@ export function useRunStream(
         }
         if (typeof event.sequence !== 'number' || event.sequence <= cursor.current) return
         cursor.current = event.sequence
-        dispatch({ type: 'event', event })
-        dispatchLog({ type: 'event', event })
+        dispatch({ type: 'event', runId, event })
       }
       es.onerror = () => {
         es.close() // the browser would retry on its own with no ceiling; the schedule here is the only one

@@ -8,7 +8,8 @@ import { visualStateOf } from '@/ui/canvas/BlockCard'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 
-// One line per block event. Every line carries the block it came from, in that block's current colour, and a
+// One line per block event. Every line carries the block it came from, coloured by the state THAT EVENT put the
+// block in (a log records what happened, so a "Started" line stays blue after the card turns green), and a
 // button that points at the block on the canvas. A line with no block is not shown here.
 
 const EVENT_STATE: Record<string, NodeState> = {

@@ -199,3 +199,23 @@ describe('foldEvent duplicate guard', () => {
     expect(old.nodes['b']!.state).toBe('running')
   })
 })
+
+test('switching to a new run never shows the previous run on any render', () => {
+  const seen: { runId: string; states: string[] }[] = []
+  const { rerender } = renderHook(
+    ({ id }: { id: string }) => {
+      const r = useRunStream(id, blocks)
+      seen.push({ runId: id, states: Object.values(r.views).map(v => v.state) })
+      return r
+    },
+    { initialProps: { id: 'r1' } },
+  )
+  last().send(1, 'node.queued', { blockId: 'build' })
+  last().send(2, 'node.started', { blockId: 'build' })
+  last().send(3, 'node.completed', { blockId: 'build', summary: 's' })
+  expect(seen.at(-1)).toEqual({ runId: 'r1', states: ['passed'] })
+  rerender({ id: 'r2' })
+  const renders = seen.filter(s => s.runId === 'r2')
+  expect(renders.length).toBeGreaterThan(0)
+  for (const r of renders) expect(r.states).toEqual([]) // including the very first render, before any effect ran
+})

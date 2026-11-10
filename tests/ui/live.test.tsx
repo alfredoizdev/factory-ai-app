@@ -140,3 +140,12 @@ test('a step for a block the log has not started does not light it', async () =>
   await emit('node.step', { blockId: 'build', text: 'writing a file' })
   expect(state('build')).toBe('queued')
 })
+
+test('the palette wire: adding a block while a run holds review-1 never hands out review-1', () => {
+  const runGraph = addBlock(graph, 'review') // the run contains review and review-1
+  render(<CanvasScreen workflowId="w1" graph={graph} run={runOf(runGraph.blocks)} />) // the draft lacks review-1
+  expect(screen.queryByTestId('node-review-1')).toBeNull()
+  fireEvent.click(within(screen.getByTestId('palette')).getByRole('button', { name: strings.blocks.review }))
+  expect(screen.queryByTestId('node-review-1')).toBeNull()
+  expect(screen.getByTestId('node-review-2')).toHaveAttribute('data-state', 'not_in_run')
+})
