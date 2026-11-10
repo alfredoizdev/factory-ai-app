@@ -39,6 +39,10 @@ export function visualStateOf(state: NodeState): VisualState {
 const GLOWING: ReadonlySet<VisualState> = new Set<VisualState>(['running', 'failed', 'waiting'])
 
 export const CARD_WIDTH = 240
+/** The card grows in place; Canvas makes room for the difference with a transient layout offset. */
+export const EXPANDED_CARD_WIDTH = 320
+/** The step list is what the agent is doing now, not a log: only the latest few are shown. */
+const MAX_STEPS = 6
 
 function formatCost(costCents: number): string {
   return `$${(costCents / 100).toFixed(2)}`
@@ -50,6 +54,8 @@ export function BlockCard({
   expanded = false,
   selected = false,
   issues = [],
+  breadcrumb,
+  onCollapse,
 }: {
   block: Block
   view: CardView
@@ -57,17 +63,20 @@ export function BlockCard({
   selected?: boolean
   /** Validation messages for this block, shown on the card they belong to. */
   issues?: string[]
+  /** Labels of the chain leading to this block; shown only while expanded. */
+  breadcrumb?: string[]
+  onCollapse?: () => void
 }) {
   const visual = visualStateOf(view.state)
   const stateLabel = strings.canvas.stateLabel[view.state]
-  const steps = view.steps ?? []
+  const steps = (view.steps ?? []).slice(-MAX_STEPS)
   const hasSummary = view.summary.trim() !== ''
 
   return (
     <div
       data-testid={`block-card-${block.id}`}
       style={{
-        width: CARD_WIDTH,
+        width: expanded ? EXPANDED_CARD_WIDTH : CARD_WIDTH,
         minWidth: 220,
         background: theme.card,
         border: `1px solid ${selected ? theme.running : theme.border}`,
@@ -79,6 +88,15 @@ export function BlockCard({
         opacity: block.enabled ? 1 : 0.55,
       }}
     >
+      {expanded && breadcrumb && breadcrumb.length > 0 && (
+        <nav
+          data-testid="breadcrumb"
+          aria-label={strings.canvas.breadcrumbAria}
+          style={{ color: theme.skipped, fontSize: 12, marginBottom: 6 }}
+        >
+          {breadcrumb.join(strings.canvas.breadcrumbSeparator)}
+        </nav>
+      )}
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
         <strong style={{ fontSize: 14 }}>{block.label}</strong>
         {!block.enabled && <span style={{ color: theme.skipped, fontSize: 12 }}>{strings.editing.disabledBadge}</span>}
@@ -88,6 +106,19 @@ export function BlockCard({
         >
           {stateLabel}
         </span>
+        {expanded && onCollapse && (
+          <button
+            type="button"
+            className="nodrag"
+            onClick={e => {
+              e.stopPropagation()
+              onCollapse()
+            }}
+            style={{ background: 'none', color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+          >
+            {strings.canvas.collapse}
+          </button>
+        )}
       </div>
 
       <p style={{ margin: '8px 0 0' }}>
@@ -105,16 +136,16 @@ export function BlockCard({
         </p>
       ))}
 
-      {expanded && (
+      {expanded && (steps.length > 0 || view.usage) && (
         <div style={{ marginTop: 10, borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
           {steps.length > 0 && (
             <>
               <div style={{ color: theme.skipped }}>{strings.canvas.steps}</div>
-              <ul style={{ margin: '4px 0 8px', paddingLeft: 16 }}>
+              <ol style={{ margin: '4px 0 8px', paddingLeft: 20 }}>
                 {steps.map((s, i) => (
                   <li key={i}>{s}</li>
                 ))}
-              </ul>
+              </ol>
             </>
           )}
           {view.usage && (

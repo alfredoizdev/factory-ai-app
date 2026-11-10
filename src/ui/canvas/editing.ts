@@ -57,3 +57,18 @@ export const canDisable = (graph: Graph, block: Block): boolean => !(block.enabl
 export function removeBlock(graph: Graph, id: string): Graph {
   return { blocks: graph.blocks.filter(b => b.id !== id) }
 }
+
+/**
+ * Labels of the enabled blocks that lead to this one, in flow order, ending with the block itself.
+ * Derived from the graph, never stored. A stage with several enabled blocks lists them together.
+ */
+export function chainTo(graph: Graph, id: string): string[] {
+  const block = graph.blocks.find(b => b.id === id)
+  if (!block) return []
+  const stage = STAGE_ORDER.indexOf(block.kind)
+  const earlier = STAGE_ORDER.slice(0, stage).flatMap(kind => {
+    const labels = graph.blocks.filter(b => b.kind === kind && b.enabled).map(b => b.label)
+    return labels.length > 0 ? [labels.join(' / ')] : []
+  })
+  return [...earlier, block.label]
+}

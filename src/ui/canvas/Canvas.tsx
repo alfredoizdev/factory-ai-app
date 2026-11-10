@@ -6,24 +6,40 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { derivedEdges, type Block, type Graph, type ValidationIssue } from '@/domain/graph'
 import { summarize } from '@/domain/summary'
 import { BlockInspector } from './BlockInspector'
-import { addBlock, addableKinds, canDisable, canRemove, moveBlock, removeBlock, updateBlock } from './editing'
+import { addBlock, addableKinds, canDisable, canRemove, chainTo, moveBlock, removeBlock, updateBlock } from './editing'
 import { theme } from '@/ui/theme'
 import { strings } from '@/ui/strings'
-import { BlockCard, type NodeRunView } from './BlockCard'
+import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, type NodeRunView } from './BlockCard'
 
 export type { NodeRunView }
 
 const RETURN_OUT = 'return-out'
 const RETURN_IN = 'return-in'
 
-type CardData = { block: Block; view: NodeRunView; expanded: boolean; issues: string[] }
+type CardData = {
+  block: Block
+  view: NodeRunView
+  expanded: boolean
+  selected: boolean
+  issues: string[]
+  breadcrumb: string[]
+  onCollapse: () => void
+}
 type CardNode = Node<CardData, 'block'>
 
 function BlockNode({ data }: NodeProps<CardNode>) {
   return (
     <>
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <BlockCard block={data.block} view={data.view} expanded={data.expanded} selected={data.expanded} issues={data.issues} />
+      <BlockCard
+        block={data.block}
+        view={data.view}
+        expanded={data.expanded}
+        selected={data.selected}
+        issues={data.issues}
+        breadcrumb={data.breadcrumb}
+        onCollapse={data.onCollapse}
+      />
       <Handle type="source" position={Position.Right} isConnectable={false} />
       {/* Bottom handles carry the return cable so it loops beneath the lane. */}
       <Handle id={RETURN_OUT} type="source" position={Position.Bottom} isConnectable={false} />
@@ -57,18 +73,33 @@ function queuedView(block: Block): NodeRunView {
   }
 }
 
+/**
+ * How far to push a block sideways to make room for the expanded card. This is a drawing offset only:
+ * it is applied when building nodes and removed again before a position is stored.
+ */
+function expansionOffsetX(graph: Graph, expandedId: string | null, block: Block): number {
+  const expanded = graph.blocks.find(b => b.id === expandedId)
+  if (!expanded || block.id === expanded.id || block.position.x <= expanded.position.x) return 0
+  return EXPANDED_CARD_WIDTH - CARD_WIDTH
+}
+
 export function Canvas({
   graph: initialGraph,
   nodeRuns = [],
   save,
+  expandedId: initialExpandedId = null,
 }: {
   graph: Graph
   nodeRuns?: NodeRunView[]
   /** Persists the draft and returns what is wrong with it. Absent: edits stay on screen only. */
   save?: (graph: Graph) => Promise<ValidationIssue[]>
+  /** The block that starts out expanded. */
+  expandedId?: string | null
 }) {
   const [graph, setGraph] = useState(initialGraph)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(initialExpandedId)
+  // Expansion is a view state only: it never enters the graph and so is never saved.
+  const [expandedId, setExpandedId] = useState<string | null>(initialExpandedId)
   const [issues, setIssues] = useState<ValidationIssue[]>([])
   const [saveFailed, setSaveFailed] = useState(false)
 
@@ -143,12 +174,24 @@ export function Canvas({
       {
         id: block.id,
         type: 'block' as const,
-        position: block.position,
-        data: { block, view, expanded: selectedId === block.id, issues: issuesFor(block.id) },
+        position: { x: block.position.x + expansionOffsetX(graph, expandedId, block), y: block.position.y },
+        data: {
+          block,
+          view,
+          expanded: expandedId === block.id,
+          selected: selectedId === block.id,
+          issues: issuesFor(block.id),
+          breadcrumb: chainTo(graph, block.id),
+          onCollapse: () => setExpandedId(null),
+        },
       },
     ]
   })
   const drawn = new Set(nodes.map(n => n.id))
+  const toStored = (id: string, position: { x: number; y: number }) => {
+    const block = graphRef.current.blocks.find(b => b.id === id)
+    return block ? { x: position.x - expansionOffsetX(graphRef.current, expandedId, block), y: position.y } : position
+  }
 
   const derived = derivedEdges(graph)
   const edges: Edge[] = derived.filter(e => drawn.has(e.from) && drawn.has(e.to)).map(e =>
@@ -219,6 +262,7 @@ export function Canvas({
                   onClick={() => {
                     edit(g => removeBlock(g, selected.id))
                     setSelectedId(null)
+                    setExpandedId(null)
                   }}
                 >
                   {strings.editing.remove}
@@ -252,17 +296,24 @@ export function Canvas({
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
-          onNodeClick={(_, node) => setSelectedId(current => (current === node.id ? null : node.id))}
+          onNodeClick={(_, node) => {
+            setSelectedId(node.id)
+            setExpandedId(current => (current === node.id ? null : node.id))
+          }}
           onNodesChange={changes => {
             // Follow the pointer while dragging; nothing is saved until the drag ends.
             for (const c of changes) {
               if (c.type === 'position' && c.position) {
-                const position = c.position
-                edit(g => moveBlock(g, c.id, position), false)
+                // The pointer sees the pushed position; the stored one is without the transient offset.
+                const stored = toStored(c.id, c.position)
+                edit(g => moveBlock(g, c.id, stored), false)
               }
             }
           }}
-          onNodeDragStop={(_, node) => edit(g => moveBlock(g, node.id, node.position))}
+          onNodeDragStop={(_, node) => {
+            const stored = toStored(node.id, node.position)
+            edit(g => moveBlock(g, node.id, stored))
+          }}
           nodesDraggable
           nodesConnectable={false}
           deleteKeyCode={null}

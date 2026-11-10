@@ -101,6 +101,9 @@ export const strings = {
     noResultLine: 'No result line was recorded for this step.',
     notReported: 'Not reported',
     steps: 'Steps',
+    collapse: 'Collapse',
+    breadcrumbAria: 'Where this block sits in the flow',
+    breadcrumbSeparator: ' › ',
     returnEdge: 'Sends work back to Build',
   },
   editing: {
