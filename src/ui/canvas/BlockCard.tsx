@@ -58,6 +58,7 @@ export function BlockCard({
   const visual = visualStateOf(view.state)
   const stateLabel = strings.canvas.stateLabel[view.state]
   const steps = view.steps ?? []
+  const hasSummary = view.summary.trim() !== ''
 
   return (
     <div
@@ -85,12 +86,12 @@ export function BlockCard({
       </div>
 
       <p style={{ margin: '8px 0 0' }}>
-        {view.summaryIsClaim && (
+        {hasSummary && view.summaryIsClaim && (
           <span title={strings.canvas.claimTitle} style={{ fontStyle: 'italic', color: theme.waiting }}>
             {strings.canvas.claimMarker}:{' '}
           </span>
         )}
-        {view.summary.trim() === '' ? strings.canvas.noResultLine : view.summary}
+        {hasSummary ? view.summary : strings.canvas.noResultLine}
       </p>
 
       {expanded && (

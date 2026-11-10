@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { render, screen } from '@testing-library/react'
-import { BlockCard, visualStateOf } from '@/ui/canvas/BlockCard'
+import { BlockCard, CARD_WIDTH, visualStateOf } from '@/ui/canvas/BlockCard'
 import { strings } from '@/ui/strings'
+import { LANE_SPACING } from '@/domain/graph'
 import type { Block } from '@/domain/graph'
 import type { NodeState } from '@/domain/states'
 
@@ -78,6 +79,17 @@ test('expanded card lists steps; collapsed does not', () => {
 test('an empty summary still renders a readable result line', () => {
   render(<BlockCard block={buildBlock} view={{ state: 'passed', summary: '  ', summaryIsClaim: false }} />)
   expect(screen.getByText(strings.canvas.noResultLine)).toBeInTheDocument()
+})
+
+test('the fallback line is never attributed to the AI, even when summaryIsClaim is true', () => {
+  render(<BlockCard block={buildBlock} view={{ state: 'passed', summary: '', summaryIsClaim: true }} />)
+  expect(screen.getByText(strings.canvas.noResultLine)).toBeInTheDocument()
+  expect(screen.queryByText(/AI says/i)).toBeNull()
+})
+
+// Regression guard: the domain layout must leave room between cards, or cables hide under them.
+test('default lane spacing leaves at least 80px between card edges', () => {
+  expect(LANE_SPACING - CARD_WIDTH).toBeGreaterThanOrEqual(80)
 })
 
 test('visualStateOf maps every node state', () => {
