@@ -2,6 +2,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 
 // IDs are ULIDs (the demo workflow is the literal 'demo'); timestamps are ISO UTC strings.
 // Every row carries projectId so a future multi-user version is not a rewrite.
+// All foreign keys cascade on delete: removing a project, workflow or run removes everything beneath it.
 
 export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
@@ -12,7 +13,7 @@ export const projects = sqliteTable('projects', {
 
 export const workflows = sqliteTable('workflows', {
   id: text('id').primaryKey(),
-  projectId: text('project_id').notNull(),
+  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   draftJson: text('draft_json').notNull(),
   createdAt: text('created_at').notNull(),
@@ -23,8 +24,8 @@ export const workflowVersions = sqliteTable(
   'workflow_versions',
   {
     id: text('id').primaryKey(),
-    projectId: text('project_id').notNull(),
-    workflowId: text('workflow_id').notNull(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    workflowId: text('workflow_id').notNull().references(() => workflows.id, { onDelete: 'cascade' }),
     graphJson: text('graph_json').notNull(),
     hash: text('hash').notNull(),
     createdAt: text('created_at').notNull(),
@@ -36,9 +37,9 @@ export const runs = sqliteTable(
   'runs',
   {
     id: text('id').primaryKey(),
-    projectId: text('project_id').notNull(),
-    workflowId: text('workflow_id').notNull(),
-    versionId: text('version_id').notNull(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    workflowId: text('workflow_id').notNull().references(() => workflows.id, { onDelete: 'cascade' }),
+    versionId: text('version_id').notNull().references(() => workflowVersions.id, { onDelete: 'cascade' }),
     status: text('status').notNull(),
     request: text('request').notNull(),
     providerId: text('provider_id').notNull(),
@@ -53,8 +54,8 @@ export const nodeRuns = sqliteTable(
   'node_runs',
   {
     id: text('id').primaryKey(),
-    projectId: text('project_id').notNull(),
-    runId: text('run_id').notNull(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
     blockId: text('block_id').notNull(),
     state: text('state').notNull(),
     attempt: integer('attempt').notNull().default(1),
@@ -70,9 +71,9 @@ export const jobs = sqliteTable(
   'jobs',
   {
     id: text('id').primaryKey(),
-    projectId: text('project_id').notNull(),
-    runId: text('run_id').notNull(),
-    nodeRunId: text('node_run_id'),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+    nodeRunId: text('node_run_id').references(() => nodeRuns.id, { onDelete: 'cascade' }),
     kind: text('kind').notNull(),
     status: text('status').notNull(),
     payloadJson: text('payload_json').notNull().default('{}'),
@@ -86,8 +87,9 @@ export const events = sqliteTable(
   'events',
   {
     id: text('id').primaryKey(),
-    projectId: text('project_id').notNull(),
-    runId: text('run_id').notNull(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+    nodeRunId: text('node_run_id').references(() => nodeRuns.id, { onDelete: 'cascade' }),
     sequence: integer('sequence').notNull(),
     type: text('type').notNull(),
     payloadJson: text('payload_json').notNull(),
@@ -101,9 +103,9 @@ export const claims = sqliteTable(
   'claims',
   {
     id: text('id').primaryKey(),
-    projectId: text('project_id').notNull(),
-    runId: text('run_id').notNull(),
-    nodeRunId: text('node_run_id').notNull(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+    nodeRunId: text('node_run_id').notNull().references(() => nodeRuns.id, { onDelete: 'cascade' }),
     text: text('text').notNull(),
     createdAt: text('created_at').notNull(),
   },
@@ -115,9 +117,9 @@ export const evidence = sqliteTable(
   'evidence',
   {
     id: text('id').primaryKey(),
-    projectId: text('project_id').notNull(),
-    runId: text('run_id').notNull(),
-    nodeRunId: text('node_run_id').notNull(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+    nodeRunId: text('node_run_id').notNull().references(() => nodeRuns.id, { onDelete: 'cascade' }),
     kind: text('kind').notNull(),
     source: text('source').notNull(),
     dataJson: text('data_json').notNull(),
@@ -131,8 +133,8 @@ export const usageRecords = sqliteTable(
   'usage_records',
   {
     id: text('id').primaryKey(),
-    projectId: text('project_id').notNull(),
-    nodeRunId: text('node_run_id').notNull(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    nodeRunId: text('node_run_id').notNull().references(() => nodeRuns.id, { onDelete: 'cascade' }),
     tokens: integer('tokens'),
     costCents: integer('cost_cents'),
     createdAt: text('created_at').notNull(),

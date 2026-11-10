@@ -4,7 +4,10 @@ CREATE TABLE `claims` (
 	`run_id` text NOT NULL,
 	`node_run_id` text NOT NULL,
 	`text` text NOT NULL,
-	`created_at` text NOT NULL
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`run_id`) REFERENCES `runs`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`node_run_id`) REFERENCES `node_runs`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `claims_node_run_idx` ON `claims` (`node_run_id`);--> statement-breakpoint
@@ -12,10 +15,14 @@ CREATE TABLE `events` (
 	`id` text PRIMARY KEY NOT NULL,
 	`project_id` text NOT NULL,
 	`run_id` text NOT NULL,
+	`node_run_id` text,
 	`sequence` integer NOT NULL,
 	`type` text NOT NULL,
 	`payload_json` text NOT NULL,
-	`created_at` text NOT NULL
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`run_id`) REFERENCES `runs`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`node_run_id`) REFERENCES `node_runs`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `events_run_sequence_uq` ON `events` (`run_id`,`sequence`);--> statement-breakpoint
@@ -27,7 +34,10 @@ CREATE TABLE `evidence` (
 	`kind` text NOT NULL,
 	`source` text NOT NULL,
 	`data_json` text NOT NULL,
-	`created_at` text NOT NULL
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`run_id`) REFERENCES `runs`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`node_run_id`) REFERENCES `node_runs`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `evidence_node_run_idx` ON `evidence` (`node_run_id`);--> statement-breakpoint
@@ -40,7 +50,10 @@ CREATE TABLE `jobs` (
 	`status` text NOT NULL,
 	`payload_json` text DEFAULT '{}' NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`run_id`) REFERENCES `runs`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`node_run_id`) REFERENCES `node_runs`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `jobs_run_idx` ON `jobs` (`run_id`);--> statement-breakpoint
@@ -54,7 +67,9 @@ CREATE TABLE `node_runs` (
 	`summary` text,
 	`failure_cause` text,
 	`started_at` text,
-	`finished_at` text
+	`finished_at` text,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`run_id`) REFERENCES `runs`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `node_runs_run_idx` ON `node_runs` (`run_id`);--> statement-breakpoint
@@ -75,7 +90,10 @@ CREATE TABLE `runs` (
 	`provider_id` text NOT NULL,
 	`created_at` text NOT NULL,
 	`started_at` text,
-	`finished_at` text
+	`finished_at` text,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`workflow_id`) REFERENCES `workflows`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`version_id`) REFERENCES `workflow_versions`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `runs_workflow_idx` ON `runs` (`workflow_id`);--> statement-breakpoint
@@ -85,7 +103,9 @@ CREATE TABLE `usage_records` (
 	`node_run_id` text NOT NULL,
 	`tokens` integer,
 	`cost_cents` integer,
-	`created_at` text NOT NULL
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`node_run_id`) REFERENCES `node_runs`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `usage_records_node_run_idx` ON `usage_records` (`node_run_id`);--> statement-breakpoint
@@ -95,7 +115,9 @@ CREATE TABLE `workflow_versions` (
 	`workflow_id` text NOT NULL,
 	`graph_json` text NOT NULL,
 	`hash` text NOT NULL,
-	`created_at` text NOT NULL
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`workflow_id`) REFERENCES `workflows`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `workflow_versions_workflow_idx` ON `workflow_versions` (`workflow_id`);--> statement-breakpoint
@@ -105,5 +127,6 @@ CREATE TABLE `workflows` (
 	`name` text NOT NULL,
 	`draft_json` text NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade
 );

@@ -11,6 +11,8 @@ if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
 
 const sqlite = new Database(path)
 sqlite.pragma('journal_mode = WAL')
+// SQLite ignores foreign keys unless enabled on every connection.
+sqlite.pragma('foreign_keys = ON')
 
 export const db = drizzle(sqlite, { schema })
 
