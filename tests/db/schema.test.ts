@@ -74,3 +74,13 @@ test('deleting a run cascades to its node runs and usage records', async () => {
   expect(await db.select().from(nodeRuns).where(eq(nodeRuns.id, chain.nodeRunId))).toHaveLength(0)
   expect(await db.select().from(usageRecords).where(eq(usageRecords.id, usage.id))).toHaveLength(0)
 })
+
+test('deleting a workflow that has a run is rejected and history survives', async () => {
+  const chain = await createNodeRunChain()
+  const usage = await insertUsage(chain)
+  const run = (await db.select().from(runs).where(eq(runs.id, chain.runId)))[0]!
+  await expect(db.delete(workflows).where(eq(workflows.id, run.workflowId))).rejects.toThrow(/FOREIGN KEY/)
+  expect(await db.select().from(runs).where(eq(runs.id, chain.runId))).toHaveLength(1)
+  expect(await db.select().from(nodeRuns).where(eq(nodeRuns.id, chain.nodeRunId))).toHaveLength(1)
+  expect(await db.select().from(usageRecords).where(eq(usageRecords.id, usage.id))).toHaveLength(1)
+})
