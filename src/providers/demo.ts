@@ -1,5 +1,5 @@
 import type { BlockKind } from '@/domain/graph'
-import { DEMO_PROVIDER_ID } from '@/engine/run'
+import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
 import type { AgentEvent, AgentExecutionInput, AgentProvider } from '@/providers/types'
 

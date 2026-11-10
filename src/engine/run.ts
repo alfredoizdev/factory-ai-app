@@ -5,14 +5,15 @@ import { db } from '@/db/client'
 import { runs, workflows, workflowVersions } from '@/db/schema'
 import { validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
 import { appendEvent } from '@/engine/events'
+import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
 
 // The boundary between designing and running. The draft is mutable; publishing freezes a version;
 // a run binds to a frozen version and never reads the draft again.
 
 // Every run in this milestone is simulated. The UI's Demo badge checks runs.providerId against this constant;
-// import it rather than retyping the string.
-export const DEMO_PROVIDER_ID = 'demo'
+// it is defined in a dependency-free module and re-exported here so existing imports keep working.
+export { DEMO_PROVIDER_ID }
 
 export class WorkflowNotFoundError extends Error {
   constructor(id: string) {
