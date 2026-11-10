@@ -1,7 +1,9 @@
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { projects, workflows, workflowVersions, runs } from '@/db/schema'
-import { appendEvent, eventsSince } from '@/engine/events'
+import { eq } from 'drizzle-orm'
+import { events } from '@/db/schema'
+import { appendEvent, eventsSince, InvalidEventPayloadError, RunNotFoundError } from '@/engine/events'
 
 beforeAll(() => {
   migrateDb()
@@ -27,7 +29,9 @@ async function newRun(): Promise<string> {
   return runId
 }
 
-test('sequence is contiguous per run under concurrent appends', async () => {
+// Note: appendEvent is synchronous underneath, so these calls run one after another on one connection.
+// This checks contiguity across many appends only; it does not exercise isolation between connections.
+test('sequence is contiguous across 50 appends to one run', async () => {
   const runId = await newRun()
   await Promise.all(Array.from({ length: 50 }, (_, i) =>
     appendEvent({ runId, type: 'node.step', payload: { blockId: 'build', i } })))
@@ -59,14 +63,31 @@ test('payload round-trips and blockId is preserved on node events', async () => 
   expect((await eventsSince(runId, 0))[0]).toEqual(row)
 })
 
-test('run events default to an empty payload; node events without blockId are rejected at the type level', async () => {
+test('run events default to an empty payload', async () => {
   const runId = await newRun()
   const row = await appendEvent({ runId, type: 'run.created' })
   expect(row.payload).toEqual({})
-  // @ts-expect-error node.* events must carry blockId
-  await appendEvent({ runId, type: 'node.started' })
 })
 
-test('an event for a missing run is rejected and allocates nothing', async () => {
-  await expect(appendEvent({ runId: 'missing', type: 'run.created' })).rejects.toThrow(/FOREIGN KEY/)
+test('node events must carry blockId at the type level', () => {
+  const never = async () => {
+    // @ts-expect-error node.* events must carry blockId
+    await appendEvent({ runId: 'x', type: 'node.started' })
+  }
+  expect(never).toBeTypeOf('function') // never invoked
+})
+
+test('runtime guard rejects node events without a non-empty string blockId, even when cast through', async () => {
+  const runId = await newRun()
+  for (const payload of [undefined, {}, { blockId: '' }, { blockId: 5 }, null]) {
+    await expect(
+      appendEvent({ runId, type: 'node.started', payload } as unknown as Parameters<typeof appendEvent>[0]),
+    ).rejects.toBeInstanceOf(InvalidEventPayloadError)
+  }
+  expect(await eventsSince(runId, 0)).toHaveLength(0)
+})
+
+test('an event for a missing run throws RunNotFoundError and writes nothing', async () => {
+  await expect(appendEvent({ runId: 'missing', type: 'run.created' })).rejects.toBeInstanceOf(RunNotFoundError)
+  expect(await db.select().from(events).where(eq(events.runId, 'missing'))).toHaveLength(0)
 })

@@ -25,6 +25,20 @@ export type EventRow = {
   createdAt: string
 }
 
+export class RunNotFoundError extends Error {
+  constructor(readonly runId: string) {
+    super(`Cannot append event: run ${runId} does not exist`)
+    this.name = 'RunNotFoundError'
+  }
+}
+
+export class InvalidEventPayloadError extends Error {
+  constructor(type: string) {
+    super(`${type} event requires a payload with a non-empty string blockId`)
+    this.name = 'InvalidEventPayloadError'
+  }
+}
+
 export type AppendEventInput =
   | { runId: string; nodeRunId?: string; type: RunEventType; payload?: unknown }
   | { runId: string; nodeRunId?: string; type: NodeEventType; payload: NodeEventPayload }
@@ -42,11 +56,17 @@ function toRow(r: typeof events.$inferSelect): EventRow {
 }
 
 export async function appendEvent(input: AppendEventInput): Promise<EventRow> {
-  // Read-max and insert share one transaction (better-sqlite3 runs it synchronously, taking the write lock),
-  // so concurrent appends cannot read the same max. The unique (runId, sequence) index is the backstop.
+  // Runtime guard: the type requires blockId, but a cast bypasses types and '' type-checks.
+  if (input.type.startsWith('node.')) {
+    const blockId = (input.payload as { blockId?: unknown } | null | undefined)?.blockId
+    if (typeof blockId !== 'string' || blockId === '') throw new InvalidEventPayloadError(input.type)
+  }
+  // Read-max and insert share one IMMEDIATE transaction: the write lock is taken up front, so a second
+  // connection waits (busy_timeout) rather than reading the same max under a shared lock and failing on
+  // upgrade. The unique (runId, sequence) index is the backstop: a lost race throws rather than corrupts.
   const row = db.transaction(tx => {
     const run = tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, input.runId)).get()
-    if (!run) throw new Error(`FOREIGN KEY constraint failed: run ${input.runId} does not exist`)
+    if (!run) throw new RunNotFoundError(input.runId)
     const top = tx.select({ m: max(events.sequence) }).from(events).where(eq(events.runId, input.runId)).get()
     return tx
       .insert(events)
@@ -62,7 +82,7 @@ export async function appendEvent(input: AppendEventInput): Promise<EventRow> {
       })
       .returning()
       .get()
-  })
+  }, { behavior: 'immediate' })
   return toRow(row)
 }
 
