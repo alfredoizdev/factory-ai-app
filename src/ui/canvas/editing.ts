@@ -8,8 +8,9 @@ export const ROW_SPACING = 160
  * The first block of a kind keeps the bare kind as its id (the rest of the app addresses cards that way);
  * later ones are suffixed. Checked against every id currently in the graph, so it cannot collide.
  */
-export function nextBlockId(graph: Graph, kind: BlockKind): string {
-  const taken = new Set(graph.blocks.map(b => b.id))
+export function nextBlockId(graph: Graph, kind: BlockKind, reserved: readonly string[] = []): string {
+  // `reserved` are ids a run still holds: a new block must not take one, or it would show that run's view as its own.
+  const taken = new Set([...graph.blocks.map(b => b.id), ...reserved])
   if (!taken.has(kind)) return kind
   let n = 1
   while (taken.has(`${kind}-${n}`)) n++
@@ -21,11 +22,11 @@ export function addableKinds(graph: Graph): BlockKind[] {
   return STAGE_ORDER.filter(kind => !SINGLETON_KINDS.includes(kind) || !graph.blocks.some(b => b.kind === kind))
 }
 
-export function addBlock(graph: Graph, kind: BlockKind): Graph {
+export function addBlock(graph: Graph, kind: BlockKind, reservedIds: readonly string[] = []): Graph {
   if (!addableKinds(graph).includes(kind)) return graph
   const sameStage = graph.blocks.filter(b => b.kind === kind).length
   const block: Block = {
-    id: nextBlockId(graph, kind),
+    id: nextBlockId(graph, kind, reservedIds),
     kind,
     label: strings.blocks[kind],
     enabled: true,

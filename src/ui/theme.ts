@@ -11,6 +11,8 @@ const colours = {
   failed: '#ef4444',
   waiting: '#f59e0b',
   skipped: '#6b7280',
+  /** The ring that points at a block when an event line says "point it out". */
+  pointer: '#e5e7eb',
 } as const
 
 const glowRgb: Record<VisualState, string> = {

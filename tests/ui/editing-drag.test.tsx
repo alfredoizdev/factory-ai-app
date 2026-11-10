@@ -54,15 +54,18 @@ test('the canvas is draggable but offers no way to draw or change a connection',
   expect(captured.onConnect).toBeUndefined()
 })
 
-test('with a run present, a block the run has no view for is not drawn as queued', () => {
+test('with a run present, a block the run has no view for is drawn as not part of the run, never as queued', () => {
   const graph = defaultGraph()
   const nodeRuns = graph.blocks
     .filter(b => b.id !== 'review')
     .map(b => ({ blockId: b.id, state: 'passed' as const, summary: 'Done.', summaryIsClaim: false, steps: [] }))
   render(<Canvas graph={graph} nodeRuns={nodeRuns} />)
   const ids = captured.nodes!.map(n => n.id)
-  expect(ids).not.toContain('review')
-  expect(ids).toContain('build')
+  // Still drawn (so it can be selected and removed), but with no run state at all.
+  expect(ids).toContain('review')
+  const viewOf = (id: string) => (captured.nodes!.find(n => n.id === id) as unknown as { data: { view: { state: string } | null } }).data.view
+  expect(viewOf('review')).toBeNull()
+  expect(viewOf('build')?.state).toBe('passed')
 })
 
 test('with no run, every block is drawn', () => {

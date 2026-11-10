@@ -180,3 +180,37 @@ export function BlockCard({
     </div>
   )
 }
+
+/**
+ * A block that is in the draft but not in the run being watched. It has no state at all (not even a quiet one):
+ * the run never heard of it, so nothing here can come from the run. It stays selectable and removable.
+ */
+export function NotInRunCard({ block, selected = false, issues = [] }: { block: Block; selected?: boolean; issues?: string[] }) {
+  return (
+    <div
+      data-testid={`block-card-${block.id}`}
+      style={{
+        width: CARD_WIDTH,
+        minWidth: 220,
+        background: 'transparent',
+        border: `1px dashed ${selected ? theme.running : theme.skipped}`,
+        borderRadius: 8,
+        padding: 12,
+        fontSize: 13,
+        opacity: block.enabled ? 0.8 : 0.55,
+      }}
+    >
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+        <strong style={{ fontSize: 14 }}>{block.label}</strong>
+        {!block.enabled && <span style={{ color: theme.skipped, fontSize: 12 }}>{strings.editing.disabledBadge}</span>}
+        <span style={{ color: theme.skipped, fontSize: 12, fontWeight: 600 }}>{strings.canvas.notInRun}</span>
+      </div>
+      <p style={{ margin: '8px 0 0', color: theme.skipped }}>{strings.canvas.notInRunDetail}</p>
+      {issues.map(message => (
+        <p key={message} style={{ margin: '8px 0 0', color: theme.failed, fontWeight: 600 }}>
+          {message}
+        </p>
+      ))}
+    </div>
+  )
+}

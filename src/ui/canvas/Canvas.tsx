@@ -1,6 +1,6 @@
 'use client'
 
-import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react'
+import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { derivedEdges, type Block, type Graph, type ValidationIssue } from '@/domain/graph'
@@ -9,7 +9,7 @@ import { BlockInspector } from './BlockInspector'
 import { addBlock, addableKinds, canDisable, canRemove, chainTo, moveBlock, removeBlock, updateBlock } from './editing'
 import { theme } from '@/ui/theme'
 import { strings } from '@/ui/strings'
-import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, type NodeRunView } from './BlockCard'
+import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, type NodeRunView } from './BlockCard'
 
 export type { NodeRunView }
 
@@ -18,7 +18,9 @@ const RETURN_IN = 'return-in'
 
 type CardData = {
   block: Block
-  view: NodeRunView
+  /** Absent: the run does not contain this block, so there is no state to show. */
+  view: NodeRunView | null
+  highlighted: boolean
   expanded: boolean
   selected: boolean
   issues: string[]
@@ -29,22 +31,31 @@ type CardNode = Node<CardData, 'block'>
 
 function BlockNode({ data }: NodeProps<CardNode>) {
   return (
-    <>
+    <div
+      data-testid={`node-${data.block.id}`}
+      data-state={data.view ? data.view.state : 'not_in_run'}
+      data-highlighted={data.highlighted ? 'true' : 'false'}
+      style={{ borderRadius: 10, outline: data.highlighted ? `3px solid ${theme.pointer}` : 'none', outlineOffset: 3 }}
+    >
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <BlockCard
-        block={data.block}
-        view={data.view}
-        expanded={data.expanded}
-        selected={data.selected}
-        issues={data.issues}
-        breadcrumb={data.breadcrumb}
-        onCollapse={data.onCollapse}
-      />
+      {data.view ? (
+        <BlockCard
+          block={data.block}
+          view={data.view}
+          expanded={data.expanded}
+          selected={data.selected}
+          issues={data.issues}
+          breadcrumb={data.breadcrumb}
+          onCollapse={data.onCollapse}
+        />
+      ) : (
+        <NotInRunCard block={data.block} selected={data.selected} issues={data.issues} />
+      )}
       <Handle type="source" position={Position.Right} isConnectable={false} />
       {/* Bottom handles carry the return cable so it loops beneath the lane. */}
       <Handle id={RETURN_OUT} type="source" position={Position.Bottom} isConnectable={false} />
       <Handle id={RETURN_IN} type="target" position={Position.Bottom} isConnectable={false} />
-    </>
+    </div>
   )
 }
 
@@ -88,6 +99,9 @@ export function Canvas({
   nodeRuns = [],
   save,
   expandedId: initialExpandedId = null,
+  runBlocks,
+  highlightedId = null,
+  flushRef,
 }: {
   graph: Graph
   nodeRuns?: NodeRunView[]
@@ -95,6 +109,15 @@ export function Canvas({
   save?: (graph: Graph) => Promise<ValidationIssue[]>
   /** The block that starts out expanded. */
   expandedId?: string | null
+  /**
+   * The blocks of the run being watched (its frozen version). A draft block is part of the run only if the run
+   * holds a block with the same id and kind. Absent: membership is whatever `nodeRuns` has a view for.
+   */
+  runBlocks?: readonly Block[]
+  /** The block an event line pointed at. */
+  highlightedId?: string | null
+  /** Filled with a function that saves any pending edit now and says whether the draft is safely on the server. */
+  flushRef?: { current: (() => Promise<boolean>) | null }
 }) {
   const [graph, setGraph] = useState(initialGraph)
   const [selectedId, setSelectedId] = useState<string | null>(initialExpandedId)
@@ -113,15 +136,16 @@ export function Canvas({
     saveRef.current = save
   })
 
-  const flush = useCallback(() => {
+  const inflight = useRef<Promise<void>>(Promise.resolve())
+  const flushNow = useCallback((): Promise<void> => {
     if (timer.current) clearTimeout(timer.current)
     timer.current = null
     const persist = saveRef.current
-    if (!dirty.current || !persist) return
+    if (!dirty.current || !persist) return inflight.current
     dirty.current = false
     const mine = ++seq.current
     // Only the newest response may touch the screen; an older one is stale.
-    persist(graphRef.current).then(
+    inflight.current = persist(graphRef.current).then(
       result => {
         if (!mounted.current || mine !== seq.current) return
         setIssues(result)
@@ -133,7 +157,19 @@ export function Canvas({
         if (mounted.current && mine === seq.current) setSaveFailed(true)
       },
     )
+    return inflight.current
   }, [])
+  const flush = useCallback(() => void flushNow(), [flushNow])
+  useEffect(() => {
+    if (!flushRef) return
+    flushRef.current = async () => {
+      await flushNow()
+      return !dirty.current
+    }
+    return () => {
+      flushRef.current = null
+    }
+  }, [flushRef, flushNow])
 
   // A pending save must survive leaving the page or unmounting.
   useEffect(() => {
@@ -163,31 +199,41 @@ export function Canvas({
   const unattributed = issues.filter(i => i.blockId === null || !graph.blocks.some(b => b.id === i.blockId))
   const selected = graph.blocks.find(b => b.id === selectedId) ?? null
   const addable = addableKinds(graph)
+  const flow = useRef<ReactFlowInstance<CardNode> | null>(null)
+  useEffect(() => {
+    if (highlightedId) void flow.current?.fitView({ nodes: [{ id: highlightedId }], duration: 300, maxZoom: 1 })
+  }, [highlightedId])
 
   // The queued default is only true when there is no run. Once a run exists, a block it has no view for is
   // not part of that run, so it is not drawn rather than shown with an invented state.
-  const hasRun = nodeRuns.length > 0
-  const nodes: CardNode[] = graph.blocks.flatMap(block => {
-    const view = hasRun ? runById.get(block.id) : queuedView(block)
-    if (!view) return []
-    return [
-      {
+  const hasRun = runBlocks !== undefined || nodeRuns.length > 0
+  const reservedIds = runBlocks?.map(b => b.id) ?? []
+  // Same id AND same kind: a reused id for a different kind must not borrow the old block's view. (The palette
+  // also never hands out an id the run holds, so a reused id of the same kind cannot arise from adding.)
+  const inRun = (block: Block) =>
+    runBlocks ? runBlocks.some(b => b.id === block.id && b.kind === block.kind) : runById.has(block.id)
+  const nodes: CardNode[] = graph.blocks.map(block => {
+    // No run: honestly queued. In a run: the stream's view, or queued when the run holds the block but has said nothing yet.
+    // Not in the run: no view at all, drawn as such.
+    const view = !hasRun ? queuedView(block) : inRun(block) ? (runById.get(block.id) ?? queuedView(block)) : null
+    return {
         id: block.id,
         type: 'block' as const,
         position: { x: block.position.x + expansionOffsetX(graph, expandedId, block), y: block.position.y },
         data: {
           block,
           view,
+          highlighted: highlightedId === block.id,
           expanded: expandedId === block.id,
           selected: selectedId === block.id,
           issues: issuesFor(block.id),
           breadcrumb: chainTo(graph, block.id),
           onCollapse: () => setExpandedId(null),
         },
-      },
-    ]
+    }
   })
   const drawn = new Set(nodes.map(n => n.id))
+  const outsideRun = new Set(nodes.filter(n => n.data.view === null).map(n => n.id))
   const toStored = (id: string, position: { x: number; y: number }) => {
     const block = graphRef.current.blocks.find(b => b.id === id)
     return block ? { x: position.x - expansionOffsetX(graphRef.current, expandedId, block), y: position.y } : position
@@ -213,7 +259,8 @@ export function Canvas({
           id: `${e.from}->${e.to}`,
           source: e.from,
           target: e.to,
-          style: { stroke: theme.border, strokeWidth: 2 },
+          // A cable to a block the run does not contain is drawn dashed: it is the draft's, not the run's.
+          style: { stroke: theme.border, strokeWidth: 2, strokeDasharray: outsideRun.has(e.from) || outsideRun.has(e.to) ? '4 4' : undefined },
           markerEnd: { type: MarkerType.ArrowClosed, color: theme.border },
         },
   )
@@ -240,7 +287,7 @@ export function Canvas({
           <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.paletteTitle}</h2>
           {addable.length === 0 && <p style={{ margin: 0, color: theme.skipped }}>{strings.editing.paletteEmpty}</p>}
           {addable.map(kind => (
-            <button key={kind} type="button" style={panelButton} onClick={() => edit(g => addBlock(g, kind))}>
+            <button key={kind} type="button" style={panelButton} onClick={() => edit(g => addBlock(g, kind, reservedIds))}>
               {strings.blocks[kind]}
             </button>
           ))}
@@ -296,6 +343,9 @@ export function Canvas({
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          onInit={instance => {
+            flow.current = instance
+          }}
           onNodeClick={(_, node) => {
             setSelectedId(node.id)
             setExpandedId(current => (current === node.id ? null : node.id))

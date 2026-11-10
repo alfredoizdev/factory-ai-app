@@ -26,7 +26,7 @@ type RawNode = { state: NodeState; steps: string[]; reportedSummary?: string; cl
 export type StreamState = { nodes: Record<string, RawNode>; lastSequence: number }
 export const emptyStream: StreamState = { nodes: {}, lastSequence: 0 }
 
-type Wire = Pick<EventRow, 'sequence' | 'type' | 'payload'>
+export type Wire = Pick<EventRow, 'sequence' | 'type' | 'payload'>
 
 const text = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v : undefined)
 
@@ -82,20 +82,63 @@ export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[]
   return out
 }
 
+// The run's own status, folded from run.* events as a state SET: an event names the status the run is now in, so a
+// repeat of the same event (run.waiting_approval can be logged twice for one run) leaves it where it was.
+export type RunStatus = 'queued' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled'
+const RUN_EVENT_STATUS: Record<string, RunStatus> = {
+  'run.created': 'queued',
+  'run.started': 'running',
+  'run.waiting_approval': 'waiting_approval',
+  'run.completed': 'completed',
+  'run.failed': 'failed',
+  'run.cancelled': 'cancelled',
+}
+const TERMINAL: ReadonlySet<RunStatus> = new Set<RunStatus>(['completed', 'failed', 'cancelled'])
+
+export function foldRunStatus(prev: RunStatus | null, type: string): RunStatus | null {
+  const next = RUN_EVENT_STATUS[type]
+  if (next === undefined) return prev
+  if (prev !== null && TERMINAL.has(prev)) return prev // a finished run does not start again
+  return next
+}
+
+/** The events the bar can show, oldest first. Capped so a long run cannot grow the page without limit. */
+export const MAX_LOGGED_EVENTS = 300
+export type LogState = { events: Wire[]; runStatus: RunStatus | null }
+const emptyLog: LogState = { events: [], runStatus: null }
+
+function foldLog(prev: LogState, event: Wire): LogState {
+  if (prev.events.length > 0 && event.sequence <= prev.events[prev.events.length - 1]!.sequence) return prev
+  return {
+    events: [...prev.events, event].slice(-MAX_LOGGED_EVENTS),
+    runStatus: foldRunStatus(prev.runStatus, event.type),
+  }
+}
+
 type Action = { type: 'event'; event: Wire } | { type: 'reset' }
 const reducer = (s: StreamState, a: Action): StreamState => (a.type === 'reset' ? emptyStream : foldEvent(s, a.event))
 
 export function useRunStream(
-  runId: string,
+  /** Null: there is no run to watch, so nothing connects and nothing is shown. */
+  runId: string | null,
   blocks?: readonly Block[],
-): { views: Record<string, NodeRunView>; lastSequence: number; connected: boolean } {
+): { views: Record<string, NodeRunView>; lastSequence: number; connected: boolean; events: readonly Wire[]; runStatus: RunStatus | null } {
   const [stream, dispatch] = useReducer(reducer, emptyStream)
+  const [log, dispatchLog] = useReducer(
+    (s: LogState, a: Action) => (a.type === 'reset' ? emptyLog : foldLog(s, a.event)),
+    emptyLog,
+  )
   const [connected, setConnected] = useReducer((_: boolean, v: boolean) => v, false)
   const cursor = useRef(0)
 
   useEffect(() => {
     cursor.current = 0
     dispatch({ type: 'reset' })
+    dispatchLog({ type: 'reset' })
+    if (runId === null) {
+      setConnected(false)
+      return
+    }
     let source: EventSource | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
     let failures = 0
@@ -118,6 +161,7 @@ export function useRunStream(
         if (typeof event.sequence !== 'number' || event.sequence <= cursor.current) return
         cursor.current = event.sequence
         dispatch({ type: 'event', event })
+        dispatchLog({ type: 'event', event })
       }
       es.onerror = () => {
         es.close() // the browser would retry on its own with no ceiling; the schedule here is the only one
@@ -138,5 +182,5 @@ export function useRunStream(
   }, [runId])
 
   const views = useMemo(() => toViews(stream.nodes, blocks), [stream.nodes, blocks])
-  return { views, lastSequence: stream.lastSequence, connected }
+  return { views, lastSequence: stream.lastSequence, connected, events: log.events, runStatus: log.runStatus }
 }
