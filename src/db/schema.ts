@@ -39,7 +39,7 @@ export const runs = sqliteTable(
     id: text('id').primaryKey(),
     projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     // restrict, not cascade: deleting a workflow or version must never erase run history (the audit trail).
-    // It also makes deleting a project that still has runs fail loudly; a deliberate purge path is a later feature.
+    // Deleting a project that still has runs is therefore also blocked; a deliberate purge path is a later feature.
     workflowId: text('workflow_id').notNull().references(() => workflows.id, { onDelete: 'restrict' }),
     versionId: text('version_id').notNull().references(() => workflowVersions.id, { onDelete: 'restrict' }),
     status: text('status').notNull(),
