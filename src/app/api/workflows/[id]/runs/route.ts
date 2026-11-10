@@ -1,3 +1,4 @@
+import { rejectCrossSite } from '@/engine/same-origin'
 import { z } from 'zod'
 import { inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { createRun, failUnstartedRun, NothingPublishedError, WorkflowNotFoundError } from '@/engine/run'
@@ -6,6 +7,8 @@ import { strings } from '@/ui/strings'
 const bodySchema = z.object({ request: z.string().trim().min(1) })
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const refused = rejectCrossSite(req)
+  if (refused) return refused
   const { id } = await ctx.params
   const body = bodySchema.safeParse(await req.json().catch(() => null))
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })

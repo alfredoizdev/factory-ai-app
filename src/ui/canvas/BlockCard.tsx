@@ -110,6 +110,12 @@ export function BlockCard({
       )}
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
         <strong style={{ fontSize: 14 }}>{block.label}</strong>
+        {/* The model is written inside the block (design section 6): model-per-job is a selling point. */}
+        {typeof block.config.model === 'string' && block.config.model.trim() !== '' && (
+          <span data-testid={`block-model-${block.id}`} style={{ color: theme.skipped, fontSize: 12 }}>
+            {block.config.model}
+          </span>
+        )}
         {!block.enabled && <span style={{ color: theme.skipped, fontSize: 12 }}>{strings.editing.disabledBadge}</span>}
         <span
           aria-label={strings.canvas.stateAria(stateLabel)}

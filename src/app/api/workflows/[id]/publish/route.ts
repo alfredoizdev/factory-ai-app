@@ -1,6 +1,9 @@
+import { rejectCrossSite } from '@/engine/same-origin'
 import { publishVersion, PublishRefusedError, WorkflowNotFoundError } from '@/engine/run'
 
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const refused = rejectCrossSite(req)
+  if (refused) return refused
   const { id } = await ctx.params
   try {
     return Response.json(await publishVersion(id), { status: 201 })

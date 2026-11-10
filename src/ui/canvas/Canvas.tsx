@@ -92,6 +92,11 @@ const panelButton = {
   textAlign: 'left' as const,
 }
 
+/** The parts of a block the run owns. Absent: the run does not hold the block, so the draft's stand. */
+function pick(frozen: Block | undefined): Partial<Block> {
+  return frozen ? { label: frozen.label, enabled: frozen.enabled, config: frozen.config } : {}
+}
+
 /** With no run at all, every block has honestly not started, so it is queued. */
 function queuedView(block: Block): NodeRunView {
   return {
@@ -237,16 +242,24 @@ export function Canvas({
   // also never hands out an id the run holds, so a reused id of the same kind cannot arise from adding.)
   const inRun = (block: Block) =>
     runBlocks ? runBlocks.some(b => b.id === block.id && b.kind === block.kind) : runById.has(block.id)
-  const nodes: CardNode[] = graph.blocks.map(block => {
-    // No run: honestly queued. In a run: the stream's view, or queued when the run holds the block but has said nothing yet.
-    // Not in the run: no view at all, drawn as such.
-    const view = !hasRun ? queuedView(block) : inRun(block) ? (runById.get(block.id) ?? queuedView(block)) : null
-    return {
+  // While a run is watched, what a block IS (name, whether it ran, its model) comes from the run's frozen block;
+  // the draft only supplies where it sits and what can be edited. A block the draft has since removed is still drawn,
+  // from the run, so every line in the event bar points at a card that exists.
+  const frozenOf = (block: Block): Block | undefined => runBlocks?.find(b => b.id === block.id && b.kind === block.kind)
+  const draftIds = new Set(graph.blocks.map(b => b.id))
+  const removedFromDraft = (runBlocks ?? []).filter(b => !draftIds.has(b.id))
+  const presented: Graph = { blocks: [...graph.blocks.map(b => ({ ...b, ...pick(frozenOf(b)) })), ...removedFromDraft] }
+  const nodes: CardNode[] = [
+    ...graph.blocks.map(block => {
+      // No run: honestly queued. In a run: the stream's view, or queued when the run holds the block but has said nothing yet.
+      // Not in the run: no view at all, drawn as such.
+      const view = !hasRun ? queuedView(block) : inRun(block) ? (runById.get(block.id) ?? queuedView(block)) : null
+      return {
         id: block.id,
         type: 'block' as const,
         position: { x: block.position.x + expansionOffsetX(graph, expandedId, block), y: block.position.y },
         data: {
-          block,
+          block: view ? (frozenOf(block) ?? block) : block,
           view,
           highlighted: highlightedId === block.id,
           expanded: expandedId === block.id,
@@ -255,8 +268,25 @@ export function Canvas({
           breadcrumb: chainTo(graph, block.id),
           onCollapse: () => setExpandedId(null),
         },
-    }
-  })
+      }
+    }),
+    ...removedFromDraft.map(block => ({
+      id: block.id,
+      type: 'block' as const,
+      position: { x: block.position.x, y: block.position.y },
+      draggable: false,
+      data: {
+        block,
+        view: runById.get(block.id) ?? queuedView(block),
+        highlighted: highlightedId === block.id,
+        expanded: expandedId === block.id,
+        selected: false,
+        issues: [],
+        breadcrumb: chainTo({ blocks: [...(runBlocks ?? [])] }, block.id),
+        onCollapse: () => setExpandedId(null),
+      },
+    })),
+  ]
   const drawn = new Set(nodes.map(n => n.id))
   const outsideRun = new Set(nodes.filter(n => n.data.view === null).map(n => n.id))
   const toStored = (id: string, position: { x: number; y: number }) => {
@@ -264,7 +294,7 @@ export function Canvas({
     return block ? { x: position.x - expansionOffsetX(graphRef.current, expandedId, block), y: position.y } : position
   }
 
-  const derived = derivedEdges(graph)
+  const derived = derivedEdges(presented)
   const edges: Edge[] = derived.filter(e => drawn.has(e.from) && drawn.has(e.to)).map(e =>
     e.kind === 'return'
       ? {

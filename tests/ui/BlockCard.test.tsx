@@ -107,3 +107,13 @@ test('visualStateOf maps every node state', () => {
     expect(visualStateOf(state as NodeState)).toBe(visual)
   }
 })
+
+test('the model written inside the block is shown on its card', () => {
+  const view = { state: 'queued' as const, summary: 'Waits', summaryIsClaim: false }
+  const { rerender } = render(<BlockCard block={{ ...buildBlock, config: { model: 'big-model' } }} view={view} />)
+  expect(screen.getByTestId('block-model-build')).toHaveTextContent('big-model')
+  rerender(<BlockCard block={buildBlock} view={view} />)
+  expect(screen.queryByTestId('block-model-build')).toBeNull() // no model chosen: nothing invented
+  rerender(<BlockCard block={{ ...buildBlock, config: { model: '  ' } }} view={view} />)
+  expect(screen.queryByTestId('block-model-build')).toBeNull()
+})

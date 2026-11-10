@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate": "tsx -e \"import('./src/db/client.ts').then(m => m.migrateDb())\"",
     "seed": "tsx src/db/seed.ts"

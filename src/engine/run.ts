@@ -3,7 +3,7 @@ import { desc, eq, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { nodeRuns, runs, workflows, workflowVersions } from '@/db/schema'
-import { validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
+import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
 import { DEMO_PROVIDER_ID } from '@/providers/ids'
@@ -147,6 +147,19 @@ export async function createRun(input: {
         })
         .run()
       appendEventSync({ runId, type: 'run.created', payload: { versionId: version.id } }, tx)
+      // Every block of the frozen version becomes a queued node run now (the design's section 7, step 2), so a block
+      // a run never reaches can be ended as cancelled instead of reading "Queued" for ever.
+      const graph = JSON.parse(version.graphJson) as Graph
+      for (const kind of STAGE_ORDER) {
+        for (const block of graph.blocks.filter(b => b.kind === kind)) {
+          const row = tx
+            .insert(nodeRuns)
+            .values({ id: ulid(), projectId: wf.projectId, runId, blockId: block.id, state: 'queued', attempt: 1 })
+            .returning()
+            .get()
+          appendEventSync({ runId, nodeRunId: row.id, type: 'node.queued', payload: { blockId: block.id } }, tx)
+        }
+      }
     },
     { behavior: 'immediate' },
   )
@@ -183,6 +196,12 @@ export async function failUnstartedRun(runId: string): Promise<void> {
       const run = tx.select().from(runs).where(eq(runs.id, runId)).get()
       if (!run || run.status !== 'queued') return
       tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId)).run()
+      // Nothing will ever run these blocks; leaving them queued would say they are still to come.
+      for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
+        if (!canTransition(node.state as NodeState, 'cancelled')) continue
+        tx.update(nodeRuns).set({ state: 'cancelled', finishedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+        appendEventSync({ runId, nodeRunId: node.id, type: 'node.cancelled', payload: { blockId: node.blockId, reason: strings.run.couldNotStart } }, tx)
+      }
       appendEventSync({ runId, type: 'run.failed', payload: { cause: 'not_started', message: strings.run.couldNotStart } }, tx)
     },
     { behavior: 'immediate' },

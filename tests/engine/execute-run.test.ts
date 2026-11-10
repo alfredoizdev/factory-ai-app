@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { nodeRuns, projects, runs, workflows } from '@/db/schema'
@@ -9,6 +9,7 @@ import { failRunAfterError } from '@/engine/inngest/execute-run'
 import { cancelRun, createRun, failUnstartedRun, publishVersion, saveDraft } from '@/engine/run'
 import { createDemoProvider } from '@/providers/demo'
 import type { AgentProvider } from '@/providers/types'
+import { strings } from '@/ui/strings'
 
 // These drive the orchestration directly with a stand-in for Inngest's step tools: no dev server is needed.
 
@@ -84,7 +85,9 @@ test('a demo run walks every enabled block and ends waiting on the human', async
   expect(await runStatus(runId)).toBe('waiting_approval')
   expect((await getNodeRun(runId, 'human')).state).toBe('waiting_approval')
   // The block after the human never started: the run is waiting, not finished.
-  expect(await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).then(r => r.some(n => n.blockId === 'ship'))).toBe(false)
+  const ship = await getNodeRun(runId, 'ship')
+  expect(ship.state).toBe('queued')
+  expect(ship.startedAt).toBeNull()
 })
 
 test('parking emits run.waiting_approval, not just a status change', async () => {
@@ -135,8 +138,11 @@ test('retries are bounded and then the node stays failed', async () => {
   const evts = await eventsSince(runId, 0)
   expect(evts.filter(e => e.type === 'node.failed')).toHaveLength(1)
   expect(evts.filter(e => e.type === 'node.step' && (e.payload as { retry?: boolean }).retry)).toHaveLength(1)
-  // Nothing after the failed node ran.
-  expect(await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).toHaveLength(1)
+  // Nothing after the failed node ran, and nothing is left reading queued: the run failed, so they were cancelled.
+  const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
+  expect(rows).toHaveLength(8)
+  const others = rows.filter(n => n.id !== failedNode.id)
+  expect(others.every(n => n.state === 'cancelled' && n.startedAt === null)).toBe(true)
 })
 
 test('a failure in a later node fails the run even though earlier nodes passed', async () => {
@@ -170,7 +176,7 @@ test('cancelling stops the in-flight provider and every later node, and persists
   await driven
   const states = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).map(n => n.state)
   expect(states.filter(s => s === 'running')).toHaveLength(0)
-  expect(states).toEqual(['cancelled'])
+  expect(states).toEqual(Array(8).fill('cancelled')) // the running one and every block it never reached
   expect(aborted).toBe(true)
   expect(await runStatus(runId)).toBe('cancelled')
   const t = await types(runId)
@@ -184,8 +190,11 @@ test('a run cancelled before it starts runs nothing', async () => {
   const runId = await newRun('add a spinner')
   await cancelRun(runId)
   await drive(runId, fast)
-  expect(await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).toHaveLength(0)
-  expect(await types(runId)).toEqual(['run.created', 'run.cancelled'])
+  const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
+  expect(rows.every(n => n.state === 'cancelled' && n.startedAt === null)).toBe(true)
+  const t = await types(runId)
+  expect(t.filter(x => x.startsWith('run.'))).toEqual(['run.created', 'run.cancelled'])
+  expect(t).not.toContain('node.started')
 })
 
 test('a disabled block is skipped with a reason, not silently dropped', async () => {
@@ -250,8 +259,11 @@ test('every node row has a node.queued event before node.started', async () => {
   for (const n of await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))) {
     const mine = evts.filter(e => e.nodeRunId === n.id).map(e => e.type)
     expect(mine[0]).toBe('node.queued')
-    expect(mine[1]).toBe('node.started')
+    // Every block has a row from the start; only the ones the run reached have a start, and it follows the queue.
+    if (n.startedAt !== null) expect(mine[1]).toBe('node.started')
+    else expect(mine).not.toContain('node.started')
   }
+  expect((await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).filter(n => n.startedAt !== null).length).toBeGreaterThan(1)
 })
 
 test('a retry step names the attempt about to start and why the previous one failed', async () => {
@@ -275,7 +287,9 @@ test('an unresolvable provider strands no node row and the failure handler fails
   const runId = await newRun('add a spinner')
   const deps: ExecutorDeps = { resolveProvider: () => { throw new Error('no such provider') } }
   await expect(orchestrateRun(runId, fakeStep(), deps)).rejects.toThrow('no such provider')
-  expect(await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).toHaveLength(0)
+  // No node was left half-started: every row is still exactly as createRun left it.
+  const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
+  expect(rows.every(n => n.state === 'queued' && n.startedAt === null)).toBe(true)
   failRunAfterError(runId)
   expect(await runStatus(runId)).toBe('failed')
   expect((await types(runId)).at(-1)).toBe('run.failed')
@@ -283,10 +297,8 @@ test('an unresolvable provider strands no node row and the failure handler fails
 
 test('the failure handler fails a node left running and then the run, once', async () => {
   const runId = await newRun('add a spinner')
-  const run = (await db.query.runs.findFirst({ where: eq(runs.id, runId) }))!
   db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
-  const nodeRunId = ulid()
-  db.insert(nodeRuns).values({ id: nodeRunId, projectId: run.projectId, runId, blockId: 'build', state: 'running', attempt: 1 }).run()
+  db.update(nodeRuns).set({ state: 'running' }).where(and(eq(nodeRuns.runId, runId), eq(nodeRuns.blockId, 'build'))).run()
   failRunAfterError(runId)
   failRunAfterError(runId) // idempotent
   expect((await getNodeRun(runId, 'build')).state).toBe('failed')
@@ -297,9 +309,8 @@ test('the failure handler fails a node left running and then the run, once', asy
 
 test('the failure handler rescues a node stranded in queued', async () => {
   const runId = await newRun('add a spinner')
-  const run = (await db.query.runs.findFirst({ where: eq(runs.id, runId) }))!
   db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
-  db.insert(nodeRuns).values({ id: ulid(), projectId: run.projectId, runId, blockId: 'plan', state: 'queued', attempt: 1 }).run()
+  expect((await getNodeRun(runId, 'plan')).state).toBe('queued') // createRun left it queued
   failRunAfterError(runId)
   expect((await getNodeRun(runId, 'plan')).state).toBe('cancelled')
   expect(await runStatus(runId)).toBe('failed')
@@ -345,6 +356,7 @@ describe('atomic run writes', () => {
 
   test('appendEvent with a transaction handle rolls back with the caller', async () => {
     const runId = await newRun('x')
+    const before = await types(runId)
     expect(() =>
       db.transaction(tx => {
         tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
@@ -353,7 +365,8 @@ describe('atomic run writes', () => {
       }),
     ).toThrow('crash')
     expect(await runStatus(runId)).toBe('queued')
-    expect(await types(runId)).toEqual(['run.created'])
+    expect(await types(runId)).toEqual(before)
+    expect(before).not.toContain('run.started')
   })
 
   test('failUnstartedRun ends a queued run with an event', async () => {
@@ -362,4 +375,58 @@ describe('atomic run writes', () => {
     expect(await runStatus(runId)).toBe('failed')
     expect((await types(runId)).at(-1)).toBe('run.failed')
   })
+})
+
+// I5: the column holds a cause code and nothing else; the message travels in the event.
+test('failureCause is always a code: a provider error keeps its prose in the event, not the column', async () => {
+  const { runId } = await runToCompletion('FAIL please')
+  const input = await getNodeRun(runId, 'input')
+  expect(input.failureCause).toBe('provider_error')
+  const failed = (await eventsSince(runId, 0)).find(e => e.type === 'node.failed')!
+  expect(failed.payload).toMatchObject({ cause: 'provider_error', messageSource: 'provider', message: expect.stringMatching(/.+/) })
+  expect(input.failureCause).not.toBe((failed.payload as { message: string }).message)
+})
+
+test('only a provider error is attributed to the provider; the executor\'s own failures are the system\'s', async () => {
+  const timedOut = await newRun('x', g => { g.blocks.find(b => b.kind === 'input')!.config = { timeoutMs: 50 } })
+  await drive(timedOut, silentProvider)
+  expect((await eventsSince(timedOut, 0)).find(e => e.type === 'node.failed')!.payload).toMatchObject({ cause: 'timeout', messageSource: 'system' })
+  const throwing: AgentProvider = { id: 't', isDemo: false, async *execute() { throw new Error('disk exploded') } }
+  const { runId } = await runToCompletion('x', throwing)
+  const payload = (await eventsSince(runId, 0)).find(e => e.type === 'node.failed')!.payload as Record<string, unknown>
+  expect(payload).toMatchObject({ cause: 'provider_crashed', messageSource: 'system' })
+  // The exception's own text is detail for logs, never the sentence the canvas shows.
+  expect(payload.message).not.toContain('disk exploded')
+})
+
+// I1: a block the run never reached must not keep reading queued.
+test('after a failed run, no block is left queued: those never reached are cancelled with a reason', async () => {
+  const failOnBuild: AgentProvider = {
+    ...fast,
+    execute: (input, c) => fast.execute(input.blockKind === 'build' ? { ...input, request: 'FAIL' } : input, c),
+  }
+  const { runId } = await runToCompletion('add a spinner', failOnBuild)
+  const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
+  expect(rows.filter(n => n.state === 'queued')).toEqual([])
+  for (const id of ['tests', 'review', 'approve', 'human', 'ship']) expect((await getNodeRun(runId, id)).state).toBe('cancelled')
+  expect((await getNodeRun(runId, 'plan')).state).toBe('passed')
+  const cancelled = (await eventsSince(runId, 0)).filter(e => e.type === 'node.cancelled')
+  expect(cancelled).toHaveLength(5)
+  expect(cancelled.every(e => (e.payload as { reason?: string }).reason === strings.run.notReached)).toBe(true)
+  // The sweep commits with the run's failure: it comes before run.failed, which stays last.
+  expect((await types(runId)).at(-1)).toBe('run.failed')
+})
+
+test('a human rejection also leaves nothing queued behind it', async () => {
+  const runId = await newRun('add a spinner')
+  await drive(runId, fast, { decision: 'rejected' })
+  expect((await getNodeRun(runId, 'ship')).state).toBe('cancelled')
+})
+
+test('a run that could not be started leaves none of its blocks queued', async () => {
+  const runId = await newRun('x')
+  await failUnstartedRun(runId)
+  const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
+  expect(rows).toHaveLength(8)
+  expect(rows.every(n => n.state === 'cancelled')).toBe(true)
 })

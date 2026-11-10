@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { BlockKind } from '@/domain/graph'
-import { DEMO_PROVIDER_ID } from '@/engine/run'
+import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { createDemoProvider, demoProvider, stepDelayFromEnv } from '@/providers/demo'
 import type { AgentEvent } from '@/providers/types'
 import { strings } from '@/ui/strings'

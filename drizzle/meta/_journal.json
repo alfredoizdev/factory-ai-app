@@ -15,6 +15,13 @@
       "when": 1794343124634,
       "tag": "0001_mature_spyke",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794352852374,
+      "tag": "0002_dark_thanos",
+      "breakpoints": true
     }
   ]
 }

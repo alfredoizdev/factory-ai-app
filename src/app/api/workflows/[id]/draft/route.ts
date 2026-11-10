@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { rejectCrossSite } from '@/engine/same-origin'
 import { saveDraft, WorkflowNotFoundError } from '@/engine/run'
 import { strings } from '@/ui/strings'
 
@@ -16,6 +17,8 @@ const graphSchema = z.object({
 })
 
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const refused = rejectCrossSite(req)
+  if (refused) return refused
   const { id } = await ctx.params
   const body = graphSchema.safeParse(await req.json().catch(() => null))
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })

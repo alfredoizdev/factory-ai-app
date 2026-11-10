@@ -144,8 +144,9 @@ test('a step for a block the log has not started does not light it', async () =>
 test('the palette wire: adding a block while a run holds review-1 never hands out review-1', () => {
   const runGraph = addBlock(graph, 'review') // the run contains review and review-1
   render(<CanvasScreen workflowId="w1" graph={graph} run={runOf(runGraph.blocks)} />) // the draft lacks review-1
-  expect(screen.queryByTestId('node-review-1')).toBeNull()
+  // The run holds review-1, so it is drawn from the run (a run's block is never hidden because the draft dropped it).
+  expect(state('review-1')).toBe('queued')
   fireEvent.click(within(screen.getByTestId('palette')).getByRole('button', { name: strings.blocks.review }))
-  expect(screen.queryByTestId('node-review-1')).toBeNull()
+  expect(state('review-1')).toBe('queued') // still the run's block, not overwritten by the new one
   expect(screen.getByTestId('node-review-2')).toHaveAttribute('data-state', 'not_in_run')
 })

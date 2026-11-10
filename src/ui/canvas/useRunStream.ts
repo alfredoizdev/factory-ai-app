@@ -22,7 +22,17 @@ const NODE_EVENT_STATE: Record<string, NodeState> = {
   'node.cancelled': 'cancelled',
 }
 
-type RawNode = { state: NodeState; steps: string[]; reportedSummary?: string; claimSource?: string; skippedReason?: string }
+type RawNode = {
+  state: NodeState
+  steps: string[]
+  reportedSummary?: string
+  claimSource?: string
+  skippedReason?: string
+  /** From node.failed: the recorded cause code, the sentence that went with it, and who wrote that sentence. */
+  failureCause?: string
+  failureMessage?: string
+  failureSource?: string
+}
 export type StreamState = { nodes: Record<string, RawNode>; lastSequence: number }
 export const emptyStream: StreamState = { nodes: {}, lastSequence: 0 }
 
@@ -61,6 +71,12 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
     // Carry the producer's marker verbatim; summarize/claimUsed decide what it means.
     updated.claimSource = typeof payload.summarySource === 'string' ? payload.summarySource : undefined
   }
+  if (event.type === 'node.failed') {
+    updated.failureCause = text(payload.cause)
+    updated.failureMessage = text(payload.message)
+    // Same rule as summarySource: carried verbatim, and anything but 'system' is treated as a model's words.
+    updated.failureSource = typeof payload.messageSource === 'string' ? payload.messageSource : undefined
+  }
   if (event.type === 'node.skipped') updated.skippedReason = text(payload.reason)
   return { nodes: { ...prev.nodes, [blockId]: updated }, lastSequence: event.sequence }
 }
@@ -76,7 +92,15 @@ export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[]
       out[blockId] = { blockId, state: n.state, summary: strings.summary.generic[n.state], summaryIsClaim: false, steps: n.steps }
       continue
     }
-    const input: SummaryInput = { kind, state: n.state, claim: n.reportedSummary, claimSource: n.claimSource, skippedReason: n.skippedReason }
+    const failed = n.state === 'failed'
+    const input: SummaryInput = {
+      kind,
+      state: n.state,
+      claim: failed ? n.failureMessage : n.reportedSummary,
+      claimSource: failed ? n.failureSource : n.claimSource,
+      cause: failed ? n.failureCause : undefined,
+      skippedReason: n.skippedReason,
+    }
     out[blockId] = { blockId, state: n.state, summary: summarize(input), summaryIsClaim: claimUsed(input), steps: n.steps }
   }
   return out

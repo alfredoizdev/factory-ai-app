@@ -35,8 +35,12 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
   const input: SummaryInput = {
     kind: block.kind,
     state,
-    claim: event.type === 'node.completed' ? str(payload.summary) : undefined,
-    claimSource: typeof payload.summarySource === 'string' ? payload.summarySource : undefined,
+    claim: event.type === 'node.completed' ? str(payload.summary) : event.type === 'node.failed' ? str(payload.message) : undefined,
+    claimSource:
+      event.type === 'node.failed'
+        ? typeof payload.messageSource === 'string' ? payload.messageSource : undefined
+        : typeof payload.summarySource === 'string' ? payload.summarySource : undefined,
+    cause: event.type === 'node.failed' ? str(payload.cause) : undefined,
     skippedReason: event.type === 'node.skipped' ? str(payload.reason) : undefined,
   }
   return { text: summarize(input), isClaim: claimUsed(input) }

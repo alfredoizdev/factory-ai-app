@@ -2,7 +2,7 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { projects, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { appendEvent, type EventRow } from '@/engine/events'
+import { appendEvent, eventsSince, type EventRow } from '@/engine/events'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import { GET } from '@/app/api/runs/[runId]/events/route'
 
@@ -21,8 +21,10 @@ async function startRun(): Promise<{ runId: string }> {
   })
   await saveDraft(workflowId, defaultGraph())
   await publishVersion(workflowId)
-  const { runId } = await createRun({ workflowId, request: 'x' }) // appends run.created as sequence 1
-  for (let i = 0; i < 11; i++) await appendEvent({ runId, type: 'node.step', payload: { blockId: 'build', text: `s${i}` } })
+  const { runId } = await createRun({ workflowId, request: 'x' }) // appends run.created as sequence 1, then one node.queued per block
+  // The tests below read a log of exactly 12 events, so the steps top up whatever createRun wrote.
+  const written = (await eventsSince(runId, 0)).length
+  for (let i = 0; i < 12 - written; i++) await appendEvent({ runId, type: 'node.step', payload: { blockId: 'build', text: `s${i}` } })
   return { runId }
 }
 

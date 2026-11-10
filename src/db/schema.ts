@@ -69,7 +69,8 @@ export const nodeRuns = sqliteTable(
     startedAt: text('started_at'),
     finishedAt: text('finished_at'),
   },
-  t => [index('node_runs_run_idx').on(t.runId)],
+  // One node run per block per run: openNodeIn, decideHumanNode and the cancel sweep all resolve a block to its row.
+  t => [index('node_runs_run_idx').on(t.runId), uniqueIndex('node_runs_run_block_uq').on(t.runId, t.blockId)],
 )
 
 export const jobs = sqliteTable(

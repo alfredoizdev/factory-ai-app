@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
-import { projects, workflows, workflowVersions, runs } from '@/db/schema'
+import { nodeRuns, projects, workflows, workflowVersions, runs } from '@/db/schema'
 import { defaultGraph, type Graph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
 import { saveDraft, publishVersion, createRun, cancelRun, NothingPublishedError, DEMO_PROVIDER_ID } from '@/engine/run'
@@ -140,7 +140,8 @@ test('creating a run emits run.created as sequence 1', async () => {
   const [first, ...rest] = await eventsSince(runId, 0)
   expect(first!.type).toBe('run.created')
   expect(first!.sequence).toBe(1)
-  expect(rest).toHaveLength(0)
+  // Nothing else but the queued node of each block (the design's section 7, step 2): no run.* event, no start.
+  expect(rest.map(e => e.type)).toEqual(Array(8).fill('node.queued'))
   expect((await getRun(runId)).status).toBe('queued')
 })
 
@@ -153,7 +154,8 @@ test('cancelling marks the run cancelled and records it once', async () => {
   expect(run.status).toBe('cancelled')
   expect(run.finishedAt).not.toBeNull()
   const types = (await eventsSince(runId, 0)).map(e => e.type)
-  expect(types).toEqual(['run.created', 'run.cancelled'])
+  expect(types.filter(t => t.startsWith('run.'))).toEqual(['run.created', 'run.cancelled'])
+  expect(types.filter(t => t === 'node.cancelled')).toHaveLength(8) // each queued node is cancelled once, not twice
 })
 
 test('cancelling a finished run leaves it untouched', async () => {
@@ -162,5 +164,33 @@ test('cancelling a finished run leaves it untouched', async () => {
   await db.update(runs).set({ status: 'completed', finishedAt: now() }).where(eq(runs.id, runId))
   await cancelRun(runId)
   expect((await getRun(runId)).status).toBe('completed')
-  expect((await eventsSince(runId, 0)).map(e => e.type)).toEqual(['run.created'])
+  expect((await eventsSince(runId, 0)).map(e => e.type)).not.toContain('node.cancelled')
+  expect((await eventsSince(runId, 0)).map(e => e.type).filter(t => t.startsWith('run.'))).toEqual(['run.created'])
+})
+
+test('creating a run creates one queued node run per block, with a node.queued event each', async () => {
+  await publishVersion(wf)
+  const { runId } = await createRun({ workflowId: wf, request: 'x' })
+  const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
+  expect(rows.map(r => r.blockId).sort()).toEqual(defaultGraph().blocks.map(b => b.id).sort())
+  expect(rows.every(r => r.state === 'queued' && r.startedAt === null)).toBe(true)
+  const queued = (await eventsSince(runId, 0)).filter(e => e.type === 'node.queued')
+  expect(queued.map(e => e.nodeRunId).sort()).toEqual(rows.map(r => r.id).sort())
+})
+
+test('a node run is unique per block per run', async () => {
+  await publishVersion(wf)
+  const { runId } = await createRun({ workflowId: wf, request: 'x' })
+  const [row] = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
+  expect(() =>
+    db.insert(nodeRuns).values({ id: ulid(), projectId: row!.projectId, runId, blockId: row!.blockId, state: 'queued', attempt: 1 }).run(),
+  ).toThrow(/UNIQUE/)
+})
+
+test('cancelling a run that never started cancels the blocks it never reached', async () => {
+  await publishVersion(wf)
+  const { runId } = await createRun({ workflowId: wf, request: 'x' })
+  await cancelRun(runId)
+  const states = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).map(r => r.state)
+  expect(states).toEqual(Array(8).fill('cancelled'))
 })

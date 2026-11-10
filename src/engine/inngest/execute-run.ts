@@ -87,6 +87,8 @@ function finishRun(runId: string, status: 'completed' | 'failed', payload?: unkn
     const current = runStatusOf(tx, runId)
     if (current === 'cancelled' || current === 'failed' || current === 'completed') return
     tx.update(runs).set({ status, finishedAt: now() }).where(eq(runs.id, runId)).run()
+    // A failed run will never start the blocks it did not reach, so they end as cancelled rather than read queued.
+    if (status === 'failed') cancelUnreachedNodes(tx, runId)
     appendEventSync({ runId, type: status === 'completed' ? 'run.completed' : 'run.failed', payload }, tx)
   })
 }
@@ -114,6 +116,13 @@ function transitionNode(
   )
   node.state = to
   return true
+}
+
+// Every block still queued when its run has failed was never reached and never will be.
+function cancelUnreachedNodes(tx: DbHandle, runId: string): void {
+  for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
+    if (node.state === 'queued') transitionNode(tx, node, 'cancelled', { type: 'node.cancelled', payload: { reason: strings.run.notReached } })
+  }
 }
 
 // Finds this block's node run or creates it. Refuses (null) once the run is cancelled, inside the same transaction,
@@ -307,8 +316,10 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
     const failed = withTx(tx =>
       transitionNode(tx, freshNode(opened.id), 'failed', {
         type: 'node.failed',
-        payload: { cause, message, attempt, ...(detail ? { detail } : {}) },
-      }, { failureCause: cause === 'provider_error' ? message : cause }),
+        // messageSource says who wrote `message`: only a provider_error carries the provider's own words. The
+        // column holds the cause code alone; the message lives in this event, the one place the canvas reads it.
+        payload: { cause, message, messageSource: cause === 'provider_error' ? 'provider' : 'system', attempt, ...(detail ? { detail } : {}) },
+      }, { failureCause: cause }),
     )
     return { outcome: failed ? 'failed' : 'cancelled' }
   }
@@ -345,7 +356,7 @@ function decideHumanNode(runId: string, block: PlannedBlock, approved: boolean):
     const fresh = freshNode(node.id)
     const moved = approved
       ? transitionNode(tx, fresh, 'passed', { type: 'node.completed', payload: { summary: strings.run.resumed, summarySource: 'system' } }, { summary: strings.run.resumed })
-      : transitionNode(tx, fresh, 'failed', { type: 'node.failed', payload: { cause: 'rejected', message: strings.run.rejected } }, { failureCause: 'rejected' })
+      : transitionNode(tx, fresh, 'failed', { type: 'node.failed', payload: { cause: 'rejected', message: strings.run.rejected, messageSource: 'system' } }, { failureCause: 'rejected' })
     if (moved && runStatusOf(tx, runId) === 'waiting_approval') {
       tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
       appendEventSync({ runId, type: 'run.started', payload: { resumed: true } }, tx)
@@ -430,7 +441,7 @@ export function failRunAfterError(runId: string): void {
       }
       transitionNode(tx, node, 'failed', {
         type: 'node.failed',
-        payload: { cause: 'internal_error', message: strings.run.internalFailure },
+        payload: { cause: 'internal_error', message: strings.run.internalFailure, messageSource: 'system' },
       }, { failureCause: 'internal_error' })
     }
     tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId)).run()

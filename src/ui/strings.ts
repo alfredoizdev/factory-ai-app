@@ -76,6 +76,15 @@ export const strings = {
       cancelled: 'Not shipped.',
       blocked: 'Held back until a decision is made.',
     },
+    // A failed block whose recorded cause is known but whose message is missing. Each names only what is recorded.
+    cause: {
+      timeout: 'Stopped: it gave no result in time.',
+      provider_error: 'Stopped: the agent reported an error.',
+      provider_crashed: 'Stopped: the agent crashed.',
+      no_result: 'Stopped: the agent finished without a result.',
+      internal_error: 'Stopped by an internal error.',
+      unknown: 'Stopped. The cause was recorded, but it is not one this screen knows.',
+    },
     testsPassed: (passed: number, total: number) => `${passed} of ${total} passed.`,
     testsFailed: (passed: number, failed: number, total: number) =>
       `${passed} of ${total} passed. ${failed} failed.`,
@@ -97,7 +106,7 @@ export const strings = {
     },
     stateAria: (label: string) => `State: ${label}`,
     claimMarker: 'AI says',
-    claimTitle: 'This sentence was written by an AI reviewer. It has not been verified.',
+    claimTitle: 'This sentence was written by an AI. It has not been verified.',
     cost: 'Cost',
     tokens: 'Tokens',
     noResultLine: 'No result line was recorded for this step.',
@@ -132,6 +141,7 @@ export const strings = {
     runNotFound: 'That run does not exist.',
     nothingPublished: 'Publish the workflow before starting a run.',
     cannotPublish: 'The workflow has problems that must be fixed before it can be published.',
+    crossSite: 'That request came from another site, so it was refused.',
     invalidBody: 'The request was not in the expected shape.',
   },
   run: {
@@ -143,6 +153,7 @@ export const strings = {
     rejected: 'A person rejected the result.',
     resumed: 'A person approved. The run continues.',
     internalFailure: 'The run stopped because of an internal error.',
+    notReached: 'An earlier step stopped the run, so this block never started.',
     couldNotStart: 'The run could not be started. Nothing ran.',
     demoBadge: 'Demo',
     demoTitle: 'Simulated run. No real agent did this work.',
