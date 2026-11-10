@@ -101,6 +101,7 @@ export const strings = {
     noResultLine: 'No result line was recorded for this step.',
     notReported: 'Not reported',
     steps: 'Steps',
+    earlierStepsHidden: (n: number) => `${n} earlier ${n === 1 ? 'step is' : 'steps are'} not shown`,
     collapse: 'Collapse',
     breadcrumbAria: 'Where this block sits in the flow',
     breadcrumbSeparator: ' › ',

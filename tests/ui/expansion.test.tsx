@@ -139,13 +139,45 @@ test('the live step list shows what the agent is doing now', () => {
   expect(items.map(i => i.textContent)).toEqual(['Found the button', 'Changed the colour', 'Writing the spinner'])
 })
 
-test('a long step history shows only the latest steps', () => {
+test('a long step history shows the latest steps, numbered by their real position, and says what is hidden', () => {
   const build = defaultGraph().blocks.find(b => b.id === 'build')!
   const steps = Array.from({ length: 12 }, (_, i) => `step ${i + 1}`)
   render(<BlockCard expanded block={build} view={{ state: 'running', summary: 'x', summaryIsClaim: false, steps }} />)
   const items = screen.getAllByRole('listitem').map(i => i.textContent)
-  expect(items.length).toBeLessThan(12)
-  expect(items.at(-1)).toBe('step 12')
+  expect(items).toEqual(['step 7', 'step 8', 'step 9', 'step 10', 'step 11', 'step 12'])
+  expect(screen.getByRole('list')).toHaveAttribute('start', '7')
+  expect(screen.getByText('6 earlier steps are not shown')).toBeInTheDocument()
+})
+
+test('a short step history starts at 1 and claims nothing is hidden', () => {
+  const build = defaultGraph().blocks.find(b => b.id === 'build')!
+  render(<BlockCard expanded block={build} view={{ state: 'running', summary: 'x', summaryIsClaim: false, steps: ['a', 'b'] }} />)
+  expect(screen.getByRole('list')).toHaveAttribute('start', '1')
+  expect(screen.queryByText(/not shown/)).toBeNull()
+})
+
+test('an expanded card with no steps and no usage has no empty section', () => {
+  const build = defaultGraph().blocks.find(b => b.id === 'build')!
+  render(<BlockCard expanded block={build} view={{ state: 'queued', summary: 'x', summaryIsClaim: false }} />)
+  expect(screen.queryByRole('list')).toBeNull()
+  expect(screen.queryByText('Steps')).toBeNull()
+})
+
+test('selecting a card keeps its state colour and logs no React style error', () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    render(<Canvas graph={defaultGraph()} />)
+    const card = screen.getByTestId('block-card-build')
+    const before = card.style.borderLeftColor
+    expect(before).not.toBe('')
+    fireEvent.click(card)
+    fireEvent.click(card)
+    expect(card.style.borderLeftColor).toBe(before)
+    expect(card.style.borderLeftWidth).toBe('4px')
+    expect(error).not.toHaveBeenCalled()
+  } finally {
+    error.mockRestore()
+  }
 })
 
 test('an expanded card keeps the claim marker on an AI sentence and shows usage honestly', () => {

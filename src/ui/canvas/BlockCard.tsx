@@ -69,8 +69,12 @@ export function BlockCard({
 }) {
   const visual = visualStateOf(view.state)
   const stateLabel = strings.canvas.stateLabel[view.state]
-  const steps = (view.steps ?? []).slice(-MAX_STEPS)
+  const allSteps = view.steps ?? []
+  const steps = allSteps.slice(-MAX_STEPS)
+  const hiddenSteps = allSteps.length - steps.length
   const hasSummary = view.summary.trim() !== ''
+
+  const frame = selected ? theme.running : theme.border
 
   return (
     <div
@@ -79,8 +83,15 @@ export function BlockCard({
         width: expanded ? EXPANDED_CARD_WIDTH : CARD_WIDTH,
         minWidth: 220,
         background: theme.card,
-        border: `1px solid ${selected ? theme.running : theme.border}`,
-        borderLeft: `4px solid ${theme[visual]}`,
+        // Longhand only: a shorthand rewrite on selection would wipe the left bar that carries the state colour.
+        borderStyle: 'solid',
+        borderWidth: 1,
+        // Per-side colours, not borderColor: that longhand would also repaint the left side when selection flips.
+        borderTopColor: frame,
+        borderRightColor: frame,
+        borderBottomColor: frame,
+        borderLeftWidth: 4,
+        borderLeftColor: theme[visual],
         borderRadius: 8,
         padding: 12,
         boxShadow: GLOWING.has(visual) ? theme.glow(visual) : 'none',
@@ -141,7 +152,11 @@ export function BlockCard({
           {steps.length > 0 && (
             <>
               <div style={{ color: theme.skipped }}>{strings.canvas.steps}</div>
-              <ol style={{ margin: '4px 0 8px', paddingLeft: 20 }}>
+              {hiddenSteps > 0 && (
+                <div style={{ color: theme.skipped, fontSize: 12 }}>{strings.canvas.earlierStepsHidden(hiddenSteps)}</div>
+              )}
+              {/* start keeps the numbers true to the real position when earlier steps are not shown. */}
+              <ol start={hiddenSteps + 1} style={{ margin: '4px 0 8px', paddingLeft: 20 }}>
                 {steps.map((s, i) => (
                   <li key={i}>{s}</li>
                 ))}
