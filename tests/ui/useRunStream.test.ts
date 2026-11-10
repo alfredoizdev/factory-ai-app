@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react'
-import { useRunStream } from '@/ui/canvas/useRunStream'
+import { emptyStream, foldEvent, useRunStream } from '@/ui/canvas/useRunStream'
 import { strings } from '@/ui/strings'
 import type { Block } from '@/domain/graph'
 
@@ -167,4 +167,35 @@ test('unmounting closes the stream and cancels a pending reconnect', () => {
   act(() => vi.advanceTimersByTime(10_000))
   expect(FakeEventSource.all.length).toBe(n)
   expect(es.closed).toBe(true)
+})
+
+test('a system-sourced completed summary is not a claim; provider, absent and unknown markers are', () => {
+  const human = [{ id: 'h', kind: 'human' }, { id: 'rev', kind: 'review' }] as Block[]
+  const { result } = renderHook(() => useRunStream('r1', human))
+  last().send(1, 'node.completed', { blockId: 'h', summary: strings.run.resumed, summarySource: 'system' })
+  expect(result.current.views['h']).toMatchObject({ state: 'passed', summary: strings.run.resumed, summaryIsClaim: false })
+  const withKinds = [0, 1, 2].map(i => ({ id: `rev${i}`, kind: 'review' })) as Block[]
+  const { result: r2 } = renderHook(() => useRunStream('r1', withKinds))
+  for (const [i, marker] of [['provider'], [undefined], ['robot']].entries()) {
+    last().send(20 + i, 'node.completed', { blockId: `rev${i}`, summary: 'Looks fine.', ...(marker[0] ? { summarySource: marker[0] } : {}) })
+  }
+  for (let i = 0; i < 3; i++) expect(r2.current.views[`rev${i}`], `marker ${i}`).toMatchObject({ summary: 'Looks fine.', summaryIsClaim: true })
+})
+
+describe('foldEvent duplicate guard', () => {
+  const started = foldEvent(emptyStream, { sequence: 5, type: 'node.started', payload: { blockId: 'b' } })
+  const withStep = foldEvent(started, { sequence: 6, type: 'node.step', payload: { blockId: 'b', text: 'x' } })
+
+  test('a repeated sequence changes nothing', () => {
+    const again = foldEvent(withStep, { sequence: 6, type: 'node.step', payload: { blockId: 'b', text: 'x' } })
+    expect(again).toBe(withStep)
+    expect(again.nodes['b']!.steps).toEqual(['x'])
+  })
+
+  test('an older sequence is ignored and never moves the cursor backwards', () => {
+    const old = foldEvent(withStep, { sequence: 3, type: 'node.completed', payload: { blockId: 'b' } })
+    expect(old).toBe(withStep)
+    expect(old.lastSequence).toBe(6)
+    expect(old.nodes['b']!.state).toBe('running')
+  })
 })

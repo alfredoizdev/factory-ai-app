@@ -22,7 +22,7 @@ const NODE_EVENT_STATE: Record<string, NodeState> = {
   'node.cancelled': 'cancelled',
 }
 
-type RawNode = { state: NodeState; steps: string[]; reportedSummary?: string; skippedReason?: string }
+type RawNode = { state: NodeState; steps: string[]; reportedSummary?: string; systemSourced?: boolean; skippedReason?: string }
 export type StreamState = { nodes: Record<string, RawNode>; lastSequence: number }
 export const emptyStream: StreamState = { nodes: {}, lastSequence: 0 }
 
@@ -52,10 +52,16 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   if (state === undefined) return moved
   // First sight of a block takes whatever the log says (a run may lack node.queued). After that the state
   // machine decides: an event it forbids, such as a start after a finish, is not applied.
+  // (The event is still real, but the view keeps the state the machine allows; the cursor moves so it is not retried.)
   if (node && node.state !== state && !canTransition(node.state, state)) return moved
 
   const updated: RawNode = { ...node, state, steps: node?.steps ?? [] }
-  if (event.type === 'node.completed') updated.reportedSummary = text(payload.summary)
+  if (event.type === 'node.completed') {
+    updated.reportedSummary = text(payload.summary)
+    // Carry the producer's marker; never infer it. Only an exact 'system' lifts the claim flag. Absent or
+    // unrecognised stays a claim: over-flagging a system sentence is minor, rendering a model's sentence as fact is not.
+    updated.systemSourced = payload.summarySource === 'system'
+  }
   if (event.type === 'node.skipped') updated.skippedReason = text(payload.reason)
   return { nodes: { ...prev.nodes, [blockId]: updated }, lastSequence: event.sequence }
 }
@@ -69,6 +75,11 @@ export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[]
     if (kind === undefined || !KINDS.has(kind)) {
       // Without the block's kind there is no honest per-kind sentence, and nothing to attribute a claim to.
       out[blockId] = { blockId, state: n.state, summary: strings.summary.generic[n.state], summaryIsClaim: false, steps: n.steps }
+      continue
+    }
+    if (n.state === 'passed' && n.systemSourced && n.reportedSummary !== undefined) {
+      // The producer wrote this sentence itself, so it is shown verbatim and not marked as an AI claim.
+      out[blockId] = { blockId, state: n.state, summary: n.reportedSummary, summaryIsClaim: false, steps: n.steps }
       continue
     }
     const input: SummaryInput = { kind, state: n.state, claim: n.reportedSummary, skippedReason: n.skippedReason }
