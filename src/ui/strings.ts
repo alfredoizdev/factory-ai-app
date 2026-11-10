@@ -1,3 +1,5 @@
+import type { BlockKind } from '@/domain/graph'
+
 // All user-facing copy lives here so another language can be added later.
 export const strings = {
   app: {
@@ -133,5 +135,25 @@ export const strings = {
   demo: {
     projectName: 'Demo project',
     workflowName: 'Demo workflow',
+  },
+  providers: {
+    demo: {
+      steps: {
+        input: ['Recording the request', 'Checking it is not empty'],
+        plan: ['Reading the request', 'Listing the steps to take', 'Writing the plan'],
+        build: ['Reading the plan', 'Editing the affected files', 'Saving the changes'],
+        tests: ['Finding the test suite', 'Running the tests'],
+        review: ['Reading the changes', 'Looking for problems'],
+        approve: ['Collecting the results', 'Preparing the decision'],
+        human: ['Preparing the check for a person'],
+        ship: ['Packaging the changes', 'Preparing the release note'],
+      } satisfies Record<BlockKind, string[]>,
+      summaries: [
+        'Simulated run. No real agent did this work.',
+        'Simulated run. Nothing was changed.',
+        'Simulated run. Treat these results as a demonstration only.',
+      ],
+      failed: 'Simulated failure: the request contained FAIL.',
+    },
   },
 }
