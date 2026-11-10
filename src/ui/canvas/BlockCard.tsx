@@ -49,11 +49,14 @@ export function BlockCard({
   view,
   expanded = false,
   selected = false,
+  issues = [],
 }: {
   block: Block
   view: CardView
   expanded?: boolean
   selected?: boolean
+  /** Validation messages for this block, shown on the card they belong to. */
+  issues?: string[]
 }) {
   const visual = visualStateOf(view.state)
   const stateLabel = strings.canvas.stateLabel[view.state]
@@ -73,10 +76,12 @@ export function BlockCard({
         padding: 12,
         boxShadow: GLOWING.has(visual) ? theme.glow(visual) : 'none',
         fontSize: 13,
+        opacity: block.enabled ? 1 : 0.55,
       }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
         <strong style={{ fontSize: 14 }}>{block.label}</strong>
+        {!block.enabled && <span style={{ color: theme.skipped, fontSize: 12 }}>{strings.editing.disabledBadge}</span>}
         <span
           aria-label={strings.canvas.stateAria(stateLabel)}
           style={{ color: theme[visual], fontSize: 12, fontWeight: 600 }}
@@ -86,13 +91,19 @@ export function BlockCard({
       </div>
 
       <p style={{ margin: '8px 0 0' }}>
-        {hasSummary && view.summaryIsClaim && (
+        {block.enabled && hasSummary && view.summaryIsClaim && (
           <span title={strings.canvas.claimTitle} style={{ fontStyle: 'italic', color: theme.waiting }}>
             {strings.canvas.claimMarker}:{' '}
           </span>
         )}
-        {hasSummary ? view.summary : strings.canvas.noResultLine}
+        {!block.enabled ? strings.editing.disabledLine : hasSummary ? view.summary : strings.canvas.noResultLine}
       </p>
+
+      {issues.map(message => (
+        <p key={message} style={{ margin: '8px 0 0', color: theme.failed, fontWeight: 600 }}>
+          {message}
+        </p>
+      ))}
 
       {expanded && (
         <div style={{ marginTop: 10, borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
