@@ -87,6 +87,28 @@ test('a demo run walks every enabled block and ends waiting on the human', async
   expect(await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).then(r => r.some(n => n.blockId === 'ship'))).toBe(false)
 })
 
+test('parking emits run.waiting_approval, not just a status change', async () => {
+  const { runId } = await runToCompletion('add a spinner')
+  const evts = await eventsSince(runId, 0)
+  const waiting = evts.filter(e => e.type === 'run.waiting_approval')
+  expect(waiting).toHaveLength(1)
+  expect(waiting[0]!.payload).toMatchObject({ blockId: 'human' })
+  expect(evts.at(-1)!.type).toBe('node.waiting_approval')
+  expect(waiting[0]!.sequence).toBeLessThan(evts.at(-1)!.sequence)
+})
+
+test('summaries say whether the provider or the system wrote them', async () => {
+  const runId = await newRun('add a spinner')
+  await drive(runId, fast, { decision: 'approved' })
+  const done = (await eventsSince(runId, 0)).filter(e => e.type === 'node.completed')
+  for (const e of done) {
+    const p = e.payload as { blockId: string; summarySource: string }
+    expect(p.summarySource).toBe(p.blockId === 'human' ? 'system' : 'provider')
+  }
+  expect(done.some(e => (e.payload as { blockId: string }).blockId === 'human')).toBe(true)
+  expect(done.length).toBeGreaterThan(1)
+})
+
 test('events carry strictly increasing sequence numbers and every node event names its block', async () => {
   const { runId } = await runToCompletion('add a spinner')
   const evts = await eventsSince(runId, 0)
@@ -271,6 +293,17 @@ test('the failure handler fails a node left running and then the run, once', asy
   expect((await getNodeRun(runId, 'build')).failureCause).toBe('internal_error')
   expect(await runStatus(runId)).toBe('failed')
   expect((await types(runId)).filter(t => t === 'run.failed')).toHaveLength(1)
+})
+
+test('the failure handler rescues a node stranded in queued', async () => {
+  const runId = await newRun('add a spinner')
+  const run = (await db.query.runs.findFirst({ where: eq(runs.id, runId) }))!
+  db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
+  db.insert(nodeRuns).values({ id: ulid(), projectId: run.projectId, runId, blockId: 'plan', state: 'queued', attempt: 1 }).run()
+  failRunAfterError(runId)
+  expect((await getNodeRun(runId, 'plan')).state).toBe('cancelled')
+  expect(await runStatus(runId)).toBe('failed')
+  expect(await types(runId)).toContain('node.cancelled')
 })
 
 test('the failure handler leaves a cancelled run alone', async () => {

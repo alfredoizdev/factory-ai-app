@@ -248,7 +248,7 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
       const done = withTx(tx =>
         transitionNode(tx, freshNode(opened.id), 'passed', {
           type: 'node.completed',
-          payload: { summary: result.summary, attempt },
+          payload: { summary: result.summary, summarySource: 'provider', attempt },
         }, { summary: result.summary }),
       )
       return { outcome: done ? 'passed' : 'cancelled' }
@@ -326,10 +326,13 @@ function parkHumanNode(runId: string, block: PlannedBlock): Outcome {
       if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return { outcome: 'cancelled' }
       tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
     }
-    if (node.state === 'running' && !transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval' })) return { outcome: 'cancelled' }
+    // The run's own state change is an event too, appended where the status changes. It precedes the node event so
+    // the log ends on node.waiting_approval, the block the person has to act on.
     if (runStatusOf(tx, runId) === 'running') {
       tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId)).run()
+      appendEventSync({ runId, type: 'run.waiting_approval', payload: { blockId: block.id } }, tx)
     }
+    if (node.state === 'running' && !transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval' })) return { outcome: 'cancelled' }
     return { outcome: 'parked' }
   })
   return result
@@ -341,7 +344,7 @@ function decideHumanNode(runId: string, block: PlannedBlock, approved: boolean):
   const ok = withTx(tx => {
     const fresh = freshNode(node.id)
     const moved = approved
-      ? transitionNode(tx, fresh, 'passed', { type: 'node.completed', payload: { summary: strings.run.resumed } }, { summary: strings.run.resumed })
+      ? transitionNode(tx, fresh, 'passed', { type: 'node.completed', payload: { summary: strings.run.resumed, summarySource: 'system' } }, { summary: strings.run.resumed })
       : transitionNode(tx, fresh, 'failed', { type: 'node.failed', payload: { cause: 'rejected', message: strings.run.rejected } }, { failureCause: 'rejected' })
     if (moved && runStatusOf(tx, runId) === 'waiting_approval') {
       tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
@@ -420,6 +423,11 @@ export function failRunAfterError(runId: string): void {
     const status = runStatusOf(tx, runId)
     if (status === undefined || status === 'cancelled' || status === 'failed' || status === 'completed') return
     for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
+      if (node.state === 'queued') {
+        // queued -> failed is not a legal transition; a node that never started is cancelled, and the run carries the failure.
+        transitionNode(tx, node, 'cancelled', { type: 'node.cancelled', payload: { reason: strings.run.internalFailure } })
+        continue
+      }
       transitionNode(tx, node, 'failed', {
         type: 'node.failed',
         payload: { cause: 'internal_error', message: strings.run.internalFailure },
