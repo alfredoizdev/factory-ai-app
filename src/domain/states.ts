@@ -21,22 +21,36 @@ const TRANSITIONS: Record<NodeState, readonly NodeState[]> = {
   queued: ['running', 'skipped', 'blocked', 'cancelled'],
   running: ['waiting_approval', 'passed', 'failed', 'cancelled'],
   waiting_approval: ['running', 'passed', 'failed', 'cancelled'],
+  blocked: ['queued', 'skipped', 'cancelled'],
   passed: [],
   failed: [],
   cancelled: [],
   skipped: [],
-  blocked: [],
 }
 
-// Highest precedence first. A blocked node is not finished, so it counts as queued.
-const ROLL_UP_PRECEDENCE: ReadonlyArray<readonly [NodeState, RunStatus]> = [
-  ['failed', 'failed'],
-  ['cancelled', 'cancelled'],
-  ['waiting_approval', 'waiting_approval'],
-  ['running', 'running'],
-  ['queued', 'queued'],
-  ['blocked', 'queued'],
-]
+// Total mapping: adding a NodeState without an entry here fails to compile.
+// A blocked node needs a human decision or fix, so it rolls up as waiting on
+// one, never as idle.
+const NODE_RUN_STATUS: Record<NodeState, RunStatus> = {
+  queued: 'queued',
+  running: 'running',
+  waiting_approval: 'waiting_approval',
+  blocked: 'waiting_approval',
+  passed: 'completed',
+  skipped: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+}
+
+// Lower rank wins the roll-up: failed > cancelled > waiting_approval > running > queued > completed.
+const RUN_STATUS_RANK: Record<RunStatus, number> = {
+  failed: 0,
+  cancelled: 1,
+  waiting_approval: 2,
+  running: 3,
+  queued: 4,
+  completed: 5,
+}
 
 export function canTransition(from: NodeState, to: NodeState): boolean {
   return TRANSITIONS[from].includes(to)
@@ -50,10 +64,10 @@ export function rollUpRunStatus(nodeStates: NodeState[]): RunStatus {
   // Nothing has run, so there is no evidence of success.
   if (nodeStates.length === 0) return 'queued'
 
-  for (const [nodeState, runStatus] of ROLL_UP_PRECEDENCE) {
-    if (nodeStates.includes(nodeState)) return runStatus
+  let result: RunStatus = 'completed'
+  for (const state of nodeStates) {
+    const status = NODE_RUN_STATUS[state]
+    if (RUN_STATUS_RANK[status] < RUN_STATUS_RANK[result]) result = status
   }
-
-  // Only passed and skipped remain.
-  return 'completed'
+  return result
 }
