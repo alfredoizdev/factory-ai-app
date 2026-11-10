@@ -31,7 +31,7 @@ const TRANSITIONS: Record<NodeState, readonly NodeState[]> = {
 // Total mapping: adding a NodeState without an entry here fails to compile.
 // A blocked node needs a human decision or fix, so it rolls up as waiting on
 // one, never as idle.
-const NODE_RUN_STATUS: Record<NodeState, RunStatus> = {
+export const NODE_RUN_STATUS: Record<NodeState, RunStatus> = {
   queued: 'queued',
   running: 'running',
   waiting_approval: 'waiting_approval',

@@ -1,21 +1,24 @@
-import { expect, test } from 'vitest'
 import {
+  NODE_RUN_STATUS,
   canTransition,
   isTerminal,
   rollUpRunStatus,
   type NodeState,
+  type RunStatus,
 } from '@/domain/states'
 
-const ALL_NODE_STATES: NodeState[] = [
-  'queued',
-  'running',
-  'waiting_approval',
-  'passed',
-  'failed',
-  'cancelled',
-  'skipped',
-  'blocked',
-]
+// Pins what each node state means for a run. Typed as Record<NodeState, ...>,
+// so adding a NodeState without a row here fails to compile.
+const EXPECTED_RUN_STATUS: Record<NodeState, RunStatus> = {
+  failed: 'failed',
+  cancelled: 'cancelled',
+  blocked: 'waiting_approval',
+  waiting_approval: 'waiting_approval',
+  running: 'running',
+  queued: 'queued',
+  passed: 'completed',
+  skipped: 'completed',
+}
 
 test('a terminal state cannot move again', () => {
   expect(canTransition('passed', 'running')).toBe(false)
@@ -73,10 +76,14 @@ test.each(PRECEDENCE)('%s outranks %s in the roll-up (-> %s)', (winner, loser, e
   expect(rollUpRunStatus([winner, loser])).toBe(expected)
 })
 
-test('every NodeState has a roll-up entry that yields a run status', () => {
-  for (const state of ALL_NODE_STATES) {
-    expect(rollUpRunStatus([state])).toEqual(expect.any(String))
+test('each node state maps to the run status it means', () => {
+  for (const state of Object.keys(EXPECTED_RUN_STATUS) as NodeState[]) {
+    expect(NODE_RUN_STATUS[state], state).toBe(EXPECTED_RUN_STATUS[state])
   }
-  expect(rollUpRunStatus(['passed'])).toBe('completed')
-  expect(rollUpRunStatus(['skipped'])).toBe('completed')
+})
+
+test('the mapping has exactly the states the table names, no more and no fewer', () => {
+  expect(Object.keys(NODE_RUN_STATUS).sort()).toEqual(
+    Object.keys(EXPECTED_RUN_STATUS).sort(),
+  )
 })
