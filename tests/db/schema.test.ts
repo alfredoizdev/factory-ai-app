@@ -88,6 +88,9 @@ test('deleting a workflow that has a run is rejected and history survives', asyn
 test('deleting a project cascades and removes its runs and their children, deliberately', async () => {
   const chain = await createNodeRunChain()
   const usage = await insertUsage(chain)
+  expect(await db.select().from(runs).where(eq(runs.id, chain.runId))).toHaveLength(1)
+  expect(await db.select().from(nodeRuns).where(eq(nodeRuns.id, chain.nodeRunId))).toHaveLength(1)
+  expect(await db.select().from(usageRecords).where(eq(usageRecords.id, usage.id))).toHaveLength(1)
   await db.delete(projects).where(eq(projects.id, chain.projectId))
   expect(await db.select().from(runs).where(eq(runs.id, chain.runId))).toHaveLength(0)
   expect(await db.select().from(nodeRuns).where(eq(nodeRuns.id, chain.nodeRunId))).toHaveLength(0)

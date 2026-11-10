@@ -2,7 +2,9 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 
 // IDs are ULIDs (the demo workflow is the literal 'demo'); timestamps are ISO UTC strings.
 // Every row carries projectId so a future multi-user version is not a rewrite.
-// All foreign keys cascade on delete: removing a project, workflow or run removes everything beneath it.
+// Deletes cascade downward: a project removes everything beneath it; a run removes its node runs, events,
+// claims, evidence and usage records. The exceptions are runs.workflowId and runs.versionId (restrict), so
+// deleting or pruning a workflow or version can never erase run history. See those columns.
 
 export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
