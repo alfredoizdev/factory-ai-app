@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    env: { FACTORY_DB_PATH: ':memory:' },
     include: ['tests/**/*.test.ts'],
   },
 })

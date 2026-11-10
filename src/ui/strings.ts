@@ -19,4 +19,8 @@ export const strings = {
     duplicateSingleton: (label: string) => `Only one ${label} block is allowed.`,
     disabledRequired: (label: string) => `The ${label} block is required and cannot be disabled.`,
   },
+  demo: {
+    projectName: 'Demo project',
+    workflowName: 'Demo workflow',
+  },
 }
