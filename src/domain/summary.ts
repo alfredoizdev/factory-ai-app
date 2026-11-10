@@ -10,6 +10,9 @@ export type SummaryInput = {
   skippedReason?: string
   // The reviewer's own structured explanation. Returned verbatim, never generated here.
   claim?: string
+  // Who wrote `claim`. Only the exact value 'system' marks it as written by the app itself; absent, 'provider' and
+  // anything unrecognised all mean a model may have written it, so it is treated as a claim.
+  claimSource?: string
 }
 
 type StateCopy = Partial<Record<NodeState, string>>
@@ -29,7 +32,8 @@ const CLAIM_STATES: ReadonlySet<NodeState> = new Set<NodeState>(['passed', 'fail
 
 // Precedence, highest first:
 //   1. evidence: a sentence built from real counts or job numbers
-//   2. claim: the reviewer's sentence, only in CLAIM_STATES
+//   2. claim: the sentence in `claim`, only in CLAIM_STATES. A system-authored one is returned verbatim but is not
+//      a claim (claimUsed is false); every other source is a claim
 //   3. skipped reason, for skipped blocks
 //   4. template: per-kind, then generic, which is total over NodeState
 // claimUsed and summarize both read this chain, so they cannot disagree.
@@ -37,7 +41,7 @@ export function summarize(input: SummaryInput): string {
   const evidence = evidenceSentence(input)
   if (evidence !== undefined) return evidence
 
-  const claim = usableClaim(input)
+  const claim = usableClaim(input) ?? systemSentence(input)
   if (claim !== undefined) return claim
 
   if (input.state === 'skipped' && hasText(input.skippedReason)) return input.skippedReason
@@ -52,6 +56,15 @@ export function claimUsed(input: SummaryInput): boolean {
 }
 
 function usableClaim(input: SummaryInput): string | undefined {
+  if (input.claimSource === 'system') return undefined
+  return carriedSentence(input)
+}
+
+function systemSentence(input: SummaryInput): string | undefined {
+  return input.claimSource === 'system' ? carriedSentence(input) : undefined
+}
+
+function carriedSentence(input: SummaryInput): string | undefined {
   if (evidenceSentence(input) !== undefined) return undefined
   if (!CLAIM_STATES.has(input.state)) return undefined
   return hasText(input.claim) ? input.claim : undefined

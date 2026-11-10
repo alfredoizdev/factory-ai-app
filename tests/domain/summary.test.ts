@@ -130,6 +130,20 @@ test('a skipped reason outranks a claim', () => {
   ).toBe('Not needed for this change')
 })
 
+test('a system-authored sentence is returned verbatim but is not a claim; any other source is', () => {
+  const base = { kind: 'human', state: 'passed', claim: 'A person approved.' } as const
+  expect(summarize({ ...base, claimSource: 'system' })).toBe('A person approved.')
+  expect(claimUsed({ ...base, claimSource: 'system' })).toBe(false)
+  for (const claimSource of [undefined, 'provider', 'robot', 'System', '']) {
+    expect(summarize({ ...base, claimSource })).toBe('A person approved.')
+    expect(claimUsed({ ...base, claimSource }), String(claimSource)).toBe(true)
+  }
+})
+
+test('a system sentence still obeys state gating', () => {
+  expect(summarize({ kind: 'review', state: 'queued', claim: CLAIM, claimSource: 'system' })).toBe('Waits for the tests.')
+})
+
 test('claimUsed agrees with what summarize returns', () => {
   const states: readonly NodeState[] = [
     'queued',

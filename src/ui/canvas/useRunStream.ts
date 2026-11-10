@@ -22,7 +22,7 @@ const NODE_EVENT_STATE: Record<string, NodeState> = {
   'node.cancelled': 'cancelled',
 }
 
-type RawNode = { state: NodeState; steps: string[]; reportedSummary?: string; systemSourced?: boolean; skippedReason?: string }
+type RawNode = { state: NodeState; steps: string[]; reportedSummary?: string; claimSource?: string; skippedReason?: string }
 export type StreamState = { nodes: Record<string, RawNode>; lastSequence: number }
 export const emptyStream: StreamState = { nodes: {}, lastSequence: 0 }
 
@@ -58,9 +58,8 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   const updated: RawNode = { ...node, state, steps: node?.steps ?? [] }
   if (event.type === 'node.completed') {
     updated.reportedSummary = text(payload.summary)
-    // Carry the producer's marker; never infer it. Only an exact 'system' lifts the claim flag. Absent or
-    // unrecognised stays a claim: over-flagging a system sentence is minor, rendering a model's sentence as fact is not.
-    updated.systemSourced = payload.summarySource === 'system'
+    // Carry the producer's marker verbatim; summarize/claimUsed decide what it means.
+    updated.claimSource = typeof payload.summarySource === 'string' ? payload.summarySource : undefined
   }
   if (event.type === 'node.skipped') updated.skippedReason = text(payload.reason)
   return { nodes: { ...prev.nodes, [blockId]: updated }, lastSequence: event.sequence }
@@ -77,12 +76,7 @@ export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[]
       out[blockId] = { blockId, state: n.state, summary: strings.summary.generic[n.state], summaryIsClaim: false, steps: n.steps }
       continue
     }
-    if (n.state === 'passed' && n.systemSourced && n.reportedSummary !== undefined) {
-      // The producer wrote this sentence itself, so it is shown verbatim and not marked as an AI claim.
-      out[blockId] = { blockId, state: n.state, summary: n.reportedSummary, summaryIsClaim: false, steps: n.steps }
-      continue
-    }
-    const input: SummaryInput = { kind, state: n.state, claim: n.reportedSummary, skippedReason: n.skippedReason }
+    const input: SummaryInput = { kind, state: n.state, claim: n.reportedSummary, claimSource: n.claimSource, skippedReason: n.skippedReason }
     out[blockId] = { blockId, state: n.state, summary: summarize(input), summaryIsClaim: claimUsed(input), steps: n.steps }
   }
   return out
