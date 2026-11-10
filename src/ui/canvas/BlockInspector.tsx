@@ -17,7 +17,16 @@ const field: CSSProperties = {
   boxSizing: 'border-box',
 }
 
-export function BlockInspector({ block, onChange }: { block: Block; onChange: (b: Block) => void }) {
+export function BlockInspector({
+  block,
+  onChange,
+  canDisable = true,
+}: {
+  block: Block
+  onChange: (b: Block) => void
+  /** False when turning this block off would leave a required stage with nothing enabled. */
+  canDisable?: boolean
+}) {
   const model = typeof block.config.model === 'string' ? block.config.model : ''
 
   function setModel(value: string) {
@@ -45,10 +54,17 @@ export function BlockInspector({ block, onChange }: { block: Block; onChange: (b
         <input
           type="checkbox"
           checked={block.enabled}
+          disabled={!canDisable}
+          aria-describedby={canDisable ? undefined : 'cannot-disable'}
           onChange={e => onChange({ ...block, enabled: e.target.checked })}
         />
         {strings.editing.enabled}
       </label>
+      {!canDisable && (
+        <p id="cannot-disable" style={{ margin: 0, color: theme.skipped }}>
+          {strings.editing.cannotDisable}
+        </p>
+      )}
     </div>
   )
 }

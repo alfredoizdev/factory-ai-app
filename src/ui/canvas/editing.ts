@@ -1,4 +1,4 @@
-import { LANE_SPACING, SINGLETON_KINDS, STAGE_ORDER, type Block, type BlockKind, type Graph } from '@/domain/graph'
+import { LANE_SPACING, REQUIRED_KINDS, SINGLETON_KINDS, STAGE_ORDER, type Block, type BlockKind, type Graph } from '@/domain/graph'
 import { strings } from '@/ui/strings'
 
 /** Vertical gap between blocks of the same stage; taller than a card so siblings never overlap. */
@@ -43,11 +43,16 @@ export function moveBlock(graph: Graph, id: string, position: { x: number; y: nu
   return { blocks: graph.blocks.map(b => (b.id === id ? { ...b, position } : b)) }
 }
 
-/** The only block of a required kind cannot be removed: the editor never offers a way to lose a stage. */
-export function canRemove(graph: Graph, block: Block): boolean {
-  const required = ['input', 'build', 'human'].includes(block.kind)
-  return !required || graph.blocks.some(b => b.kind === block.kind && b.id !== block.id)
+/**
+ * True when the graph depends on this block: its kind is required and no other enabled block of that kind
+ * exists. Such a block can be neither removed nor turned off, so a required stage is never lost.
+ */
+export function isRequiredAnchor(graph: Graph, block: Block): boolean {
+  return REQUIRED_KINDS.includes(block.kind) && !graph.blocks.some(b => b.kind === block.kind && b.id !== block.id && b.enabled)
 }
+
+export const canRemove = (graph: Graph, block: Block): boolean => !isRequiredAnchor(graph, block)
+export const canDisable = (graph: Graph, block: Block): boolean => !(block.enabled && isRequiredAnchor(graph, block))
 
 export function removeBlock(graph: Graph, id: string): Graph {
   return { blocks: graph.blocks.filter(b => b.id !== id) }

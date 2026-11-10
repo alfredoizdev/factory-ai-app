@@ -2,7 +2,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { Canvas } from '@/ui/canvas/Canvas'
 import { BlockInspector } from '@/ui/canvas/BlockInspector'
-import { addBlock, nextBlockId, addableKinds, removeBlock, moveBlock } from '@/ui/canvas/editing'
+import { addBlock, nextBlockId, addableKinds, removeBlock, moveBlock, canRemove, canDisable } from '@/ui/canvas/editing'
 import { defaultGraph, SINGLETON_KINDS, type Block, type Graph, type ValidationIssue } from '@/domain/graph'
 
 beforeAll(() => {
@@ -99,17 +99,18 @@ test('nothing is saved when nothing changed', () => {
 
 test('a validation issue appears on the offending card and nowhere else', async () => {
   vi.useFakeTimers()
+  const msg = 'Backstop: something is wrong with Review.'
+  // The server is the backstop: it may report a problem the UI did not prevent.
   const save = vi.fn(
     async (g: Graph): Promise<ValidationIssue[]> =>
-      g.blocks.some(b => b.kind === 'human' && !b.enabled)
-        ? [{ blockId: 'human', code: 'disabled_required', message: 'The Human check block is required and cannot be disabled.' }]
+      g.blocks.some(b => b.kind === 'tests' && !b.enabled)
+        ? [{ blockId: 'review', code: 'unconfigured', message: msg }]
         : [],
   )
   render(<Canvas graph={defaultGraph()} save={save} />)
-  toggleBlock('human')
+  toggleBlock('tests')
   await act(async () => void vi.advanceTimersByTime(500))
-  const msg = 'The Human check block is required and cannot be disabled.'
-  expect(within(screen.getByTestId('block-card-human')).getByText(msg)).toBeInTheDocument()
+  expect(within(screen.getByTestId('block-card-review')).getByText(msg)).toBeInTheDocument()
   expect(within(screen.getByTestId('block-card-build')).queryByText(msg)).toBeNull()
   expect(screen.getAllByText(msg)).toHaveLength(1)
 
@@ -117,6 +118,40 @@ test('a validation issue appears on the offending card and nowhere else', async 
   fireEvent.click(screen.getByLabelText('Enabled'))
   await act(async () => void vi.advanceTimersByTime(500))
   expect(screen.queryByText(msg)).toBeNull()
+})
+
+test('the Enabled control is disabled, with a reason, on the only enabled block of a required stage', () => {
+  render(<Canvas graph={defaultGraph()} />)
+  for (const id of ['input', 'build', 'human']) {
+    fireEvent.click(screen.getByTestId(`block-card-${id}`))
+    expect(screen.getByLabelText('Enabled')).toBeDisabled()
+    expect(screen.getByText(/cannot be turned off/)).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId(`block-card-${id}`)) // deselect
+  }
+  fireEvent.click(screen.getByTestId('block-card-review'))
+  expect(screen.getByLabelText('Enabled')).not.toBeDisabled()
+  expect(screen.queryByText(/cannot be turned off/)).toBeNull()
+})
+
+test('a required kind with a second enabled block may have either one turned off', () => {
+  render(<Canvas graph={twoHumans()} />)
+  fireEvent.click(screen.getByTestId('block-card-human'))
+  expect(screen.getByLabelText('Enabled')).not.toBeDisabled()
+})
+
+test('a failed save is kept pending and flushed when the canvas unmounts', async () => {
+  vi.useFakeTimers()
+  const save = vi
+    .fn<(g: Graph) => Promise<ValidationIssue[]>>()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValue([])
+  const { unmount } = render(<Canvas graph={defaultGraph()} save={save} />)
+  toggleBlock('tests')
+  await act(async () => void vi.advanceTimersByTime(500))
+  expect(save).toHaveBeenCalledTimes(1)
+  unmount()
+  expect(save).toHaveBeenCalledTimes(2)
+  expect(save.mock.calls[1]![0].blocks.find(b => b.id === 'tests')!.enabled).toBe(false)
 })
 
 test('a failed save is reported, never silently dropped', async () => {
@@ -164,7 +199,30 @@ describe('BlockInspector', () => {
   })
 })
 
+// The palette cannot add a second singleton, but a graph can arrive that way from outside.
+function twoHumans(): Graph {
+  const g = defaultGraph()
+  const human = g.blocks.find(b => b.kind === 'human')!
+  return { blocks: [...g.blocks, { ...human, id: 'human-1', position: { x: human.position.x, y: 160 } }] }
+}
+
 describe('editing helpers', () => {
+  test('required-stage rules count enabled blocks only', () => {
+    const base = twoHumans()
+    const [first, second] = base.blocks.filter(b => b.kind === 'human') as [Block, Block]
+    expect(canRemove(base, first)).toBe(true)
+    expect(canDisable(base, first)).toBe(true)
+    // With the sibling turned off, the remaining enabled one is the anchor.
+    const oneOff = { blocks: base.blocks.map(b => (b.id === second.id ? { ...b, enabled: false } : b)) }
+    expect(canRemove(oneOff, first)).toBe(false)
+    expect(canDisable(oneOff, first)).toBe(false)
+    // Removing the disabled one is fine: the enabled sibling still carries the stage.
+    expect(canRemove(oneOff, oneOff.blocks.find(b => b.id === second.id)!)).toBe(true)
+    // But removing the enabled one would leave only a disabled block, so it is refused.
+    const onlyOff = { blocks: defaultGraph().blocks.map(b => (b.kind === 'human' ? { ...b, enabled: false } : b)) }
+    expect(canRemove(onlyOff, onlyOff.blocks.find(b => b.kind === 'human')!)).toBe(false)
+  })
+
   test('the first block of a kind keeps the bare kind as its id; later ones get a suffix', () => {
     expect(nextBlockId({ blocks: [] }, 'review')).toBe('review')
     expect(nextBlockId(defaultGraph(), 'review')).toBe('review-1')

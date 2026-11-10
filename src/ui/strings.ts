@@ -113,6 +113,7 @@ export const strings = {
     modelPlaceholder: 'Default model',
     enabled: 'Enabled',
     remove: 'Remove block',
+    cannotDisable: 'This stage is required, so its only enabled block cannot be turned off.',
     disabledBadge: 'Off',
     disabledLine: 'Turned off. It is skipped and its neighbours connect around it.',
     saveFailed: 'Your latest change could not be saved. It will be retried on your next edit.',

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { derivedEdges, type Block, type Graph, type ValidationIssue } from '@/domain/graph'
 import { summarize } from '@/domain/summary'
 import { BlockInspector } from './BlockInspector'
-import { addBlock, addableKinds, canRemove, moveBlock, removeBlock, updateBlock } from './editing'
+import { addBlock, addableKinds, canDisable, canRemove, moveBlock, removeBlock, updateBlock } from './editing'
 import { theme } from '@/ui/theme'
 import { strings } from '@/ui/strings'
 import { BlockCard, type NodeRunView } from './BlockCard'
@@ -46,7 +46,7 @@ const panelButton = {
   textAlign: 'left' as const,
 }
 
-/** A block with no run has honestly not started, so it is queued. */
+/** With no run at all, every block has honestly not started, so it is queued. */
 function queuedView(block: Block): NodeRunView {
   return {
     blockId: block.id,
@@ -97,6 +97,8 @@ export function Canvas({
         setSaveFailed(false)
       },
       () => {
+        // The edit never reached the server: keep it pending so an unmount flush or the next edit retries it.
+        dirty.current = true
         if (mounted.current && mine === seq.current) setSaveFailed(true)
       },
     )
@@ -131,20 +133,25 @@ export function Canvas({
   const selected = graph.blocks.find(b => b.id === selectedId) ?? null
   const addable = addableKinds(graph)
 
-  const nodes: CardNode[] = graph.blocks.map(block => ({
-    id: block.id,
-    type: 'block' as const,
-    position: block.position,
-    data: {
-      block,
-      view: runById.get(block.id) ?? queuedView(block),
-      expanded: selectedId === block.id,
-      issues: issuesFor(block.id),
-    },
-  }))
+  // The queued default is only true when there is no run. Once a run exists, a block it has no view for is
+  // not part of that run, so it is not drawn rather than shown with an invented state.
+  const hasRun = nodeRuns.length > 0
+  const nodes: CardNode[] = graph.blocks.flatMap(block => {
+    const view = hasRun ? runById.get(block.id) : queuedView(block)
+    if (!view) return []
+    return [
+      {
+        id: block.id,
+        type: 'block' as const,
+        position: block.position,
+        data: { block, view, expanded: selectedId === block.id, issues: issuesFor(block.id) },
+      },
+    ]
+  })
+  const drawn = new Set(nodes.map(n => n.id))
 
   const derived = derivedEdges(graph)
-  const edges: Edge[] = derived.map(e =>
+  const edges: Edge[] = derived.filter(e => drawn.has(e.from) && drawn.has(e.to)).map(e =>
     e.kind === 'return'
       ? {
           id: `${e.from}->${e.to}:return`,
@@ -200,7 +207,11 @@ export function Canvas({
           <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.inspectorTitle}</h2>
           {selected ? (
             <>
-              <BlockInspector block={selected} onChange={b => edit(g => updateBlock(g, b))} />
+              <BlockInspector
+                block={selected}
+                canDisable={canDisable(graph, selected)}
+                onChange={b => edit(g => updateBlock(g, b))}
+              />
               {canRemove(graph, selected) && (
                 <button
                   type="button"

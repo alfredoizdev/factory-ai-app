@@ -53,3 +53,19 @@ test('the canvas is draggable but offers no way to draw or change a connection',
   expect(captured.nodesConnectable).toBe(false)
   expect(captured.onConnect).toBeUndefined()
 })
+
+test('with a run present, a block the run has no view for is not drawn as queued', () => {
+  const graph = defaultGraph()
+  const nodeRuns = graph.blocks
+    .filter(b => b.id !== 'review')
+    .map(b => ({ blockId: b.id, state: 'passed' as const, summary: 'Done.', summaryIsClaim: false, steps: [] }))
+  render(<Canvas graph={graph} nodeRuns={nodeRuns} />)
+  const ids = captured.nodes!.map(n => n.id)
+  expect(ids).not.toContain('review')
+  expect(ids).toContain('build')
+})
+
+test('with no run, every block is drawn', () => {
+  render(<Canvas graph={defaultGraph()} />)
+  expect(captured.nodes).toHaveLength(8)
+})
