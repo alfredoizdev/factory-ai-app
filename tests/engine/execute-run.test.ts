@@ -5,6 +5,7 @@ import { nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph, type Graph } from '@/domain/graph'
 import { appendEvent, eventsSince } from '@/engine/events'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
+import { failRunAfterError } from '@/engine/inngest/execute-run'
 import { cancelRun, createRun, failUnstartedRun, publishVersion, saveDraft } from '@/engine/run'
 import { createDemoProvider } from '@/providers/demo'
 import type { AgentProvider } from '@/providers/types'
@@ -21,17 +22,18 @@ const fast = createDemoProvider({ stepDelayMs: 1 })
 class Parked extends Error {}
 
 // Like Inngest, results pass through JSON, so a step returning something unserialisable fails here too.
-function fakeStep(decision?: { decision: string }): StepApi {
+function fakeStep(decision?: { decision: string } | null): StepApi {
   return {
     run: async (_id, fn) => JSON.parse(JSON.stringify((await fn()) ?? null)),
     waitForEvent: async () => {
       if (decision) return { data: decision }
+      if (decision === null) return null // the wait expired with no decision
       throw new Parked()
     },
   }
 }
 
-async function drive(runId: string, provider: AgentProvider, decision?: { decision: string }) {
+async function drive(runId: string, provider: AgentProvider, decision?: { decision: string } | null) {
   const deps: ExecutorDeps = { resolveProvider: () => provider }
   try {
     await orchestrateRun(runId, fakeStep(decision), deps)
@@ -207,6 +209,75 @@ test('a run with no run.created event still executes', async () => {
   await db.run(sql`delete from events where run_id = ${runId}`)
   await drive(runId, fast)
   expect((await types(runId)).at(-1)).toBe('node.waiting_approval')
+})
+
+test('an expired human wait is not a verdict: the run stays waiting, neither completed nor failed', async () => {
+  const runId = await newRun('add a spinner')
+  await drive(runId, fast, null)
+  const t = await types(runId)
+  expect(t).not.toContain('run.completed')
+  expect(t).not.toContain('run.failed')
+  expect(t.at(-1)).toBe('node.waiting_approval')
+  expect(await runStatus(runId)).toBe('waiting_approval')
+  expect((await getNodeRun(runId, 'human')).state).toBe('waiting_approval')
+})
+
+test('every node row has a node.queued event before node.started', async () => {
+  const { runId } = await runToCompletion('add a spinner')
+  const evts = await eventsSince(runId, 0)
+  for (const n of await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))) {
+    const mine = evts.filter(e => e.nodeRunId === n.id).map(e => e.type)
+    expect(mine[0]).toBe('node.queued')
+    expect(mine[1]).toBe('node.started')
+  }
+})
+
+test('a retry step names the attempt about to start and why the previous one failed', async () => {
+  const { runId } = await runToCompletion('FAIL please')
+  const retry = (await eventsSince(runId, 0)).find(e => e.type === 'node.step' && (e.payload as { retry?: boolean }).retry)!
+  expect(retry.payload).toMatchObject({ attempt: 2, previousCause: 'provider_error', previousMessage: expect.stringMatching(/.+/) })
+})
+
+test('a provider that throws keeps the exception detail on the failure', async () => {
+  const throwing: AgentProvider = {
+    id: 't', isDemo: false,
+    async *execute() { throw new Error('disk exploded') },
+  }
+  const { runId } = await runToCompletion('add a spinner', throwing)
+  const failed = (await eventsSince(runId, 0)).find(e => e.type === 'node.failed')!
+  expect(failed.payload).toMatchObject({ cause: 'provider_crashed', detail: 'disk exploded' })
+  expect(await runStatus(runId)).toBe('failed')
+})
+
+test('an unresolvable provider strands no node row and the failure handler fails the run', async () => {
+  const runId = await newRun('add a spinner')
+  const deps: ExecutorDeps = { resolveProvider: () => { throw new Error('no such provider') } }
+  await expect(orchestrateRun(runId, fakeStep(), deps)).rejects.toThrow('no such provider')
+  expect(await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).toHaveLength(0)
+  failRunAfterError(runId)
+  expect(await runStatus(runId)).toBe('failed')
+  expect((await types(runId)).at(-1)).toBe('run.failed')
+})
+
+test('the failure handler fails a node left running and then the run, once', async () => {
+  const runId = await newRun('add a spinner')
+  const run = (await db.query.runs.findFirst({ where: eq(runs.id, runId) }))!
+  db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
+  const nodeRunId = ulid()
+  db.insert(nodeRuns).values({ id: nodeRunId, projectId: run.projectId, runId, blockId: 'build', state: 'running', attempt: 1 }).run()
+  failRunAfterError(runId)
+  failRunAfterError(runId) // idempotent
+  expect((await getNodeRun(runId, 'build')).state).toBe('failed')
+  expect((await getNodeRun(runId, 'build')).failureCause).toBe('internal_error')
+  expect(await runStatus(runId)).toBe('failed')
+  expect((await types(runId)).filter(t => t === 'run.failed')).toHaveLength(1)
+})
+
+test('the failure handler leaves a cancelled run alone', async () => {
+  const runId = await newRun('x')
+  await cancelRun(runId)
+  failRunAfterError(runId)
+  expect(await runStatus(runId)).toBe('cancelled')
 })
 
 // The carried obligation: row and event are one write.

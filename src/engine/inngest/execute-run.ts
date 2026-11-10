@@ -73,12 +73,12 @@ function startRun(runId: string): boolean {
 }
 
 // Moves the run to a status that is not terminal (running / waiting_approval) and appends the event for it.
-function setRunStatus(runId: string, status: RunStatus, event: { type: EventType; payload?: unknown } | null): void {
+function setRunStatus(runId: string, status: RunStatus, event: { type: EventType; payload?: unknown }): void {
   withTx(tx => {
     const current = runStatusOf(tx, runId)
     if (current === 'cancelled' || current === 'failed' || current === 'completed') return
     if (current !== status) tx.update(runs).set({ status }).where(eq(runs.id, runId)).run()
-    if (event) appendEventSync({ runId, type: event.type, payload: event.payload } as Parameters<typeof appendEventSync>[0], tx)
+    appendEventSync({ runId, type: event.type, payload: event.payload } as Parameters<typeof appendEventSync>[0], tx)
   })
 }
 
@@ -118,19 +118,20 @@ function transitionNode(
 
 // Finds this block's node run or creates it. Refuses (null) once the run is cancelled, inside the same transaction,
 // so a node cannot slip in after cancelRun swept the existing ones.
-function openNode(runId: string, blockId: string): NodeRow | null {
-  return withTx(tx => {
-    if (runStatusOf(tx, runId) === 'cancelled') return null
-    const existing = tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === blockId)
-    if (existing) return existing
-    const run = tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, runId)).get()
-    if (!run) return null
-    return tx
-      .insert(nodeRuns)
-      .values({ id: ulid(), projectId: run.projectId, runId, blockId, state: 'queued', attempt: 1 })
-      .returning()
-      .get()
-  })
+function openNodeIn(tx: DbHandle, runId: string, blockId: string): NodeRow | null {
+  if (runStatusOf(tx, runId) === 'cancelled') return null
+  const existing = tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === blockId)
+  if (existing) return existing
+  const run = tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, runId)).get()
+  if (!run) return null
+  const row = tx
+    .insert(nodeRuns)
+    .values({ id: ulid(), projectId: run.projectId, runId, blockId, state: 'queued', attempt: 1 })
+    .returning()
+    .get()
+  // A row the canvas can see has an event: node.queued commits in the same transaction as the insert.
+  appendEventSync({ runId, nodeRunId: row.id, type: 'node.queued', payload: { blockId } }, tx)
+  return row
 }
 
 function freshNode(id: string): NodeRow {
@@ -150,7 +151,7 @@ type AttemptResult =
   | { kind: 'done'; summary: string }
   | { kind: 'error'; message: string }
   | { kind: 'ended' }
-  | { kind: 'crashed' }
+  | { kind: 'crashed'; detail: string }
   | { kind: 'timeout' }
   | { kind: 'cancelled' }
 
@@ -183,8 +184,8 @@ async function runAttempt(
         else return { kind: 'error', message: ev.message }
       }
       return { kind: 'ended' }
-    } catch {
-      return { kind: 'crashed' }
+    } catch (e) {
+      return { kind: 'crashed', detail: e instanceof Error ? e.message : String(e) }
     }
   })()
 
@@ -201,32 +202,35 @@ async function runAttempt(
 // ---- nodes -------------------------------------------------------------------------------------------------------
 
 function skipNode(runId: string, block: PlannedBlock): Outcome {
-  const node = openNode(runId, block.id)
-  if (!node) return { outcome: 'cancelled' }
-  withTx(tx => {
-    transitionNode(tx, freshNode(node.id), 'skipped', {
-      type: 'node.skipped',
-      payload: { reason: strings.run.skippedDisabled },
-    })
+  return withTx(tx => {
+    const node = openNodeIn(tx, runId, block.id)
+    if (!node) return { outcome: 'cancelled' }
+    const settled = outcomeOf(node.state)
+    if (settled) return { outcome: settled }
+    transitionNode(tx, node, 'skipped', { type: 'node.skipped', payload: { reason: strings.run.skippedDisabled } })
+    return { outcome: 'skipped' }
   })
-  return { outcome: 'skipped' }
 }
 
 async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, deps: ExecutorDeps): Promise<Outcome> {
-  const opened = openNode(runId, block.id)
-  if (!opened) return { outcome: 'cancelled' }
-  const settled = outcomeOf(opened.state)
-  if (settled) return { outcome: settled } // replay of a step that already finished
+  // Resolved before any row exists, so an unknown provider cannot strand a node.
   const provider = deps.resolveProvider(plan.providerId)
 
-  const started = withTx(tx => {
-    const node = freshNode(opened.id)
-    if (node.state !== 'queued') return true // resuming a node that was already running
-    if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return false
-    tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
-    return true
+  // Row, node.queued and node.started commit together: a node is never left queued.
+  const opened = withTx((tx): NodeRow | Outcome => {
+    const node = openNodeIn(tx, runId, block.id)
+    if (!node) return { outcome: 'cancelled' }
+    const settled = outcomeOf(node.state)
+    if (settled) return { outcome: settled } // replay of a step that already finished
+    if (node.state === 'queued') {
+      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) {
+        return { outcome: 'cancelled' }
+      }
+      tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+    }
+    return node
   })
-  if (!started) return { outcome: 'cancelled' }
+  if ('outcome' in opened) return opened
 
   for (let attempt = freshNode(opened.id).attempt; attempt <= MAX_ATTEMPTS; attempt++) {
     const result = await runAttempt(provider, block, plan.request, runId, text => {
@@ -251,7 +255,13 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
     }
 
     const cause =
-      result.kind === 'timeout' ? 'timeout' : result.kind === 'error' ? 'provider_error' : 'no_result'
+      result.kind === 'timeout'
+        ? 'timeout'
+        : result.kind === 'error'
+          ? 'provider_error'
+          : result.kind === 'crashed'
+            ? 'provider_crashed'
+            : 'no_result'
     const message =
       result.kind === 'timeout'
         ? strings.run.timedOut(Math.round(block.timeoutMs / 1000))
@@ -260,8 +270,12 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
           : result.kind === 'crashed'
             ? strings.run.providerCrashed
             : strings.run.noResult
+    // The exception's own text is kept: a failure whose cause is lost cannot be explained to the person reading it.
+    const detail = result.kind === 'crashed' ? result.detail : undefined
 
-    // A timeout is not retried: waiting the same long time again would only delay the verdict.
+    // maxAttempts is 2 per node, with one deliberate exception: a timeout is never retried. A hang that already
+    // used the whole timeout would double the wait before a person sees anything, and the cause is recorded
+    // ('timeout') so they can retry on purpose.
     const canRetry = attempt < MAX_ATTEMPTS && result.kind !== 'timeout'
     if (canRetry) {
       // The node stays running: failed is terminal in the state machine, so only the final failure is recorded as one.
@@ -270,7 +284,20 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
         if (node.state !== 'running') return
         tx.update(nodeRuns).set({ attempt: attempt + 1 }).where(eq(nodeRuns.id, node.id)).run()
         appendEventSync(
-          { runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: strings.run.retrying, retry: true } },
+          {
+            runId,
+            nodeRunId: node.id,
+            type: 'node.step',
+            payload: {
+              blockId: block.id,
+              attempt: attempt + 1,
+              text: strings.run.retrying,
+              retry: true,
+              previousCause: cause,
+              previousMessage: message,
+              ...(detail ? { previousDetail: detail } : {}),
+            },
+          },
           tx,
         )
       })
@@ -280,7 +307,7 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
     const failed = withTx(tx =>
       transitionNode(tx, freshNode(opened.id), 'failed', {
         type: 'node.failed',
-        payload: { cause, message, attempt },
+        payload: { cause, message, attempt, ...(detail ? { detail } : {}) },
       }, { failureCause: cause === 'provider_error' ? message : cause }),
     )
     return { outcome: failed ? 'failed' : 'cancelled' }
@@ -290,23 +317,22 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
 
 // A human block never calls a provider: it records that it is waiting and the function parks.
 function parkHumanNode(runId: string, block: PlannedBlock): Outcome {
-  const opened = openNode(runId, block.id)
-  if (!opened) return { outcome: 'cancelled' }
-  const settled = outcomeOf(opened.state)
-  if (settled) return { outcome: settled }
-  const parked = withTx(tx => {
-    const node = freshNode(opened.id)
+  const result = withTx((tx): Outcome => {
+    const node = openNodeIn(tx, runId, block.id)
+    if (!node) return { outcome: 'cancelled' }
+    const settled = outcomeOf(node.state)
+    if (settled) return { outcome: settled }
     if (node.state === 'queued') {
-      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return false
+      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return { outcome: 'cancelled' }
       tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
     }
-    if (node.state === 'running' && !transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval' })) return false
+    if (node.state === 'running' && !transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval' })) return { outcome: 'cancelled' }
     if (runStatusOf(tx, runId) === 'running') {
       tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId)).run()
     }
-    return true
+    return { outcome: 'parked' }
   })
-  return { outcome: parked ? 'parked' : 'cancelled' }
+  return result
 }
 
 function decideHumanNode(runId: string, block: PlannedBlock, approved: boolean): Outcome {
@@ -382,13 +408,37 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     const status = rollUpRunStatus(states)
     if (status === 'completed') finishRun(runId, 'completed')
     else if (status === 'failed') finishRun(runId, 'failed')
-    else if (status === 'waiting_approval') setRunStatus(runId, 'waiting_approval', null)
+    else if (status === 'waiting_approval') setRunStatus(runId, 'waiting_approval', { type: 'run.waiting_approval' })
     return status
   })
 }
 
+// Last resort when a step throws for good (missing run, exhausted retries): nothing may be left running with no
+// recorded cause. Unfinished nodes fail, then the run fails, each through the guarded transitions.
+export function failRunAfterError(runId: string): void {
+  withTx(tx => {
+    const status = runStatusOf(tx, runId)
+    if (status === undefined || status === 'cancelled' || status === 'failed' || status === 'completed') return
+    for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
+      transitionNode(tx, node, 'failed', {
+        type: 'node.failed',
+        payload: { cause: 'internal_error', message: strings.run.internalFailure },
+      }, { failureCause: 'internal_error' })
+    }
+    tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId)).run()
+    appendEventSync({ runId, type: 'run.failed', payload: { cause: 'internal_error', message: strings.run.internalFailure } }, tx)
+  })
+}
+
 export const executeRun = inngest.createFunction(
-  { id: 'execute-run', triggers: [{ event: RUN_REQUESTED }] },
+  {
+    id: 'execute-run',
+    triggers: [{ event: RUN_REQUESTED }],
+    onFailure: async ({ event }) => {
+      const runId = (event.data.event.data as { runId?: unknown }).runId
+      if (typeof runId === 'string') failRunAfterError(runId)
+    },
+  },
   async ({ event, step }) => {
     const { runId } = event.data as { runId: string }
     await orchestrateRun(runId, step as unknown as StepApi)

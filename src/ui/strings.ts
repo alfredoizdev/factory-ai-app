@@ -140,6 +140,7 @@ export const strings = {
     providerCrashed: 'The agent stopped unexpectedly.',
     rejected: 'A person rejected the result.',
     resumed: 'A person approved. The run continues.',
+    internalFailure: 'The run stopped because of an internal error.',
     couldNotStart: 'The run could not be started. Nothing ran.',
   },
   demo: {

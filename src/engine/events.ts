@@ -6,7 +6,7 @@ import { events, runs } from '@/db/schema'
 // The append-only event log: the single source of truth the canvas reads. This module records what
 // happened; it never infers state. It does no redaction: callers must not put secrets in a payload.
 
-export type RunEventType = 'run.created' | 'run.started' | 'run.completed' | 'run.failed' | 'run.cancelled'
+export type RunEventType = 'run.created' | 'run.started' | 'run.completed' | 'run.failed' | 'run.cancelled' | 'run.waiting_approval'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'
   | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'
