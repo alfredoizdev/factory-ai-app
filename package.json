@@ -1,0 +1,47 @@
+{
+  "name": "ai-factory",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "INNGEST_DEV=1 next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate": "tsx -e \"import('./src/db/client.ts').then(m => m.migrateDb())\"",
+    "seed": "tsx src/db/seed.ts"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.12.1",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.4",
+    "inngest": "^4.26.2",
+    "next": "16.0.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "ulid": "^3.0.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@tailwindcss/postcss": "^4",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.11",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.0",
+    "jsdom": "^31.0.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vite": "^8.3.7",
+    "vitest": "^5.1.0"
+  },
+  "type": "module"
+}

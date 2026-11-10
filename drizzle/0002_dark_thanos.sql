@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `node_runs_run_block_uq` ON `node_runs` (`run_id`,`block_id`);

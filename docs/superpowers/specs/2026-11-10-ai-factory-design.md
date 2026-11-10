@@ -443,6 +443,26 @@ per-reviewer models, consolidation with honest counters, blocking policy,
 automatic return-to-builder with the finding attached, human gate with audit.
 *Done when:* 3 of 4 approve, security blocks, the job goes back, and nothing ships.
 
+> **Named obligation carried out of M0–M2, recorded after the final review.**
+> M0–M2 shipped the human gate's **consumer** — the executor parks on
+> `factory/approval.decided` and `decideHumanNode` acts on it — while **none of
+> its guard** shipped with it. Nothing emits that event today, so there is no
+> hole in the current build, but as written an approval is an unauthenticated,
+> unattributed event whose entire check is `decision === 'approved'`.
+> M4 must land all four of these **before anything can emit that event**:
+> 1. **Authorisation** — an approval must be attributable to a person who is
+>    allowed to give it, not merely to a well-formed message.
+> 2. **The audit record §7 step 11 requires** — actor, reason and timestamp,
+>    persisted in an `approvals` table.
+> 3. **§9's named test** — *"a test to demonstrate that a missing approval
+>    prevents a blocking action"* — which does not exist on a branch that
+>    already contains the gate.
+> 4. **Anti-goal #4 in force** — an AI approver cannot clear a human gate.
+>
+> This is written down because the plan left it out silently, and "the plan did
+> not ask" is how a product's central guarantee goes missing. The mechanism must
+> not stay ahead of its guard.
+
 **M5 — Two readings.** Business/Dev toggle across every surface; plain-language
 summaries on every block; macOS notification on "Your call" and on failure.
 *Done when:* a non-technical reader can say what is blocked and why, with no file
