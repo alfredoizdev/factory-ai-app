@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { render, screen } from '@testing-library/react'
 import { BlockCard, visualStateOf } from '@/ui/canvas/BlockCard'
+import { strings } from '@/ui/strings'
 import type { Block } from '@/domain/graph'
 import type { NodeState } from '@/domain/states'
 
@@ -14,7 +15,7 @@ const buildBlock: Block = {
 }
 
 test('a collapsed card shows name and a result line, never a bare status', () => {
-  render(<BlockCard block={buildBlock} view={{ state: 'skipped', summary: 'Not needed for this change' }} />)
+  render(<BlockCard block={buildBlock} view={{ state: 'skipped', summary: 'Not needed for this change', summaryIsClaim: false }} />)
   expect(screen.getByText('Build')).toBeInTheDocument()
   expect(screen.getByText('Not needed for this change')).toBeInTheDocument()
 })
@@ -25,7 +26,7 @@ test('unknown cost renders as not reported, never zero', () => {
     <BlockCard
       expanded
       block={buildBlock}
-      view={{ state: 'passed', summary: 'Done', usage: { tokens: null, costCents: null } }}
+      view={{ state: 'passed', summary: 'Done', summaryIsClaim: false, usage: { tokens: null, costCents: null } }}
     />,
   )
   expect(screen.getAllByText(/not reported/i)).toHaveLength(2)
@@ -38,7 +39,7 @@ test('reported cost and tokens render as numbers', () => {
     <BlockCard
       expanded
       block={buildBlock}
-      view={{ state: 'passed', summary: 'Done', usage: { tokens: 1200, costCents: 345 } }}
+      view={{ state: 'passed', summary: 'Done', summaryIsClaim: false, usage: { tokens: 1200, costCents: 345 } }}
     />,
   )
   expect(screen.getByText('$3.45')).toBeInTheDocument()
@@ -47,12 +48,12 @@ test('reported cost and tokens render as numbers', () => {
 })
 
 test('a card with no usage data at all shows no cost line', () => {
-  render(<BlockCard expanded block={buildBlock} view={{ state: 'passed', summary: 'Done' }} />)
+  render(<BlockCard expanded block={buildBlock} view={{ state: 'passed', summary: 'Done', summaryIsClaim: false }} />)
   expect(screen.queryByText(/cost/i)).toBeNull()
 })
 
 test('state is conveyed by text as well as colour', () => {
-  render(<BlockCard block={buildBlock} view={{ state: 'failed', summary: 'Stopped' }} />)
+  render(<BlockCard block={buildBlock} view={{ state: 'failed', summary: 'Stopped', summaryIsClaim: false }} />)
   expect(screen.getByLabelText(/failed/i)).toBeInTheDocument()
   expect(screen.getByLabelText(/failed/i)).toHaveTextContent(/failed/i)
 })
@@ -67,11 +68,16 @@ test('a model claim is visibly marked, a verified line is not', () => {
 })
 
 test('expanded card lists steps; collapsed does not', () => {
-  const view = { state: 'running' as const, summary: 'Working', steps: ['Wrote file A'] }
+  const view = { state: 'running' as const, summary: 'Working', summaryIsClaim: false, steps: ['Wrote file A'] }
   const { rerender } = render(<BlockCard block={buildBlock} view={view} />)
   expect(screen.queryByText('Wrote file A')).toBeNull()
   rerender(<BlockCard expanded block={buildBlock} view={view} />)
   expect(screen.getByText('Wrote file A')).toBeInTheDocument()
+})
+
+test('an empty summary still renders a readable result line', () => {
+  render(<BlockCard block={buildBlock} view={{ state: 'passed', summary: '  ', summaryIsClaim: false }} />)
+  expect(screen.getByText(strings.canvas.noResultLine)).toBeInTheDocument()
 })
 
 test('visualStateOf maps every node state', () => {

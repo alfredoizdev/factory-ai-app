@@ -14,9 +14,9 @@ export type NodeRunView = {
   usage?: { tokens: number | null; costCents: number | null }
 }
 
-/** What a card needs to render. Steps and provenance are optional here; absent means none / not a claim. */
-export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'usage'> &
-  Partial<Pick<NodeRunView, 'steps' | 'summaryIsClaim'>>
+/** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
+export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'summaryIsClaim' | 'usage'> &
+  Partial<Pick<NodeRunView, 'steps'>>
 
 // The domain and visual vocabularies are separate on purpose.
 const VISUAL: Record<NodeState, VisualState> = {
@@ -74,7 +74,7 @@ export function BlockCard({
         fontSize: 13,
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
         <strong style={{ fontSize: 14 }}>{block.label}</strong>
         <span
           aria-label={strings.canvas.stateAria(stateLabel)}
@@ -85,12 +85,12 @@ export function BlockCard({
       </div>
 
       <p style={{ margin: '8px 0 0' }}>
-        {view.summaryIsClaim === true && (
+        {view.summaryIsClaim && (
           <span title={strings.canvas.claimTitle} style={{ fontStyle: 'italic', color: theme.waiting }}>
             {strings.canvas.claimMarker}:{' '}
           </span>
         )}
-        {view.summary}
+        {view.summary.trim() === '' ? strings.canvas.noResultLine : view.summary}
       </p>
 
       {expanded && (

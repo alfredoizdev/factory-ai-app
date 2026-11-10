@@ -45,7 +45,8 @@ export const SINGLETON_KINDS: readonly BlockKind[] = ['input', 'plan', 'build', 
 
 export const REQUIRED_KINDS: readonly BlockKind[] = ['input', 'build', 'human']
 
-const LANE_SPACING = 220
+// Card width is 240px (src/ui/canvas/BlockCard.tsx); leave ~100px between card edges so cables are visible.
+const LANE_SPACING = 340
 
 export function defaultGraph(): Graph {
   return {

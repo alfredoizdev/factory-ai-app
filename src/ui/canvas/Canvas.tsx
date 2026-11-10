@@ -9,6 +9,9 @@ import { BlockCard, type NodeRunView } from './BlockCard'
 
 export type { NodeRunView }
 
+const RETURN_OUT = 'return-out'
+const RETURN_IN = 'return-in'
+
 type CardData = { block: Block; view: NodeRunView; expanded: boolean }
 type CardNode = Node<CardData, 'block'>
 
@@ -18,6 +21,9 @@ function BlockNode({ data }: NodeProps<CardNode>) {
       <Handle type="target" position={Position.Left} isConnectable={false} />
       <BlockCard block={data.block} view={data.view} expanded={data.expanded} selected={data.expanded} />
       <Handle type="source" position={Position.Right} isConnectable={false} />
+      {/* Bottom handles carry the return cable so it loops beneath the lane. */}
+      <Handle id={RETURN_OUT} type="source" position={Position.Bottom} isConnectable={false} />
+      <Handle id={RETURN_IN} type="target" position={Position.Bottom} isConnectable={false} />
     </>
   )
 }
@@ -57,7 +63,9 @@ export function Canvas({
           id: `${e.from}->${e.to}:return`,
           source: e.from,
           target: e.to,
-          // Source and target handles are on the sides, so the smoothstep path loops beneath the lane.
+          // Both ends use bottom handles, so the path drops below the lane and back up.
+          sourceHandle: RETURN_OUT,
+          targetHandle: RETURN_IN,
           type: 'smoothstep',
           label: strings.canvas.returnEdge,
           style: { stroke: theme.failed, strokeWidth: 2, strokeDasharray: '6 4' },

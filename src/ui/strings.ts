@@ -98,6 +98,7 @@ export const strings = {
     claimTitle: 'This sentence was written by an AI reviewer. It has not been verified.',
     cost: 'Cost',
     tokens: 'Tokens',
+    noResultLine: 'No result line was recorded for this step.',
     notReported: 'Not reported',
     steps: 'Steps',
     returnEdge: 'Sends work back to Build',
