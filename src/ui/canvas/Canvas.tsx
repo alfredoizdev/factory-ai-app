@@ -1,6 +1,6 @@
 'use client'
 
-import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from '@xyflow/react'
+import { Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance, ViewportPortal } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { derivedEdges, type Block, type Graph, type ValidationIssue } from '@/domain/graph'
@@ -9,6 +9,9 @@ import { BlockInspector } from './BlockInspector'
 import { addBlock, addableKinds, canDisable, canRemove, chainTo, moveBlock, removeBlock, updateBlock } from './editing'
 import { theme } from '@/ui/theme'
 import { strings } from '@/ui/strings'
+import { Depth } from './Depth'
+import { ParticleLayer, type Cable } from './FlowParticles'
+import { useReducedMotion } from './useReducedMotion'
 import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, type NodeRunView } from './BlockCard'
 
 export type { NodeRunView }
@@ -30,12 +33,25 @@ type CardData = {
 type CardNode = Node<CardData, 'block'>
 
 function BlockNode({ data }: NodeProps<CardNode>) {
+  const reduced = useReducedMotion()
+  const [hovered, setHovered] = useState(false)
+  const lifted = hovered && !reduced
   return (
     <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       data-testid={`node-${data.block.id}`}
       data-state={data.view ? data.view.state : 'not_in_run'}
       data-highlighted={data.highlighted ? 'true' : 'false'}
-      style={{ borderRadius: 10, outline: data.highlighted ? `3px solid ${theme.pointer}` : 'none', outlineOffset: 3 }}
+      style={{
+        borderRadius: 10,
+        outline: data.highlighted ? `3px solid ${theme.pointer}` : 'none',
+        outlineOffset: 3,
+        // Hover lifts the card off the floor. Under reduced motion it stays put: lift is movement.
+        boxShadow: theme.elevation(lifted ? 2 : 0),
+        transform: lifted ? 'translateY(-3px)' : 'none',
+        transition: reduced ? 'none' : 'transform 120ms ease-out, box-shadow 120ms ease-out',
+      }}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} />
       {data.view ? (
@@ -60,6 +76,9 @@ function BlockNode({ data }: NodeProps<CardNode>) {
 }
 
 const nodeTypes = { block: BlockNode }
+
+/** The floor trails the pan at this fraction, which is what reads as depth. */
+const PARALLAX = 0.3
 
 const SAVE_DELAY_MS = 500
 
@@ -200,6 +219,12 @@ export function Canvas({
   const selected = graph.blocks.find(b => b.id === selectedId) ?? null
   const addable = addableKinds(graph)
   const flow = useRef<ReactFlowInstance<CardNode> | null>(null)
+  const reducedMotion = useReducedMotion()
+  const floorRef = useRef<HTMLDivElement | null>(null)
+  // Moved straight on the DOM node: a pan fires every frame and must not re-render the canvas.
+  const parallax = useCallback((vp: { x: number; y: number }) => {
+    if (floorRef.current) floorRef.current.style.translate = `${vp.x * PARALLAX}px ${vp.y * PARALLAX}px`
+  }, [])
   useEffect(() => {
     if (highlightedId) void flow.current?.fitView({ nodes: [{ id: highlightedId }], duration: 300, maxZoom: 1 })
   }, [highlightedId])
@@ -264,6 +289,14 @@ export function Canvas({
           markerEnd: { type: MarkerType.ArrowClosed, color: theme.border },
         },
   )
+
+  // Particles mean "work is arriving here": only a normal cable whose target is really running, never under reduced motion.
+  const cables: Cable[] = reducedMotion
+    ? []
+    : derived
+        .filter(e => e.kind === 'normal' && drawn.has(e.from) && drawn.has(e.to))
+        .filter(e => nodes.find(n => n.id === e.to)?.data.view?.state === 'running')
+        .map(e => ({ edge: e, from: nodes.find(n => n.id === e.from)!.position, to: nodes.find(n => n.id === e.to)!.position }))
 
   return (
     <div
@@ -338,13 +371,17 @@ export function Canvas({
         )}
       </aside>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+        <Depth floorRef={floorRef} />
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          style={{ background: 'transparent', zIndex: 1 }}
+          onMove={(_, vp) => parallax(vp)}
           onInit={instance => {
             flow.current = instance
+            parallax(instance.getViewport())
           }}
           onNodeClick={(_, node) => {
             setSelectedId(node.id)
@@ -371,7 +408,9 @@ export function Canvas({
           colorMode="dark"
           proOptions={{ hideAttribution: true }}
         >
-          <Background color={theme.border} />
+          <ViewportPortal>
+            <ParticleLayer cables={cables} />
+          </ViewportPortal>
         </ReactFlow>
       </div>
     </div>
