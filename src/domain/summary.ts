@@ -24,37 +24,48 @@ const KIND_COPY: Partial<Record<BlockKind, StateCopy>> = {
   ship: strings.summary.ship,
 }
 
-// Every block kind and node state yields a sentence: the generic table is
-// total, so a kind-specific gap always falls back to it.
+// A reviewer sentence can only describe work that has happened.
+const CLAIM_STATES: ReadonlySet<NodeState> = new Set<NodeState>(['passed', 'failed', 'waiting_approval'])
+
+// Precedence, highest first:
+//   1. evidence: a sentence built from real counts or job numbers
+//   2. claim: the reviewer's sentence, only in CLAIM_STATES
+//   3. skipped reason, for skipped blocks
+//   4. template: per-kind, then generic, which is total over NodeState
+// claimUsed and summarize both read this chain, so they cannot disagree.
 export function summarize(input: SummaryInput): string {
-  if (input.claim !== undefined && input.claim.trim() !== '') return input.claim
+  const evidence = evidenceSentence(input)
+  if (evidence !== undefined) return evidence
 
-  const special = countSentence(input)
-  if (special !== undefined) return special
+  const claim = usableClaim(input)
+  if (claim !== undefined) return claim
 
-  if (input.state === 'skipped' && input.skippedReason !== undefined && input.skippedReason.trim() !== '') {
-    return input.skippedReason
-  }
+  if (input.state === 'skipped' && hasText(input.skippedReason)) return input.skippedReason
 
-  return KIND_COPY[input.kind]?.[input.state] ?? strings.summary.generic[input.state]
+  return templateSentence(input)
 }
 
-function countSentence({ kind, state, counts, jobCount }: SummaryInput): string | undefined {
-  if (kind === 'tests') {
-    const tests = strings.summary.tests
-    if (state === 'queued') return tests.queued
-    if (state === 'running') {
-      return counts === undefined ? tests.running : strings.summary.testsRunning(counts.total)
-    }
-    if (state === 'passed') {
-      if (counts === undefined) return strings.summary.passedWithoutCounts
-      return strings.summary.testsPassed(counts.passed, counts.total)
-    }
-    if (state === 'failed') {
-      if (counts === undefined) return strings.summary.failedWithoutCounts
-      return strings.summary.testsFailed(counts.passed, counts.failed, counts.total)
-    }
-    return undefined
+// True exactly when summarize returns input.claim. The UI uses this to mark a
+// model-authored sentence as a claim.
+export function claimUsed(input: SummaryInput): boolean {
+  return usableClaim(input) !== undefined
+}
+
+function usableClaim(input: SummaryInput): string | undefined {
+  if (evidenceSentence(input) !== undefined) return undefined
+  if (!CLAIM_STATES.has(input.state)) return undefined
+  return hasText(input.claim) ? input.claim : undefined
+}
+
+function hasText(text: string | undefined): text is string {
+  return text !== undefined && text.trim() !== ''
+}
+
+function evidenceSentence({ kind, state, counts, jobCount }: SummaryInput): string | undefined {
+  if (kind === 'tests' && counts !== undefined) {
+    if (state === 'running') return strings.summary.testsRunning(counts.total)
+    if (state === 'passed') return strings.summary.testsPassed(counts.passed, counts.total)
+    if (state === 'failed') return strings.summary.testsFailed(counts.passed, counts.failed, counts.total)
   }
 
   if (kind === 'build' && state === 'passed' && jobCount !== undefined) {
@@ -62,4 +73,16 @@ function countSentence({ kind, state, counts, jobCount }: SummaryInput): string 
   }
 
   return undefined
+}
+
+function templateSentence({ kind, state }: SummaryInput): string {
+  if (kind === 'tests') {
+    const tests = strings.summary.tests
+    if (state === 'queued') return tests.queued
+    if (state === 'running') return tests.running
+    if (state === 'passed') return strings.summary.passedWithoutCounts
+    if (state === 'failed') return strings.summary.failedWithoutCounts
+  }
+
+  return KIND_COPY[kind]?.[state] ?? strings.summary.generic[state]
 }

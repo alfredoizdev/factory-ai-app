@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import { STAGE_ORDER, type BlockKind } from '@/domain/graph'
-import { summarize } from '@/domain/summary'
+import { claimUsed, summarize, type SummaryInput } from '@/domain/summary'
 import type { NodeState } from '@/domain/states'
 
 const ALL_STATES: readonly NodeState[] = [
@@ -97,4 +97,81 @@ test('every sentence is plain text with no placeholders left in it', () => {
       })
       expect(sentence).not.toMatch(/\$\{|undefined|NaN/)
     }
+})
+
+const CLAIM = 'The reviewer found the change safe.'
+
+test('a claim never outranks a queued, blocked, cancelled or skipped state', () => {
+  expect(summarize({ kind: 'review', state: 'queued', claim: CLAIM })).toBe('Waits for the tests.')
+  expect(summarize({ kind: 'review', state: 'blocked', claim: CLAIM })).toBe(
+    'Blocked. Needs a decision or a fix before it can run.',
+  )
+  expect(summarize({ kind: 'review', state: 'cancelled', claim: CLAIM })).toBe('Cancelled. Nothing after this ran.')
+  expect(summarize({ kind: 'review', state: 'skipped', claim: CLAIM })).toBe('Skipped for this change.')
+})
+
+test('a failed tests block keeps its counts over a claim', () => {
+  expect(
+    summarize({ kind: 'tests', state: 'failed', counts: { passed: 4, failed: 1, total: 5 }, claim: CLAIM }),
+  ).toBe('4 of 5 passed. 1 failed.')
+})
+
+test('a passed block with a claim and no counts returns the claim', () => {
+  expect(summarize({ kind: 'review', state: 'passed', claim: CLAIM })).toBe(CLAIM)
+})
+
+test('a waiting approval block with a claim returns the claim', () => {
+  expect(summarize({ kind: 'approve', state: 'waiting_approval', claim: CLAIM })).toBe(CLAIM)
+})
+
+test('a skipped reason outranks a claim', () => {
+  expect(
+    summarize({ kind: 'review', state: 'skipped', skippedReason: 'Not needed for this change', claim: CLAIM }),
+  ).toBe('Not needed for this change')
+})
+
+test('claimUsed agrees with what summarize returns', () => {
+  const states: readonly NodeState[] = [
+    'queued',
+    'running',
+    'waiting_approval',
+    'passed',
+    'failed',
+    'cancelled',
+    'skipped',
+    'blocked',
+  ]
+  const counts = { passed: 4, failed: 1, total: 5 }
+  const claims: readonly (string | undefined)[] = [undefined, '   ', CLAIM]
+  const kinds: readonly BlockKind[] = ['tests', 'review', 'build', 'approve']
+  let checked = 0
+  for (const kind of kinds)
+    for (const state of states)
+      for (const claim of claims)
+        for (const withCounts of [false, true]) {
+          const input: SummaryInput = {
+            kind,
+            state,
+            ...(claim === undefined ? {} : { claim }),
+            ...(withCounts ? { counts } : {}),
+          }
+          expect(claimUsed(input), JSON.stringify(input)).toBe(summarize(input) === input.claim)
+          checked++
+        }
+  expect(checked).toBe(kinds.length * states.length * claims.length * 2)
+})
+
+test('claimUsed is false for a queued input carrying a claim', () => {
+  expect(claimUsed({ kind: 'review', state: 'queued', claim: CLAIM })).toBe(false)
+})
+
+test('claimUsed is false when counts win over a claim', () => {
+  expect(
+    claimUsed({ kind: 'tests', state: 'failed', counts: { passed: 4, failed: 1, total: 5 }, claim: CLAIM }),
+  ).toBe(false)
+})
+
+test('claimUsed is true only when the claim is returned', () => {
+  expect(claimUsed({ kind: 'review', state: 'passed', claim: CLAIM })).toBe(true)
+  expect(claimUsed({ kind: 'review', state: 'passed', claim: '  ' })).toBe(false)
 })
