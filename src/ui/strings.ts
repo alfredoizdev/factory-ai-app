@@ -132,6 +132,16 @@ export const strings = {
     cannotPublish: 'The workflow has problems that must be fixed before it can be published.',
     invalidBody: 'The request was not in the expected shape.',
   },
+  run: {
+    skippedDisabled: 'This block is switched off, so it was skipped.',
+    retrying: 'That attempt failed. Trying once more.',
+    timedOut: (seconds: number) => `No result after ${seconds} seconds, so the block was stopped.`,
+    noResult: 'The agent stopped without a result.',
+    providerCrashed: 'The agent stopped unexpectedly.',
+    rejected: 'A person rejected the result.',
+    resumed: 'A person approved. The run continues.',
+    couldNotStart: 'The run could not be started. Nothing ran.',
+  },
   demo: {
     projectName: 'Demo project',
     workflowName: 'Demo workflow',

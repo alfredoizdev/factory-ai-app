@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto'
 import { desc, eq, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
-import { runs, workflows, workflowVersions } from '@/db/schema'
+import { nodeRuns, runs, workflows, workflowVersions } from '@/db/schema'
 import { validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
-import { appendEvent } from '@/engine/events'
+import { canTransition, type NodeState } from '@/domain/states'
+import { appendEventSync } from '@/engine/events'
 import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
 
@@ -130,34 +131,60 @@ export async function createRun(input: {
   if (!version) throw new NothingPublishedError()
 
   const runId = ulid()
-  db.insert(runs)
-    .values({
-      id: runId,
-      projectId: wf.projectId,
-      workflowId: wf.id,
-      versionId: version.id,
-      status: 'queued',
-      request: input.request,
-      providerId: DEMO_PROVIDER_ID,
-      createdAt: now(),
-    })
-    .run()
-  await appendEvent({ runId, type: 'run.created', payload: { versionId: version.id } })
-  return { runId, versionId: version.id }
-}
-
-// Persistence half only: marks the run cancelled so the durable execution function can observe it between steps.
-// Nothing in flight is stopped here. A run that already finished is left as it is.
-export async function cancelRun(runId: string): Promise<void> {
-  const changed = db.transaction(
+  // The run row and run.created commit together: a crash cannot leave a run with no events.
+  db.transaction(
     tx => {
-      const run = tx.select().from(runs).where(eq(runs.id, runId)).get()
-      if (!run) throw new RunNotFoundError(runId)
-      if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') return false
-      tx.update(runs).set({ status: 'cancelled', finishedAt: now() }).where(eq(runs.id, runId)).run()
-      return true
+      tx.insert(runs)
+        .values({
+          id: runId,
+          projectId: wf.projectId,
+          workflowId: wf.id,
+          versionId: version.id,
+          status: 'queued',
+          request: input.request,
+          providerId: DEMO_PROVIDER_ID,
+          createdAt: now(),
+        })
+        .run()
+      appendEventSync({ runId, type: 'run.created', payload: { versionId: version.id } }, tx)
     },
     { behavior: 'immediate' },
   )
-  if (changed) await appendEvent({ runId, type: 'run.cancelled' })
+  return { runId, versionId: version.id }
+}
+
+// Persistence half only: marks the run cancelled so the durable execution function can observe it between steps
+// and abort the in-flight provider. Every node that has not finished is cancelled with it, so a cancelled run never
+// shows a node still running. The run row, node rows and their events commit in one transaction; a run that already
+// finished is left as it is.
+export async function cancelRun(runId: string): Promise<void> {
+  db.transaction(
+    tx => {
+      const run = tx.select().from(runs).where(eq(runs.id, runId)).get()
+      if (!run) throw new RunNotFoundError(runId)
+      if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') return
+      const finishedAt = now()
+      tx.update(runs).set({ status: 'cancelled', finishedAt }).where(eq(runs.id, runId)).run()
+      for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
+        if (!canTransition(node.state as NodeState, 'cancelled')) continue
+        tx.update(nodeRuns).set({ state: 'cancelled', finishedAt }).where(eq(nodeRuns.id, node.id)).run()
+        appendEventSync({ runId, nodeRunId: node.id, type: 'node.cancelled', payload: { blockId: node.blockId } }, tx)
+      }
+      appendEventSync({ runId, type: 'run.cancelled' }, tx)
+    },
+    { behavior: 'immediate' },
+  )
+}
+
+// For a run whose execution could not be requested: ends it as failed (status and event together) so it does not sit queued.
+export async function failUnstartedRun(runId: string): Promise<void> {
+  db.transaction(
+    tx => {
+      const run = tx.select().from(runs).where(eq(runs.id, runId)).get()
+      if (!run || run.status !== 'queued') return
+      tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId)).run()
+      appendEventSync({ runId, type: 'run.failed', payload: { cause: 'not_started', message: strings.run.couldNotStart } }, tx)
+    },
+    { behavior: 'immediate' },
+  )
 }

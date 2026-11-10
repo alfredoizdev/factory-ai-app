@@ -9,7 +9,7 @@ import { events, runs } from '@/db/schema'
 export type RunEventType = 'run.created' | 'run.started' | 'run.completed' | 'run.failed' | 'run.cancelled'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'
-  | 'node.failed' | 'node.skipped' | 'node.waiting_approval'
+  | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'
 export type EventType = RunEventType | NodeEventType
 
 // Events carry only nodeRunId, so every node.* payload names its block: the client maps an event to a block without a join.
@@ -55,20 +55,21 @@ function toRow(r: typeof events.$inferSelect): EventRow {
   }
 }
 
-export async function appendEvent(input: AppendEventInput): Promise<EventRow> {
+// A handle a caller already holds: the db itself, or the tx inside db.transaction(). With a transaction handle the
+// event commits or rolls back together with the caller's own writes.
+export type DbHandle = Pick<typeof db, 'select' | 'insert' | 'update'>
+
+function insertEvent(h: DbHandle, input: AppendEventInput): EventRow {
   // Runtime guard: the type requires blockId, but a cast bypasses types and '' type-checks.
   if (input.type.startsWith('node.')) {
     const blockId = (input.payload as { blockId?: unknown } | null | undefined)?.blockId
     if (typeof blockId !== 'string' || blockId === '') throw new InvalidEventPayloadError(input.type)
   }
-  // Read-max and insert share one IMMEDIATE transaction: the write lock is taken up front, so a second
-  // connection waits (busy_timeout) rather than reading the same max under a shared lock and failing on
-  // upgrade. The unique (runId, sequence) index is the backstop: a lost race throws rather than corrupts.
-  const row = db.transaction(tx => {
-    const run = tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, input.runId)).get()
-    if (!run) throw new RunNotFoundError(input.runId)
-    const top = tx.select({ m: max(events.sequence) }).from(events).where(eq(events.runId, input.runId)).get()
-    return tx
+  const run = h.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, input.runId)).get()
+  if (!run) throw new RunNotFoundError(input.runId)
+  const top = h.select({ m: max(events.sequence) }).from(events).where(eq(events.runId, input.runId)).get()
+  return toRow(
+    h
       .insert(events)
       .values({
         id: ulid(),
@@ -81,9 +82,22 @@ export async function appendEvent(input: AppendEventInput): Promise<EventRow> {
         createdAt: new Date().toISOString(),
       })
       .returning()
-      .get()
-  }, { behavior: 'immediate' })
-  return toRow(row)
+      .get(),
+  )
+}
+
+// Synchronous form for use inside db.transaction(): pass the tx so the row and its event are written atomically.
+// The caller's transaction should be IMMEDIATE so the sequence read-then-write cannot race another writer.
+export function appendEventSync(input: AppendEventInput, handle: DbHandle): EventRow {
+  return insertEvent(handle, input)
+}
+
+export async function appendEvent(input: AppendEventInput, handle?: DbHandle): Promise<EventRow> {
+  if (handle) return insertEvent(handle, input)
+  // Read-max and insert share one IMMEDIATE transaction: the write lock is taken up front, so a second
+  // connection waits (busy_timeout) rather than reading the same max under a shared lock and failing on
+  // upgrade. The unique (runId, sequence) index is the backstop: a lost race throws rather than corrupts.
+  return db.transaction(tx => insertEvent(tx, input), { behavior: 'immediate' })
 }
 
 // afterSequence 0 means everything; sequences start at 1.

@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { createRun, NothingPublishedError, WorkflowNotFoundError } from '@/engine/run'
+import { inngest, RUN_REQUESTED } from '@/engine/inngest/client'
+import { createRun, failUnstartedRun, NothingPublishedError, WorkflowNotFoundError } from '@/engine/run'
 import { strings } from '@/ui/strings'
 
 const bodySchema = z.object({ request: z.string().trim().min(1) })
@@ -9,7 +10,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const body = bodySchema.safeParse(await req.json().catch(() => null))
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
-    return Response.json(await createRun({ workflowId: id, request: body.data.request }), { status: 201 })
+    const created = await createRun({ workflowId: id, request: body.data.request })
+    try {
+      await inngest.send({ name: RUN_REQUESTED, data: { runId: created.runId } })
+    } catch {
+      // Nothing will ever execute this run, so say so rather than leave it queued forever.
+      await failUnstartedRun(created.runId)
+      return Response.json({ error: strings.run.couldNotStart, runId: created.runId }, { status: 503 })
+    }
+    return Response.json(created, { status: 201 })
   } catch (e) {
     if (e instanceof WorkflowNotFoundError) return Response.json({ error: e.message }, { status: 404 })
     if (e instanceof NothingPublishedError) return Response.json({ error: e.message }, { status: 409 })
