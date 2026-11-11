@@ -89,11 +89,20 @@ export function ProjectSwitcher({ workflowId, style }: { workflowId: string; sty
 
   useEffect(() => {
     if (!open) return
-    const onDown = (e: MouseEvent) => {
+    // Capture phase: the canvas stops pointer events from bubbling (it pans and zooms on them), so a click there would
+    // never reach a listener waiting at the bottom. Escape closes it too.
+    const onDown = (e: PointerEvent) => {
       if (root.current && !root.current.contains(e.target as Node)) setOpen(false)
     }
-    window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [open])
 
   async function prepare() {
