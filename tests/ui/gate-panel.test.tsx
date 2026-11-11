@@ -7,7 +7,7 @@ const review = { hash: 'h1', files: [{ path: 'src/app/page.tsx', added: 1, remov
 afterEach(() => vi.unstubAllGlobals())
 
 test('it shows what changed and sends the decision bound to the change it showed', async () => {
-  const fetchMock = vi.fn(async (url: string) =>
+  const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
     url.endsWith('/review') ? new Response(JSON.stringify(review)) : new Response(JSON.stringify({ decision: 'approved' })))
   vi.stubGlobal('fetch', fetchMock)
   render(<GatePanel runId="r1" risk={{ level: 'low', reasons: ['1 file, 2 lines.'] }} />)
@@ -19,7 +19,7 @@ test('it shows what changed and sends the decision bound to the change it showed
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.gate.approve) }))
   expect(await screen.findByText(strings.gate.approved)).toBeInTheDocument()
   const [, init] = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/decision'))!
-  expect(JSON.parse(String((init as RequestInit).body))).toEqual({ decision: 'approved', reason: 'ok', diffHash: 'h1' })
+  expect(JSON.parse(String(init!.body))).toEqual({ decision: 'approved', reason: 'ok', diffHash: 'h1' })
   expect(screen.queryByRole('button', { name: new RegExp(strings.gate.approve) })).toBeNull() // decided once
 })
 

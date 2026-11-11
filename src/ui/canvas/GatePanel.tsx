@@ -85,7 +85,9 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
         right: 16,
         bottom: 16,
         zIndex: 5,
-        width: 380,
+        // Wider while the change is open, so code lines are readable without scrolling sideways.
+        width: showDiff ? 'min(760px, 60vw)' : 460,
+        transition: 'width 160ms ease-out',
         maxHeight: 'calc(100% - 32px)',
         overflowY: 'auto',
         background: 'linear-gradient(180deg, #1f1a10 0%, #16130d 100%)',
@@ -138,9 +140,11 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
             </button>
           )}
           {showDiff && (
-            <pre data-testid="gate-diff" style={{ margin: 0, maxHeight: 260, overflow: 'auto', background: '#0b0e14', border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, fontSize: 11.5, lineHeight: 1.45 }}>
+            <pre data-testid="gate-diff" style={{ margin: 0, maxHeight: '50vh', overflow: 'auto', background: '#0b0e14', border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, fontSize: 12.5, lineHeight: 1.5 }}>
               {review.diff.split('\n').map((line, i) => (
-                <div key={i} style={{ color: line.startsWith('+') ? '#86efac' : line.startsWith('-') ? '#fca5a5' : line.startsWith('@@') ? '#93c5fd' : '#9aa5b6', whiteSpace: 'pre' }}>
+                <div key={i} style={{ color: line.startsWith('+') ? '#86efac' : line.startsWith('-') ? '#fca5a5' : line.startsWith('@@') ? '#93c5fd' : '#9aa5b6',
+                  // Long lines wrap instead of running off the side; the indent keeps the +/− marker readable.
+                  whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', paddingLeft: '1.2em', textIndent: '-1.2em' }}>
                   {line || ' '}
                 </div>
               ))}
