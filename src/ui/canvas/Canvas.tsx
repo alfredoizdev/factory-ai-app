@@ -96,7 +96,7 @@ const RUN_SECTION = 'sidebar-run'
 const PALETTE_SECTION = 'sidebar-palette'
 const SETTINGS_SECTION = 'sidebar-block-settings'
 const LOG_SECTION = 'sidebar-log'
-const LOG_MAX_HEIGHT = 260
+const LOG_MAX_HEIGHT = 380
 /** The id the run panel gives its request box, so the rail's run icon can put the cursor in it. */
 export const RUN_INPUT_ID = 'run-request'
 
