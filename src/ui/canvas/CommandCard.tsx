@@ -8,6 +8,7 @@ import { WorkingSpinner } from './BlockCard'
 import { Composer, imagesBusy, readyImageIds, type ComposerImage } from './Composer'
 import { GateSection } from './GatePanel'
 import { ResultSection } from './ResultPanel'
+import { COMMAND_CARD_WIDTH } from './layout'
 import type { ShipState } from '@/engine/ship'
 
 export type CardMode = 'idle' | 'working' | 'waiting' | 'done'
@@ -75,7 +76,7 @@ export const CommandCard = forwardRef<
         right: 16,
         bottom: 16,
         zIndex: 5,
-        width: 460,
+        width: COMMAND_CARD_WIDTH,
         maxWidth: 'calc(100% - 32px)',
         maxHeight: 'calc(100% - 32px)',
         overflowY: 'auto',

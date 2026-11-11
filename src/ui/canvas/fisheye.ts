@@ -62,3 +62,27 @@ export function autoFocus(ordered: readonly { id: string; state: NodeState | nul
   const furthest = [...ordered].reverse().find(o => o.state !== null && o.state !== 'queued')
   return furthest?.id ?? ordered[0]?.id ?? null
 }
+
+export type Pad = { top: number; right: number; bottom: number; left: number }
+
+/**
+ * Where to put the camera so the whole lane fits the free part of the canvas, centred there and never above zoom 1.
+ * Worked out from the layout itself (its widths are known constants), not from measured cards, so it is the same on
+ * every load and does not depend on when the browser happens to measure.
+ */
+export function laneViewport(layout: ReadonlyMap<string, Placement>, pane: { width: number; height: number }, pad: Pad): { x: number; y: number; zoom: number } {
+  const boxes = [...layout.values()].map(p => ({ x: p.x, y: p.y, w: p.collapsed ? SPINE_WIDTH : CARD_WIDTH, h: CARD_MIN_HEIGHT }))
+  if (boxes.length === 0) return { x: 0, y: 0, zoom: 1 }
+  const minX = Math.min(...boxes.map(b => b.x))
+  const maxX = Math.max(...boxes.map(b => b.x + b.w))
+  const minY = Math.min(...boxes.map(b => b.y))
+  const maxY = Math.max(...boxes.map(b => b.y + b.h))
+  const freeW = Math.max(1, pane.width - pad.left - pad.right)
+  const freeH = Math.max(1, pane.height - pad.top - pad.bottom)
+  const zoom = Math.min(1, freeW / (maxX - minX), freeH / (maxY - minY))
+  return {
+    x: pad.left + (freeW - (maxX - minX) * zoom) / 2 - minX * zoom,
+    y: pad.top + (freeH - (maxY - minY) * zoom) / 2 - minY * zoom,
+    zoom,
+  }
+}

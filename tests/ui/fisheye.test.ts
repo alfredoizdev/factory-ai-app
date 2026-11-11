@@ -75,3 +75,22 @@ test('a block the run does not contain is never chosen as the focus', () => {
   const ordered = [{ id: 'input', state: 'passed' as NodeState }, { id: 'extra', state: null }]
   expect(autoFocus(ordered)).toBe('input')
 })
+
+test('the lane is fitted into the free part of the canvas, left of the command card, at most at zoom 1', async () => {
+  const { laneViewport } = await import('@/ui/canvas/fisheye')
+  const { CARD_WIDTH } = await import('@/ui/canvas/BlockCard')
+  const layout = new Map([
+    ['a', { x: 0, y: 0, collapsed: false }],
+    ['b', { x: 400, y: 0, collapsed: false }],
+  ])
+  const pad = { top: 40, right: 500, bottom: 40, left: 40 }
+  const v = laneViewport(layout, { width: 2000, height: 900 }, pad)
+  expect(v.zoom).toBe(1)
+  const laneRight = v.x + (400 + CARD_WIDTH) * v.zoom
+  expect(laneRight).toBeLessThanOrEqual(2000 - 500)
+  expect(v.x).toBeGreaterThanOrEqual(40)
+  // Too narrow: it zooms out to fit rather than running under the card.
+  const narrow = laneViewport(layout, { width: 900, height: 900 }, pad)
+  expect(narrow.zoom).toBeLessThan(1)
+  expect(narrow.x + (400 + CARD_WIDTH) * narrow.zoom).toBeLessThanOrEqual(900 - 500 + 0.001)
+})

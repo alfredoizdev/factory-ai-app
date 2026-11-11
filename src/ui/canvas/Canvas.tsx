@@ -12,8 +12,9 @@ import { strings } from '@/ui/strings'
 import { Depth } from './Depth'
 import { ParticleLayer, type Cable } from './FlowParticles'
 import { useReducedMotion } from './useReducedMotion'
+import { COMMAND_CARD_WIDTH } from './layout'
 import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, SPINE_WIDTH, SpineCard, type NodeRunView } from './BlockCard'
-import { autoFocus, fisheyeLayout } from './fisheye'
+import { autoFocus, fisheyeLayout, laneViewport, type Placement } from './fisheye'
 import { SidebarIcon, type SidebarIconName } from './SidebarIcons'
 import { usePersistentFlag } from './usePersistentFlag'
 
@@ -112,6 +113,14 @@ function BlockNode({ data }: NodeProps<CardNode>) {
 
 /** Room around a card inside its resizing frame: the corner mark overhangs the card by 9px. */
 const CLIP_ROOM = 14
+
+// One way of fitting the lane, used on load and on every refit, so a reload lands where the view already was. The
+// right side keeps room for the command card (its width plus its 16px margin and some air), so no block is under it.
+const PAD = { top: 48, bottom: 48, left: 40, right: COMMAND_CARD_WIDTH + 56 }
+const FIT = {
+  maxZoom: 1,
+  padding: { top: `${PAD.top}px`, bottom: `${PAD.bottom}px`, left: `${PAD.left}px`, right: `${PAD.right}px` },
+} as const
 
 const nodeTypes = { block: BlockNode }
 
@@ -323,18 +332,36 @@ export function Canvas({
   const flow = useRef<ReactFlowInstance<CardNode> | null>(null)
   const reducedMotion = useReducedMotion()
   const [sidebarOpen, setSidebarOpen] = usePersistentFlag(SIDEBAR_KEY, true)
+  // While a run is on screen the camera is placed from the layout itself (laneViewport), the same on every load; while
+  // editing, the flow's own fit is used. Either way the command card's corner is left free.
+  const pane = useRef<HTMLDivElement>(null)
+  const layoutRef = useRef<ReadonlyMap<string, Placement> | null>(null)
+  const fitLane = useCallback((duration: number) => {
+    const instance = flow.current
+    const el = pane.current
+    if (!instance) return
+    const lane = layoutRef.current
+    if (lane && el) void instance.setViewport(laneViewport(lane, { width: el.clientWidth, height: el.clientHeight }, PAD), { duration })
+    else void instance.fitView({ ...FIT, duration })
+  }, [])
+  useEffect(() => {
+    const onResize = () => fitLane(0)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [fitLane])
+
   // The canvas gets wider or narrower when the sidebar moves, so the lane is fitted again rather than left off-centre.
   useEffect(() => {
     // Two frames: the first lays out the new width, the second lets the flow measure it before fitting to it.
     let inner = 0
     const outer = requestAnimationFrame(() => {
-      inner = requestAnimationFrame(() => void flow.current?.fitView({ duration: reducedMotion ? 0 : 300, maxZoom: 1 }))
+      inner = requestAnimationFrame(() => fitLane(reducedMotion ? 0 : 300))
     })
     return () => {
       cancelAnimationFrame(outer)
       cancelAnimationFrame(inner)
     }
-  }, [sidebarOpen, reducedMotion])
+  }, [sidebarOpen, reducedMotion, fitLane])
   // From the rail: open the sidebar at one section, and put the cursor where typing belongs.
   const openAt = (sectionId: string, focusId?: string) => {
     setSidebarOpen(true)
@@ -349,7 +376,7 @@ export function Canvas({
     if (floorRef.current) floorRef.current.style.translate = `${vp.x * PARALLAX}px ${vp.y * PARALLAX}px`
   }, [])
   useEffect(() => {
-    if (highlightedId) void flow.current?.fitView({ nodes: [{ id: highlightedId }], duration: 300, maxZoom: 1 })
+    if (highlightedId) void flow.current?.fitView({ ...FIT, nodes: [{ id: highlightedId }], duration: 300 })
   }, [highlightedId])
 
   // The queued default is only true when there is no run. Once a run exists, a block it has no view for is
@@ -381,14 +408,17 @@ export function Canvas({
     ordered.filter(b => issuesFor(b.id).length > 0 || (hasRun && draftIds.has(b.id) && !inRun(b))).map(b => b.id),
   )
   const layout = hasRun ? fisheyeLayout(ordered, focusId, mustStayFull) : null
+  useEffect(() => {
+    layoutRef.current = layout
+  })
 
   // The lane is re-laid-out whenever the focus moves, so the view has to be re-fitted or the far end falls
   // off the screen. Under reduced motion it jumps instead of gliding: a glide is movement.
   const fisheyeFocus = hasRun ? focusId : null
   useEffect(() => {
     if (fisheyeFocus === null) return
-    void flow.current?.fitView({ duration: reducedMotion ? 0 : 300, maxZoom: 1 })
-  }, [fisheyeFocus, reducedMotion])
+    fitLane(reducedMotion ? 0 : 300)
+  }, [fisheyeFocus, reducedMotion, fitLane])
 
   const placementOf = (block: Block) => layout?.get(block.id)
   const removeFromDraft = (id: string) => {
@@ -700,7 +730,7 @@ export function Canvas({
         )}
       </aside>
 
-      <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+      <div ref={pane} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
         <Depth floorRef={floorRef} />
         <ReactFlow
           nodes={nodes}
@@ -713,6 +743,8 @@ export function Canvas({
           onPaneClick={close}
           onInit={instance => {
             flow.current = instance
+            // Placed at once from the layout, so a reload lands in the same spot instead of settling later.
+            fitLane(0)
             parallax(instance.getViewport())
           }}
           onNodeClick={(_, node) => {
@@ -738,7 +770,8 @@ export function Canvas({
           nodesDraggable={!hasRun}
           nodesConnectable={false}
           deleteKeyCode={null}
-          fitView
+          fitView={!hasRun}
+          fitViewOptions={FIT}
           colorMode="dark"
           proOptions={{ hideAttribution: true }}
         >
