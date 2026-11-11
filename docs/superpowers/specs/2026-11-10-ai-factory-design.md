@@ -481,6 +481,64 @@ webhooks processed idempotently, CI status on the canvas.
 *Done when:* a real PR and its checks appear on the canvas and a duplicate webhook
 creates nothing twice.
 
+### 8.1 Borrowed from rsc-harness (recorded 2026-11-11)
+
+Four mechanisms taken from [rsc-harness](https://github.com/ericrisco/rsc-harness)
+after reading its README. The ideas were taken, not the code: rsc is a harness
+installer (a skill catalogue, a docs wiki, hooks) and none of that is this
+product. What follows is how each idea lands *here*, in the milestone it belongs
+to, and where it rubs against something this document already decided.
+
+**1. The review funnel, with a verifier that assumes the finding is false (M4).**
+Reviewers overlap and overstate. After the reviewers report, findings are
+consolidated (duplicates merged), and every *blocking* finding goes to one more
+agent whose starting position is that the finding is wrong. A finding blocks
+only if that verifier reproduces it or traces it to a line. The Review block
+shows the funnel as three numbers — **`11 reported → 4 unique → 2 confirmed`** —
+and the refuted findings stay listed, each with the verifier's reason, so
+nothing disappears silently.
+*Fits:* M4's "consolidation with honest counters". *Keeps:* a refuted finding is
+a claim about a claim, so it renders as a claim (anti-goal 2). *Does not change:*
+the verifier cannot clear a finding a human has marked blocking (anti-goal 4).
+
+**2. Review depth proportional to risk (M4).** A change touching only docs gets
+no reviewers; ordinary code gets one; a change touching auth, billing, CI config
+or migrations gets all four. The risk class is computed from the diff's paths
+(something anyone can check), shown on the Review block in words, and frozen
+with the run.
+*Rubs against:* rsc goes further and lets low-risk work land on green CI with no
+person. Here **the human gate stays on every run** — that is this product's
+central guarantee, and removing it for "low risk" would be the bypass anti-goal
+4 forbids. Only the depth of *AI review* scales. Whether a person may ever opt
+a risk class out of the gate is open question 3, not a decision.
+
+**3. One tray for every decision that waits on a person (M4–M5).** When a run
+parks at its human gate, the decision goes into a tray visible from every
+canvas, and **the other runs keep going**.
+*Rubs against:* §6 rejects "an approval queue" because per-command prompts
+recreate babysitting. This is not that: the tray holds only end-of-flow gates,
+never commands, and a run still parks at exactly one place. It is the
+across-runs view that "real parallelism is across runs" already implies — three
+runs in flight means up to three decisions, and today each sits on its own
+canvas where it can be missed.
+
+**4. An approval is for one exact diff, and it expires if that diff changes
+(M4).** The approval records the hash of the diff the person was shown. If the
+branch moves between showing and approving — a late push, a rebuilt job — the
+approval is refused and the person is shown the new diff. Ship acts only on the
+hash that was approved.
+*Fits:* this is a fifth item for the named obligation above, alongside
+authorisation and the audit record: without it, an approval can be spent on
+code nobody looked at, which is the gate being bypassed by timing rather than
+by an AI.
+
+**And one rule adopted as written:** *a gate that checks nothing is worse than no
+gate.* Every rule this product declares binding ships with the mechanism that
+enforces it and a test that watches that mechanism fail and then pass (see §9).
+
+Not taken: the skill catalogue, the installer, the multi-assistant targets, the
+business skills. Those are rsc's product, not a gap in this one.
+
 ---
 
 ## 9. Quality bar
@@ -492,6 +550,9 @@ creates nothing twice.
 - One end-to-end test of the main path.
 - Demo and real execution are visually distinct and distinct in the data.
 - No mock presented as an integration. If it is not wired, the UI says so.
+- Every binding rule ships with the mechanism that enforces it and a test that
+  watches the mechanism fail and pass. A rule with no enforcement is not
+  written down as a rule (§8.1).
 
 ## 10. Constraints
 
@@ -555,3 +616,9 @@ knowingly rather than discovered later.
 2. **Does the user want to validate demand with agencies before M5–M6?** The
    design assumes building first, validating later — which is the user's call,
    already made, but worth revisiting at M4.
+3. **May a person ever opt a risk class out of the human gate?** rsc-harness
+   lets low-risk work land on green CI with nobody looking. This design keeps
+   the gate on every run (§8.1, idea 2). If agencies in the validation
+   conversations say a gate on a typo fix is the friction that makes them turn
+   the tool off, this is where it would be revisited — as an explicit,
+   per-project, audited setting, never a silent default.
