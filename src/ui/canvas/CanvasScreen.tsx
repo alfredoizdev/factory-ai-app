@@ -215,7 +215,7 @@ export function CanvasScreen({
           : 'idle'
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* The controls stay in the top bar, visible with the sidebar closed: which agent, run, stop, and the run's state. */}
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', minHeight: 36, borderBottom: `1px solid ${theme.border}`, background: theme.bg }}>
         {settings && (
@@ -255,9 +255,6 @@ export function CanvasScreen({
             ＋ {strings.delivery.newTask}
           </button>
         )}
-        <button type="button" style={headerButton} aria-expanded={tasksOpen} onClick={() => setTasksOpen(o => !o)}>
-          ☰ {strings.history.open}
-        </button>
         {/* The buttons act; what follows describes the run on screen, so it sits apart, at the far end. */}
         <span aria-hidden="true" style={{ flex: 1 }} />
         {run?.providerId === DEMO_PROVIDER_ID && (
@@ -337,7 +334,17 @@ export function CanvasScreen({
           )
         )}
       </header>
-      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      {/* Clipped: the closed drawer waits just off the right edge, and must not make the page scroll. */}
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+        {/* Top right of the canvas, where the list it opens slides in from. */}
+        <button
+          type="button"
+          aria-expanded={tasksOpen}
+          onClick={() => setTasksOpen(o => !o)}
+          style={{ ...headerButton, position: 'absolute', top: 12, right: 16, zIndex: 6, fontWeight: 600, background: theme.card, boxShadow: '0 6px 18px rgba(0,0,0,0.35)' }}
+        >
+          ☰ {strings.history.open}
+        </button>
         <TasksDrawer open={tasksOpen} onClose={closeTasks}>
           <PastTasks
             workflowId={workflowId}
