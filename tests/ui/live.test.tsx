@@ -159,4 +159,7 @@ test('New task in the top bar appears once the run is over, and clears it for a 
   fireEvent.click(await screen.findByRole('button', { name: new RegExp(strings.delivery.newTask) }))
   expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.newTask) })).toBeNull()
   expect(screen.getByText(strings.sidebar.runTitle)).toBeInTheDocument()
+  // It says how to start the new task, and does not send them to the past ones.
+  expect(screen.getByTestId('no-task')).toHaveTextContent(strings.history.newTaskTitle)
+  expect(screen.queryByRole('button', { name: new RegExp(strings.history.openPast) })).toBeNull()
 })

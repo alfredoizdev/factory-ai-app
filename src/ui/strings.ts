@@ -137,6 +137,8 @@ export const strings = {
   },
   history: {
     title: 'Past tasks',
+    newTaskTitle: 'New task',
+    newTaskText: 'Describe the change you want in the card at the bottom right, then press Run. The flow below is what it will go through.',
     noTaskTitle: 'No task open',
     noTaskText: 'Write what you want the agents to do in the card at the bottom right, or open one of your past tasks. The flow below is what your next task will go through.',
     openPast: 'Open past tasks',

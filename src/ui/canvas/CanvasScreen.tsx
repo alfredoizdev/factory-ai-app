@@ -165,7 +165,12 @@ export function CanvasScreen({
 
   // Leaves the finished run on screen behind and opens an empty task; the branch it will start from is read again,
   // since the person may have switched branches meanwhile.
-  function newTask() {
+  // Why no task is on screen: the person asked for a new one (then the screen helps them write it), or there is
+  // simply nothing open (then it points at the past tasks too).
+  const [emptyBecause, setEmptyBecause] = useState<'new' | 'none'>('none')
+
+  function newTask(reason: 'new' | 'none' = 'new') {
+    setEmptyBecause(reason)
     setRun(null)
     setStartFrom(null)
     setHighlightedId(null)
@@ -177,6 +182,8 @@ export function CanvasScreen({
         .then(next => next && setSettings(next))
         .catch(() => undefined)
     }
+    // A new task is written in the card: put the cursor there.
+    if (reason === 'new') requestAnimationFrame(() => document.getElementById(RUN_INPUT_ID)?.focus())
   }
 
   async function cancel() {
@@ -263,7 +270,7 @@ export function CanvasScreen({
         </button>
         {/* A finished run stays on screen until the person moves on: this clears it for a separate, fresh task. */}
         {run && !live && (
-          <button type="button" style={{ ...headerButton, fontWeight: 600 }} onClick={newTask}>
+          <button type="button" style={{ ...headerButton, fontWeight: 600 }} onClick={() => newTask('new')}>
             ＋ {strings.delivery.newTask}
           </button>
         )}
@@ -383,11 +390,20 @@ export function CanvasScreen({
               textAlign: 'center',
             }}
           >
-            <strong style={{ fontSize: 15 }}>{strings.history.noTaskTitle}</strong>
-            <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.history.noTaskText}</span>
-            <button type="button" onClick={() => setTasksOpen(true)} style={{ ...headerButton, justifySelf: 'center', fontWeight: 600 }}>
-              ☰ {strings.history.openPast}
-            </button>
+            {emptyBecause === 'new' ? (
+              <>
+                <strong style={{ fontSize: 15 }}>{strings.history.newTaskTitle}</strong>
+                <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.history.newTaskText}</span>
+              </>
+            ) : (
+              <>
+                <strong style={{ fontSize: 15 }}>{strings.history.noTaskTitle}</strong>
+                <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.history.noTaskText}</span>
+                <button type="button" onClick={() => setTasksOpen(true)} style={{ ...headerButton, justifySelf: 'center', fontWeight: 600 }}>
+                  ☰ {strings.history.openPast}
+                </button>
+              </>
+            )}
           </div>
         )}
         <TasksDrawer open={tasksOpen} onClose={closeTasks}>
@@ -402,7 +418,7 @@ export function CanvasScreen({
             onDeleted={id => {
               // The open task is gone: leave it, and close the list so the "No task open" screen is seen.
               if (id === run?.runId) {
-                newTask()
+                newTask('none')
                 setTasksOpen(false)
               }
             }}
