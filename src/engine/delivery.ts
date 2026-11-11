@@ -7,7 +7,7 @@ import { db } from '@/db/client'
 import { approvals, events, projects, runs } from '@/db/schema'
 import { appendEventSync } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
-import { branchFromWords, fallbackWords } from '@/engine/branch-name'
+import { branchFromWords, fallbackWords, type CommitMessage } from '@/engine/branch-name'
 import { branchNameFor } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
 
@@ -102,11 +102,17 @@ export function deliveryState(runId: string): Delivery {
  * Commits whatever the agent left uncommitted in the run's worktree, on the run's own branch, and returns the commit
  * the branch now points at. Used to keep an approved change before it is brought over or built upon.
  */
-export function keepCommit(run: { id: string; request: string; worktreePath: string | null }): string {
+export function keepCommit(run: { id: string; request: string; worktreePath: string | null }, described?: CommitMessage | null): string {
   const wt = run.worktreePath!
   git(wt, ['add', '-A'])
   if (git(wt, ['diff', '--cached', '--name-only']) !== '') {
-    const message = `${clip(run.request.replace(/\s+/g, ' ').trim(), 72)}\n\nMade by an agent in AI Factory, run ${run.id}, and approved by a person.`
+    // Says what changed when a description was written from the diff; otherwise the request is the best summary there is.
+    // Either way the request and the provenance are kept in the body.
+    const asked = run.request.replace(/\s+/g, ' ').trim()
+    const provenance = `Made by an agent in AI Factory, run ${run.id}, and approved by a person.`
+    const message = described
+      ? `${described.subject}\n\n${described.body ? `${described.body}\n\n` : ''}Asked for: ${clip(asked, 500)}\n\n${provenance}`
+      : `${clip(asked, 72)}\n\n${provenance}`
     git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
   }
   return git(wt, ['rev-parse', 'HEAD'])
@@ -144,6 +150,24 @@ export function changedFiles(runId: string): string[] {
   }
 }
 
+/** The change the agent left, committed or not, as one diff (new files included): what a commit message describes. */
+export function pendingDiff(runId: string): string {
+  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+  const wt = run?.worktreePath
+  if (!run || !wt) return ''
+  try {
+    const from = run.deliveryBase ?? run.baseCommit!
+    const tracked = git(wt, ['diff', from])
+    const added = git(wt, ['ls-files', '--others', '--exclude-standard'])
+      .split('\n')
+      .filter(Boolean)
+      .map(f => `new file: ${f}`)
+    return redact([tracked, ...added].join('\n'))
+  } catch {
+    return ''
+  }
+}
+
 /** The run's request, for naming its branch. */
 export function requestOf(runId: string): string | null {
   return db.select().from(runs).where(eq(runs.id, runId)).get()?.request ?? null
@@ -155,7 +179,9 @@ export function requestOf(runId: string): string | null {
  * is replaced by `fallbackName`, or by the request's own meaningful words. Their checkout and branches are not
  * touched. Once.
  */
-export function keepOnBranch(runId: string, options: { name?: string | null; fallbackName?: string | null } = {}): Delivery {
+export type KeepOptions = { name?: string | null; fallbackName?: string | null; message?: CommitMessage | null }
+
+export function keepOnBranch(runId: string, options: KeepOptions = {}): Delivery {
   const found = approvedAndFinished(runId)
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
@@ -167,7 +193,7 @@ export function keepOnBranch(runId: string, options: { name?: string | null; fal
   let branch = run.branch ?? git(wt, ['rev-parse', '--abbrev-ref', 'HEAD'])
   const exists = (name: string) => git(wt, ['branch', '--list', name]) !== ''
   if (own !== null && own !== branch && exists(own)) throw new DeliveryError(strings.delivery.branchExists(own), 409)
-  const commit = keepCommit(run)
+  const commit = keepCommit(run, options.message)
   const from = run.deliveryBase ?? run.baseCommit!
   const files = git(wt, ['diff', '--name-only', from, commit]).split('\n').filter(Boolean)
   if (files.length === 0) throw new DeliveryError(strings.delivery.nothing, 409)
@@ -193,7 +219,7 @@ export function keepOnBranch(runId: string, options: { name?: string | null; fal
  * Applies the approved change, uncommitted, to the person's checkout — on whatever branch they are on — after keeping
  * it on its own branch. Once. Refused, with nothing changed, when their checkout has unsaved work.
  */
-export function deliverToProject(runId: string, options: { name?: string | null; fallbackName?: string | null } = {}): Delivery {
+export function deliverToProject(runId: string, options: KeepOptions = {}): Delivery {
   const found = approvedAndFinished(runId)
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)

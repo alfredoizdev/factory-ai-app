@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { branchFromWords, suggestBranchWords } from '@/engine/branch-name'
-import { changedFiles, deliverToProject, DeliveryError, deliveryState, keepOnBranch, pushBranch, requestOf, switchBack, switchToBranch } from '@/engine/delivery'
+import { branchFromWords, suggestBranchWords, suggestCommitMessage } from '@/engine/branch-name'
+import { changedFiles, deliverToProject, DeliveryError, deliveryState, keepOnBranch, pendingDiff, pushBranch, requestOf, switchBack, switchToBranch } from '@/engine/delivery'
 import { requireOwnPage } from '@/engine/same-origin'
 
 type Ctx = { params: Promise<{ runId: string }> }
@@ -37,8 +37,13 @@ export async function POST(req: Request, ctx: Ctx) {
     if (mode === 'switch') return Response.json(switchToBranch(runId))
     if (mode === 'back') return Response.json(switchBack(runId))
     if (mode === 'push') return Response.json(await pushBranch(runId))
-    const fallbackName = name === '' && !deliveryState(runId).kept ? await suggestedName(runId) : null
-    const options = { name: name || null, fallbackName }
+    // Before the first keep, a short model names the branch (unless the person did) and describes the change, at once.
+    const first = !deliveryState(runId).kept
+    const request = requestOf(runId) ?? ''
+    const [fallbackName, message] = first
+      ? await Promise.all([name === '' ? suggestedName(runId) : null, suggestCommitMessage(request, pendingDiff(runId))])
+      : [null, null]
+    const options = { name: name || null, fallbackName, message }
     return Response.json(mode === 'branch' ? keepOnBranch(runId, options) : deliverToProject(runId, options))
   } catch (e) {
     return failed(e)

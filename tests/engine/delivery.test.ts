@@ -404,3 +404,13 @@ describe('pushing the kept branch', () => {
     expect(githubPullUrl('/tmp/bare', 'b')).toBeNull()
   })
 })
+
+test('a suggested commit message is used, with the provenance line kept', async () => {
+  const { runId, repo } = await finishedRun()
+  const kept = keepOnBranch(runId, { message: { subject: 'Outline the buttons and add Button', body: '- outline style\n- new Button component' } })
+  expect(git(repo, 'log', '-1', '--format=%s', kept.branch!)).toBe('Outline the buttons and add Button')
+  const body = git(repo, 'log', '-1', '--format=%b', kept.branch!)
+  expect(body).toContain('- new Button component')
+  expect(body).toContain('approved by a person')
+  expect(body).toContain('Asked for: Outline buttons in the other team colour')
+})

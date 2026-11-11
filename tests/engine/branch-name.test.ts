@@ -41,3 +41,39 @@ test('the fallback drops filler, commands, paths and sizes', () => {
 test('with nothing usable anywhere, the words are just "change"', async () => {
   expect(await suggestBranchWords('   ', [], async () => '??')).toBe('change')
 })
+
+import { suggestCommitMessage } from '@/engine/branch-name'
+
+describe('the commit message describes the change, not the prompt', () => {
+  const diff = '--- a/src/app/page.tsx\n+++ b/src/app/page.tsx\n-  bg-white border-2\n+  border-[3px] uppercase\n'
+
+  test('a well-formed answer becomes subject and body', async () => {
+    let seen = ''
+    const m = await suggestCommitMessage('make them thicker', diff, async p => {
+      seen = p
+      return '```\nOutline the Watch videos buttons in the rival colour\n\n- 3px border instead of a white fill\n- Uppercase label\n\nCo-Authored-By: Claude Haiku <noreply@anthropic.com>\n```\n'
+    })
+    expect(m).toEqual({ subject: 'Outline the Watch videos buttons in the rival colour', body: '- 3px border instead of a white fill\n- Uppercase label' })
+    expect(seen).toContain('border-[3px] uppercase')
+  })
+
+  test('a subject that is too long, empty, or chatty is refused', async () => {
+    for (const bad of ['', 'x'.repeat(90), 'Sure! Here is your commit message:\n\nFix things']) {
+      expect(await suggestCommitMessage('r', diff, async () => bad)).toBeNull()
+    }
+  })
+
+  test('a failing model gives no message, so the caller falls back', async () => {
+    expect(
+      await suggestCommitMessage('r', diff, async () => {
+        throw new Error('timeout')
+      }),
+    ).toBeNull()
+  })
+
+  test('an empty diff asks nothing', async () => {
+    let asked = false
+    expect(await suggestCommitMessage('r', '  ', async () => ((asked = true), 'Subject here'))).toBeNull()
+    expect(asked).toBe(false)
+  })
+})

@@ -75,3 +75,34 @@ export async function suggestBranchWords(request: string, files: readonly string
   }
   return fallbackWords(request) ?? 'change'
 }
+
+export type CommitMessage = { subject: string; body: string }
+
+/**
+ * A commit message that says what the diff did, written by the same fast model. Accepted only when the first line is a
+ * plain summary of at most 72 characters; anything else, or no answer, is null and the caller falls back.
+ */
+export async function suggestCommitMessage(request: string, diff: string, ask: AskModel = askClaude): Promise<CommitMessage | null> {
+  if (diff.trim() === '') return null
+  const prompt =
+    'Write a git commit message for this diff. Line 1: an imperative summary of what the code change does, at most 72 ' +
+    'characters. Then a blank line, then 1 to 4 short lines starting with "- " saying what changed. English. Reply ' +
+    `with the message only.\nWhat the person asked for (context only): ${request.slice(0, 1000)}\nDiff:\n${diff.slice(0, 12_000)}`
+  let raw: string
+  try {
+    raw = await ask(prompt)
+  } catch {
+    return null
+  }
+  const lines = raw.replace(/```[a-z]*\n?/g, '').trim().split('\n')
+  const subject = (lines[0] ?? '').trim().replace(/^["'`]+|["'`]+$/g, '')
+  if (subject.length < 3 || subject.length > 72 || /[:!]$/.test(subject) || /^(sure|here|okay|ok)\b/i.test(subject)) return null
+  const body = lines
+    .slice(1)
+    // Trailers the model adds out of habit; the commit carries its own provenance line.
+    .filter(l => !/^\s*(co-authored-by|signed-off-by|generated with)\b/i.test(l) && !l.includes('🤖'))
+    .join('\n')
+    .trim()
+    .slice(0, 800)
+  return { subject, body }
+}
