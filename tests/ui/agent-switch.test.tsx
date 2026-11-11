@@ -12,8 +12,8 @@ beforeAll(() => {
   }
 })
 
-const noRepo = { projectId: 'p1', repoPath: null, testCommand: null, autoApproveLowRisk: false, currentBranch: null }
-const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false, currentBranch: null }
+const noRepo = { projectId: 'p1', repoPath: null, testCommand: null, autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
+const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
 const runButton = () => screen.getByRole('button', { name: strings.run.run })
 
 test('the demo is the default, and choosing Claude shows where it works and that it is not sandboxed', () => {

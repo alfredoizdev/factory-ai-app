@@ -110,6 +110,12 @@ export function CanvasScreen({
     return attempt
   }
 
+  // A fresh task starts from the project's main branch, whatever branch the folder is on; when the folder is on
+  // another one, the card offers that one too. Nothing about the folder has to change first.
+  const [startFrom, setStartFrom] = useState<string | null>(null)
+  const startOptions = [...new Set([settings?.defaultBranch, settings?.currentBranch].filter((b): b is string => !!b))]
+  const chosenStart = startFrom !== null && startOptions.includes(startFrom) ? startFrom : (startOptions[0] ?? null)
+
   async function startRun() {
     setBusy(true)
     setMessage(null)
@@ -120,7 +126,12 @@ export function CanvasScreen({
       const created = await fetch(`/api/workflows/${workflowId}/runs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ request, provider: agent, attachments: readyImageIds(images) }),
+        body: JSON.stringify({
+          request,
+          provider: agent,
+          attachments: readyImageIds(images),
+          ...(agent === CLAUDE_PROVIDER_ID && chosenStart ? { startFrom: chosenStart } : {}),
+        }),
       })
       if (!created.ok) return setMessage(await readError(created, strings.run.startFailed))
       const { runId } = (await created.json()) as { runId: string }
@@ -140,6 +151,7 @@ export function CanvasScreen({
   // since the person may have switched branches meanwhile.
   function newTask() {
     setRun(null)
+    setStartFrom(null)
     setHighlightedId(null)
     setMessage(null)
     clearComposer()
@@ -332,7 +344,9 @@ export function CanvasScreen({
           canRun={canRun}
           onFollowUp={id => void watchRun(id)}
           onSent={clearComposer}
-          startsFrom={settings?.currentBranch}
+          startOptions={agent === CLAUDE_PROVIDER_ID ? startOptions : []}
+          startFrom={startFrom}
+          onStartFrom={setStartFrom}
         />
         <Canvas
           graph={graph}

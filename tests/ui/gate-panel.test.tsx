@@ -148,9 +148,16 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   expect(screen.getByRole('link', { name: new RegExp(strings.delivery.openPullRequest) })).toHaveAttribute('href', 'https://github.com/a/b/pull/new/feature/my-name')
 })
 
-test('a fresh task says which branch it starts from', () => {
+test('a fresh task says it starts from the main branch, and offers the folder\'s branch when it differs', () => {
   vi.stubGlobal('fetch', routes())
   const base = { text: '', onText: () => {}, images: [], onImages: () => {}, onRun: () => {}, canRun: false, onFollowUp: () => {}, onSent: () => {} }
-  render(<CommandCard {...base} runId={null} mode="idle" startsFrom="ai/watch-buttons" />)
-  expect(screen.getByTestId('starts-from')).toHaveTextContent(strings.delivery.startsFrom('ai/watch-buttons'))
+  const { unmount } = render(<CommandCard {...base} runId={null} mode="idle" startOptions={['main']} />)
+  expect(screen.getByTestId('starts-from')).toHaveTextContent(strings.delivery.startsFrom('main'))
+  unmount()
+  const onStartFrom = vi.fn()
+  render(<CommandCard {...base} runId={null} mode="idle" startOptions={['main', 'ai/buttons']} onStartFrom={onStartFrom} />)
+  const select = screen.getByRole('combobox')
+  expect(select).toHaveValue('main')
+  fireEvent.change(select, { target: { value: 'ai/buttons' } })
+  expect(onStartFrom).toHaveBeenCalledWith('ai/buttons')
 })

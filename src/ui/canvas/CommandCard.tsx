@@ -39,10 +39,13 @@ export const CommandCard = forwardRef<
     onFollowUp: (runId: string) => void
     /** Empties the composer once what it held has been sent. */
     onSent: () => void
-    /** The branch a fresh run starts from, so nobody builds on the wrong one by surprise. */
-    startsFrom?: string | null
+    /** The branches a fresh task may start from, the project's main branch first. Empty: not shown. */
+    startOptions?: readonly string[]
+    /** The one chosen; a fresh task starts from the main branch unless the person picks another. */
+    startFrom?: string | null
+    onStartFrom?: (branch: string) => void
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startsFrom }, ref) {
+>(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
   const placeholder = mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
@@ -90,10 +93,27 @@ export const CommandCard = forwardRef<
       {mode === 'idle' && (
         <>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{strings.sidebar.runTitle}</div>
-          {startsFrom && (
+          {startOptions.length === 1 && (
             <div data-testid="starts-from" style={{ fontSize: 12, color: theme.dim, marginTop: -6, overflowWrap: 'anywhere' }}>
-              {strings.delivery.startsFrom(startsFrom)}
+              {strings.delivery.startsFrom(startOptions[0]!)}
             </div>
+          )}
+          {startOptions.length > 1 && (
+            // The folder is on another branch: say where the task starts, and let the person choose that one instead.
+            <label data-testid="starts-from" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: theme.dim, marginTop: -6 }}>
+              {strings.delivery.startFromLabel}
+              <select
+                value={startFrom ?? startOptions[0]}
+                onChange={e => onStartFrom?.(e.target.value)}
+                style={{ flex: 1, minWidth: 0, padding: '4px 6px', background: theme.bg, color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 6, fontSize: 12 }}
+              >
+                {startOptions.map((b, i) => (
+                  <option key={b} value={b}>
+                    {i === 0 ? strings.delivery.mainOption(b) : strings.delivery.currentOption(b)}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
           {composer}
           <button

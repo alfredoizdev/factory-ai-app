@@ -210,3 +210,52 @@ test('a save from a page that loaded an older draft is refused, so it cannot und
   // Without a base the save is unconditional, as before.
   await saveDraft(id, stale)
 })
+
+describe('where a fresh task starts', () => {
+  async function withRepo() {
+    const { execFileSync } = await import('node:child_process')
+    const { mkdtempSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const g = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
+    const repo = mkdtempSync(join(tmpdir(), 'factory-start-'))
+    g(repo, 'init', '-q', '-b', 'main')
+    g(repo, 'config', 'user.email', 'me@example.com')
+    g(repo, 'config', 'user.name', 'me')
+    writeFileSync(join(repo, 'a.txt'), 'a\n')
+    g(repo, 'add', '.')
+    g(repo, 'commit', '-q', '-m', 'a')
+    const main = g(repo, 'rev-parse', 'HEAD')
+    // The folder is left on a feature branch with its own commit, as after looking at an earlier change.
+    g(repo, 'checkout', '-q', '-b', 'ai/feature')
+    writeFileSync(join(repo, 'a.txt'), 'b\n')
+    g(repo, 'commit', '-qam', 'b')
+    const feature = g(repo, 'rev-parse', 'HEAD')
+    const workflowId = await newWorkflow()
+    const wf = db.select().from(workflows).where(eq(workflows.id, workflowId)).get()!
+    db.update(projects).set({ repoPath: repo }).where(eq(projects.id, wf.projectId)).run()
+    await saveDraft(workflowId, defaultGraph())
+    await publishVersion(workflowId)
+    return { workflowId, main, feature }
+  }
+
+  test('from the main branch, whatever branch the folder is on', async () => {
+    const { workflowId, main } = await withRepo()
+    const { runId } = await createRun({ workflowId, request: 'x', providerId: 'claude' })
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.baseCommit).toBe(main)
+  })
+
+  test('from another branch when the person picks it', async () => {
+    const { workflowId, feature } = await withRepo()
+    const { runId } = await createRun({ workflowId, request: 'x', providerId: 'claude', startFrom: 'ai/feature' })
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.baseCommit).toBe(feature)
+  })
+
+  test('a branch that does not exist is refused before anything is written', async () => {
+    const { StartBranchError } = await import('@/engine/run')
+    const { workflowId } = await withRepo()
+    const before = db.select().from(runs).all().length
+    await expect(createRun({ workflowId, request: 'x', providerId: 'claude', startFrom: 'nope' })).rejects.toBeInstanceOf(StartBranchError)
+    expect(db.select().from(runs).all().length).toBe(before)
+  })
+})

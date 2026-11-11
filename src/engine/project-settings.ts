@@ -1,3 +1,4 @@
+import { defaultBranch } from '@/engine/branches'
 import { execFileSync } from 'node:child_process'
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
@@ -24,6 +25,8 @@ export type ProjectSettings = {
   autoApproveLowRisk: boolean
   /** The branch the repository is on right now, read live: a fresh run starts from it. Null when detached or unknown. */
   currentBranch: string | null
+  /** The project's main branch, where a new task starts unless the person picks another. */
+  defaultBranch: string | null
 }
 
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -31,7 +34,16 @@ const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, en
 export function getProjectSettings(projectId: string): ProjectSettings {
   const row = db.select().from(projects).where(eq(projects.id, projectId)).get()
   if (!row) throw new ProjectSettingsError(strings.settings.noProject)
-  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk, currentBranch: branchOf(row.repoPath) }
+  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk, currentBranch: branchOf(row.repoPath), defaultBranch: mainOf(row.repoPath) }
+}
+
+function mainOf(repo: string | null): string | null {
+  if (!repo) return null
+  try {
+    return defaultBranch(repo)
+  } catch {
+    return null
+  }
 }
 
 function branchOf(repo: string | null): string | null {

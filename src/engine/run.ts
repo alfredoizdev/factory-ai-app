@@ -1,3 +1,4 @@
+import { branchCommit, defaultBranch } from '@/engine/branches'
 import { createHash } from 'node:crypto'
 import { desc, eq, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
@@ -25,6 +26,14 @@ export class WorkflowNotFoundError extends Error {
 export class RunNotFoundError extends Error {
   constructor(id: string) {
     super(`${strings.errors.runNotFound} (${id})`)
+  }
+}
+
+/** The branch a task was asked to start from does not exist in the project. */
+export class StartBranchError extends Error {
+  constructor(branch: string) {
+    super(strings.run.noSuchBranch(branch))
+    this.name = 'StartBranchError'
   }
 }
 
@@ -153,13 +162,22 @@ export async function createRun(input: {
   request: string
   /** Absent: the demo. A real agent is only ever chosen explicitly. */
   providerId?: RunProviderId
+  /** The branch a real run starts from. Absent: the project's main branch, whatever branch the folder is on. */
+  startFrom?: string
 }): Promise<{ runId: string; versionId: string }> {
   const wf = requireWorkflow(input.workflowId)
   const providerId = input.providerId ?? DEMO_PROVIDER_ID
   // Refused before anything is written: a real run with nowhere to work would only fail later, after a row exists.
+  let baseCommit: string | null = null
   if (providerId === CLAUDE_PROVIDER_ID) {
     const project = db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, wf.projectId)).get()
     if (!project?.repoPath) throw new RepoNotSetError()
+    // Fixed now, as a commit: the agent's copy starts there even if the person switches branches meanwhile.
+    const branch = input.startFrom?.trim() || defaultBranch(project.repoPath)
+    if (branch) {
+      baseCommit = branchCommit(project.repoPath, branch)
+      if (!baseCommit) throw new StartBranchError(branch)
+    }
   }
   // Latest published version only. The draft is never consulted.
   const version = db
@@ -184,6 +202,7 @@ export async function createRun(input: {
           status: 'queued',
           request: input.request,
           providerId,
+          baseCommit,
           createdAt: now(),
         })
         .run()

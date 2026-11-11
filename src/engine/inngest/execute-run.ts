@@ -687,8 +687,9 @@ function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Worksp
   if (existing?.worktreePath) return { workdir: existing.worktreePath, testCommand: plan.testCommand, baseCommit: existing.baseCommit }
   if (!plan.repoPath) return { failed: strings.run.noRepository }
   try {
-    // A follow-up starts from its parent's approved commit, recorded as its base when it was created.
-    const startPoint = existing?.parentRunId ? (existing.baseCommit ?? undefined) : undefined
+    // The commit chosen when the run was created: a follow-up's parent's approved commit, or the branch a fresh task
+    // starts from (the project's main branch by default). Absent on runs made before that was recorded: the folder's HEAD.
+    const startPoint = existing?.baseCommit ?? undefined
     const make = deps.createWorktree ?? ((r: string, id: string, sp?: string, req?: string) => createRunWorktree(r, id, undefined, sp, req))
     // The branch is named after the request, so a person can tell it apart in their own `git branch`.
     const ws = make(plan.repoPath, runId, startPoint, plan.request)
