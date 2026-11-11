@@ -21,11 +21,14 @@ export function BlockInspector({
   block,
   onChange,
   canDisable = true,
+  runOnScreen = false,
 }: {
   block: Block
   onChange: (b: Block) => void
   /** False when turning this block off would leave a required stage with nothing enabled. */
   canDisable?: boolean
+  /** True while the canvas shows a run: an edit here changes the next run, not the one on screen. */
+  runOnScreen?: boolean
 }) {
   const model = typeof block.config.model === 'string' ? block.config.model : ''
 
@@ -50,6 +53,7 @@ export function BlockInspector({
           onChange={e => setModel(e.target.value)}
         />
       </label>
+      {runOnScreen && <p style={{ margin: 0, fontSize: 12, color: theme.skipped }}>{strings.editing.appliesNextRun}</p>}
       <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <input
           type="checkbox"

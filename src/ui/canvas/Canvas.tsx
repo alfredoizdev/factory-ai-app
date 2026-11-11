@@ -365,7 +365,25 @@ export function Canvas({
   }, [fisheyeFocus, reducedMotion])
 
   const placementOf = (block: Block) => layout?.get(block.id)
-  const unpin = focusOverride === null ? undefined : () => setFocusOverride(null)
+  // Closing undoes a click: nothing selected, nothing held open, and the canvas follows the work again.
+  const close = () => {
+    setSelectedId(null)
+    setExpandedId(null)
+    setFocusOverride(null)
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+      setSelectedId(null)
+      setExpandedId(null)
+      setFocusOverride(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  const unpin = focusOverride === null ? undefined : close
 
   const nodes: CardNode[] = [
     ...graph.blocks.map(block => {
@@ -390,8 +408,8 @@ export function Canvas({
           breadcrumb: hasRun ? [] : chainTo(graph, block.id),
           collapsed: placed?.collapsed ?? false,
           cardWidth: hasRun ? CARD_WIDTH : undefined,
-          collapseLabel: hasRun ? strings.canvas.followWork : strings.canvas.collapse,
-          onCollapse: hasRun ? unpin : () => setExpandedId(null),
+          collapseLabel: strings.canvas.close,
+          onCollapse: hasRun ? unpin : close,
         },
       }
     }),
@@ -410,8 +428,8 @@ export function Canvas({
         breadcrumb: hasRun ? [] : chainTo({ blocks: [...(runBlocks ?? [])] }, block.id),
         collapsed: placementOf(block)?.collapsed ?? false,
         cardWidth: hasRun ? CARD_WIDTH : undefined,
-        collapseLabel: hasRun ? strings.canvas.followWork : strings.canvas.collapse,
-        onCollapse: hasRun ? unpin : () => setExpandedId(null),
+        collapseLabel: strings.canvas.close,
+        onCollapse: hasRun ? unpin : close,
       },
     })),
   ]
@@ -518,12 +536,26 @@ export function Canvas({
         </section>
 
         <section id={SETTINGS_SECTION} style={{ display: 'grid', gap: 10 }}>
-          <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.inspectorTitle}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.inspectorTitle}</h2>
+            {selected && (
+              <button
+                type="button"
+                aria-label={strings.editing.closeSettings}
+                title={strings.editing.closeSettings}
+                onClick={close}
+                style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 2 }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
           {selected ? (
             <>
               <BlockInspector
                 block={selected}
                 canDisable={canDisable(graph, selected)}
+                runOnScreen={hasRun}
                 onChange={b => edit(g => updateBlock(g, b))}
               />
               {canRemove(graph, selected) && (
@@ -598,15 +630,16 @@ export function Canvas({
           nodeTypes={nodeTypes}
           style={{ background: 'transparent', zIndex: 1 }}
           onMove={(_, vp) => parallax(vp)}
+          onPaneClick={close}
           onInit={instance => {
             flow.current = instance
             parallax(instance.getViewport())
           }}
           onNodeClick={(_, node) => {
             setSelectedId(node.id)
-            // Under the fisheye a click chooses the focus; clicking the open block hands the follow back.
-            if (hasRun) setFocusOverride(current => (current === node.id ? null : node.id))
-            else setExpandedId(current => (current === node.id ? null : node.id))
+            // A click opens the block and keeps it open; Close, Escape or a click on the empty canvas undoes it.
+            if (hasRun) setFocusOverride(node.id)
+            else setExpandedId(node.id)
           }}
           onNodesChange={changes => {
             // Follow the pointer while dragging; nothing is saved until the drag ends.

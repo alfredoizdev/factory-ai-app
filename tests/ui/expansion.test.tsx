@@ -86,7 +86,7 @@ test('collapsing puts every neighbour back exactly where it is stored', () => {
   const g = defaultGraph()
   render(<Canvas graph={g} expandedId="build" />)
   expect(posOf('tests').x).not.toBe(3 * LANE_SPACING)
-  fireEvent.click(screen.getByText('Collapse'))
+  fireEvent.click(screen.getByText('Close', { selector: 'button' }))
   for (const b of g.blocks) expect(posOf(b.id)).toEqual(b.position)
   expect(screen.queryByTestId('breadcrumb')).toBeNull()
 })
