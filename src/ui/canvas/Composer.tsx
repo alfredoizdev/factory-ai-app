@@ -43,6 +43,7 @@ export function Composer({
   images,
   onImages,
   onSubmit,
+  send,
   disabled = false,
 }: {
   inputId: string
@@ -54,6 +55,8 @@ export function Composer({
   onImages: (update: (prev: ComposerImage[]) => ComposerImage[]) => void
   /** Cmd/Ctrl+Enter. */
   onSubmit?: () => void
+  /** A send arrow inside the box, at its bottom right: what pressing it (or Cmd/Ctrl+Enter) does. */
+  send?: ComposerSend
   disabled?: boolean
 }) {
   const [dragging, setDragging] = useState(false)
@@ -232,9 +235,14 @@ export function Composer({
           rows={8}
           onChange={e => onText(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && onSubmit) {
-              e.preventDefault()
-              onSubmit()
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              if (send?.enabled) {
+                e.preventDefault()
+                send.onSend()
+              } else if (onSubmit) {
+                e.preventDefault()
+                onSubmit()
+              }
             }
           }}
           style={{
@@ -267,7 +275,31 @@ export function Composer({
           >
             <ClipIcon /> {strings.attachments.browse}
           </button>
-          <span style={{ fontSize: 11.5, color: theme.dim }}>{imagesBusy(images) ? strings.attachments.uploading : strings.attachments.pasteHint}</span>
+          <span style={{ flex: 1, fontSize: 11.5, color: theme.dim }}>{imagesBusy(images) ? strings.attachments.uploading : strings.attachments.pasteHint}</span>
+          {send && (
+            <button
+              type="button"
+              aria-label={send.label}
+              title={send.label}
+              disabled={!send.enabled}
+              onClick={send.onSend}
+              style={{
+                flex: 'none',
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                display: 'grid',
+                placeItems: 'center',
+                padding: 0,
+                border: 'none',
+                background: send.enabled ? theme.running : theme.border,
+                color: send.enabled ? '#fff' : theme.skipped,
+                cursor: send.enabled ? 'pointer' : 'not-allowed',
+              }}
+            >
+              {send.busy ? <WorkingSpinner blockId="composer-send" size={14} /> : <SendIcon />}
+            </button>
+          )}
         </div>
         <input
           ref={picker}
@@ -295,6 +327,17 @@ export function imagesIn(data: DataTransfer): File[] {
   const files = [...data.files].filter(f => f.type.startsWith('image/'))
   if (files.length > 0) return files
   return [...data.items].filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter((f): f is File => f !== null)
+}
+
+export type ComposerSend = { label: string; onSend: () => void; enabled: boolean; busy?: boolean }
+
+/** Send: an arrow pointing up. */
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+    </svg>
+  )
 }
 
 /** A paper clip. */

@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { ChangeUnderReview } from '@/engine/approvals'
 import { strings } from '@/ui/strings'
+import type { ComposerSend } from './Composer'
 import { WorkingSpinner } from './BlockCard'
 import { PreviewButton } from './PreviewButton'
 
@@ -34,8 +35,9 @@ export function GateSection({
   note: string
   imageIds: string[]
   imagesBusy: boolean
-  /** The shared composer, placed between what is being decided on and the buttons that decide. */
-  composer: ReactNode
+  /** The shared composer, placed between what is being decided on and the buttons that decide. Its send arrow asks
+   * for changes with what is written in it. */
+  composer: (send: ComposerSend) => ReactNode
   onSent: () => void
 }) {
   const [review, setReview] = useState<Review | null>(null)
@@ -165,29 +167,14 @@ export function GateSection({
       {/* Only a run that changed files has something to preview. */}
       {review && review.files.length > 0 && !decided && <PreviewButton runId={runId} />}
 
-      {!decided && composer}
+      {/* Not yes, not no: the arrow in the box sends it back to the builder with what is written there. */}
+      {!decided &&
+        composer({
+          label: strings.gate.askChanges,
+          onSend: () => void decide('changes'),
+          enabled: !busy && review !== null && !imagesBusy && reason.trim() !== '',
+        })}
 
-      {!decided && (
-        // Not yes, not no: back to the builder in the same copy, with the note. The note is what it works from.
-        <button
-          type="button"
-          disabled={busy || !review || imagesBusy || reason.trim() === ''}
-          title={reason.trim() === '' ? strings.gate.changesHint : undefined}
-          onClick={() => void decide('changes')}
-          style={{
-            padding: '9px 12px',
-            borderRadius: 8,
-            border: `1px solid ${theme.running}`,
-            background: reason.trim() ? theme.tint('running', 0.16) : 'transparent',
-            color: reason.trim() ? '#cfe0ff' : theme.skipped,
-            fontWeight: 700,
-            cursor: busy || !review || reason.trim() === '' ? 'not-allowed' : 'pointer',
-          }}
-        >
-          ↺ {strings.gate.askChanges}
-        </button>
-      )}
-      {!decided && reason.trim() === '' && <div style={{ fontSize: 11.5, color: theme.skipped, marginTop: -6 }}>{strings.gate.changesHint}</div>}
       {!decided && (
         <div style={{ display: 'flex', gap: 8, paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
           <button type="button" disabled={busy || !review || imagesBusy} onClick={() => void decide('approved')} style={button('passed')}>

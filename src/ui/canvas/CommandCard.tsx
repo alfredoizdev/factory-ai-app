@@ -5,7 +5,7 @@ import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { RUN_INPUT_ID } from './Canvas'
 import { WorkingSpinner } from './BlockCard'
-import { Composer, imagesBusy, readyImageIds, type ComposerImage } from './Composer'
+import { Composer, imagesBusy, readyImageIds, type ComposerImage, type ComposerSend } from './Composer'
 import { GateSection } from './GatePanel'
 import { ResultSection } from './ResultPanel'
 import { COMMAND_CARD_WIDTH } from './layout'
@@ -52,8 +52,9 @@ export const CommandCard = forwardRef<
   const frame = FRAME[mode]
   const label = mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
   const placeholder = mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
-  const composer = (
+  const withSend = (send?: ComposerSend) => (
     <Composer
+      send={send}
       inputId={RUN_INPUT_ID}
       label={label}
       placeholder={placeholder}
@@ -64,6 +65,7 @@ export const CommandCard = forwardRef<
       onSubmit={mode === 'idle' && canRun ? onRun : undefined}
     />
   )
+  const composer = withSend()
   return (
     <section
       ref={ref}
@@ -144,7 +146,7 @@ export const CommandCard = forwardRef<
         </div>
       )}
       {mode === 'waiting' && runId && (
-        <GateSection runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={composer} onSent={onSent} />
+        <GateSection runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} />
       )}
       {mode === 'done' && runId && (
         <ResultSection
