@@ -109,7 +109,7 @@ test('there is one box to write in, whatever the moment', () => {
 
 const approved = { eligible: true, kept: false, delivered: false, branch: 'ai/outline-buttons-abc123', commit: null, files: [], appliedTo: null, current: 'main', returnTo: null, pushed: false, pullRequestUrl: null }
 
-test('done: one main button per step; the name is suggested and hidden until asked for, and the project can be switched there and back', async () => {
+test('done: one main button per step; the name is shown with a suggestion in it, and the project can be switched there and back', async () => {
   let state: Record<string, unknown> = approved
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/branch-name')) return new Response(JSON.stringify({ name: 'ai/watch-videos-outline-abc123' }))
@@ -127,9 +127,7 @@ test('done: one main button per step; the name is suggested and hidden until ask
   render(<Card mode="done" />)
   expect(await screen.findByTestId('next-step')).toHaveTextContent(strings.delivery.nowSave)
   expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent(strings.delivery.steps[1]!)
-  // The name is not in sight until asked for; then the suggestion is already in it, and it can be changed.
-  expect(screen.queryByLabelText(new RegExp(strings.delivery.branchName))).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: strings.delivery.changeName }))
+  // The name is in sight, with the suggestion already in it, and it can be changed.
   const field = screen.getByLabelText(new RegExp(strings.delivery.branchName))
   await waitFor(() => expect(field).toHaveValue('ai/watch-videos-outline-abc123'))
   fireEvent.change(field, { target: { value: 'feature/my-name' } })

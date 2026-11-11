@@ -3,6 +3,7 @@ import { strings } from '@/ui/strings'
 import type { Block } from '@/domain/graph'
 import type { NodeState } from '@/domain/states'
 import { TypeMark } from './TypeMark'
+import { BeforeAfterCard } from './BeforeAfter'
 
 export type NodeRunView = {
   blockId: string
@@ -21,6 +22,8 @@ export type NodeRunView = {
   round?: number
   /** Skipped because this stage is not built yet, not because of anything in this run: drawn as such, not as a skip. */
   notBuilt?: boolean
+  /** The run whose before and after pictures this card shows (the Ship card, once the change reached the person). */
+  results?: string
 }
 
 export type RunEvidence = {
@@ -40,7 +43,7 @@ export type RunEvidence = {
 
 /** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
 export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'summaryIsClaim' | 'usage'> &
-  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round' | 'notBuilt'>>
+  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round' | 'notBuilt' | 'results'>>
 
 // The domain and visual vocabularies are separate on purpose.
 const VISUAL: Record<NodeState, VisualState> = {
@@ -331,6 +334,7 @@ export function BlockCard({
 
       {view.evidence && <EvidenceStrip evidence={view.evidence} />}
       {view.risk && <RiskStrip risk={view.risk} />}
+      {view.results && <BeforeAfterCard runId={view.results} compact />}
 
       {issues.map(message => (
         <p

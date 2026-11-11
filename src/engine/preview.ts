@@ -123,8 +123,8 @@ function signalGroup(child: ChildProcess | null, sig: NodeJS.Signals) {
   }
 }
 
-export function previewState(runId: string): PreviewState {
-  const e = registry.get(runId)
+export function previewState(key: string): PreviewState {
+  const e = registry.get(key)
   return e ? { status: e.status, url: e.url, message: e.message, log: e.log } : { status: 'stopped', url: null, message: null, log: '' }
 }
 
@@ -136,15 +136,25 @@ export async function startPreview(runId: string): Promise<PreviewState> {
   const run = db.select().from(runs).where(eq(runs.id, runId)).get()
   if (!run?.worktreePath || !existsSync(run.worktreePath)) throw new PreviewError(strings.preview.noWorktree)
   const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
+  return startServer(runId, run.worktreePath, project?.repoPath ?? null)
+}
+
+/**
+ * Starts the project's dev server from `dir`, under `key` (a run's id, or any other name for another copy, such as
+ * the version before a change). Resolves once it is starting; poll previewState(key) for ready.
+ */
+export async function startServer(key: string, dir: string, repoPath: string | null): Promise<PreviewState> {
+  const existing = registry.get(key)
+  if (existing && existing.status !== 'failed' && existing.status !== 'stopped') return previewState(key)
   const port = await freePort(FIRST_PORT)
-  const cmd = devCommand(run.worktreePath, port)
+  const cmd = devCommand(dir, port)
   if (!cmd) throw new PreviewError(strings.preview.noDevScript)
 
   const entry: Entry = { status: cmd.installArgv ? 'installing' : 'starting', url: null, message: null, log: '', child: null, port }
-  registry.set(runId, entry)
-  if (project?.repoPath) copyEnvFiles(project.repoPath, run.worktreePath)
+  registry.set(key, entry)
+  if (repoPath) copyEnvFiles(repoPath, dir)
   const env = previewEnv(port)
-  const cwd = run.worktreePath
+  const cwd = dir
 
   void (async () => {
     if (cmd.installArgv) {
@@ -177,12 +187,24 @@ export async function startPreview(runId: string): Promise<PreviewState> {
       signalGroup(child, 'SIGTERM')
     }
   })()
-  return previewState(runId)
+  return previewState(key)
+}
+
+/** Waits until the server under `key` is ready (its address) or has failed or stopped (null). */
+export async function untilReady(key: string, timeoutMs = READY_TIMEOUT_MS + 120_000): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const state = previewState(key)
+    if (state.status === 'ready') return state.url
+    if (state.status === 'failed' || state.status === 'stopped') return null
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  return null
 }
 
 /** Stops a run's preview and everything it started. Harmless when none is running. */
-export function stopPreview(runId: string): void {
-  const e = registry.get(runId)
+export function stopPreview(key: string): void {
+  const e = registry.get(key)
   if (!e) return
   e.status = 'stopped'
   e.url = null

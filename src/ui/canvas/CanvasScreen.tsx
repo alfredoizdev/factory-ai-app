@@ -130,7 +130,11 @@ export function CanvasScreen({
   const setShip = useCallback((state: ShipState) => runIdNow && setShipFor({ runId: runIdNow, state }), [runIdNow])
   const shipBlock = run?.blocks.find(b => b.kind === 'ship')
   const shipped = shipFor && shipFor.runId === runIdNow && shipBlock ? shipView(shipBlock.id, shipFor.state) : null
-  const withShip = shipped && shipBlock ? { ...views, [shipBlock.id]: shipped } : views
+  const shippedViews = shipped && shipBlock ? { ...views, [shipBlock.id]: shipped } : views
+  // Once the change reached the person (its risk was measured), the Ship card carries its before and after pictures.
+  const reachedPerson = Object.values(views).some(v => v.risk)
+  const withShip =
+    reachedPerson && runIdNow && shipBlock && shippedViews[shipBlock.id] ? { ...shippedViews, [shipBlock.id]: { ...shippedViews[shipBlock.id]!, results: runIdNow } } : shippedViews
   const closeTasks = useCallback(() => setTasksOpen(false), [])
 
   async function startRun() {

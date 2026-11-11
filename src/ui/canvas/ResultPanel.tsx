@@ -40,8 +40,6 @@ export function ResultSection({
   // The branch name the person writes, or asks the app to suggest. Empty: one is suggested when the change is saved.
   const [branchName, setBranchName] = useState('')
   const [suggesting, setSuggesting] = useState(false)
-  // The name field stays out of sight unless the person asks to change it; the suggestion is already in it then.
-  const [naming, setNaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // What GitHub says about this change, as the ship section last read it: once it is sent, the other ways of
   // bringing it over are no longer choices, and once merged, it is finished.
@@ -162,38 +160,32 @@ export function ResultSection({
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
         {!kept && (
           <>
+            <div style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
+              <label htmlFor={`branch-name-${runId}`}>{d.branchName}</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  id={`branch-name-${runId}`}
+                  value={branchName}
+                  placeholder={d.branchPlaceholder}
+                  disabled={busy !== null || suggesting}
+                  spellCheck={false}
+                  onChange={e => setBranchName(e.target.value)}
+                  style={{ flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
+                />
+                <button
+                  type="button"
+                  disabled={busy !== null || suggesting}
+                  onClick={() => void suggestName()}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12, fontWeight: 600, cursor: suggesting ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  {suggesting ? <WorkingSpinner blockId="suggest" size={12} /> : <SparkIcon />} {suggesting ? d.suggesting : d.suggestName}
+                </button>
+              </div>
+              <span style={{ fontSize: 11, lineHeight: 1.4 }}>{d.branchNameHint}</span>
+            </div>
             <button type="button" disabled={busy !== null} onClick={() => void bring('branch')} style={primaryButton(busy)}>
               {busy === 'branch' ? <WorkingSpinner blockId="keep" size={16} /> : <SaveIcon />} {d.keepButton}
             </button>
-            {!naming ? (
-              <button type="button" onClick={() => setNaming(true)} style={linkButton}>
-                {d.changeName}
-              </button>
-            ) : (
-              <div style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
-                <label htmlFor={`branch-name-${runId}`}>{d.branchName}</label>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input
-                    id={`branch-name-${runId}`}
-                    value={branchName}
-                    placeholder={d.branchPlaceholder}
-                    disabled={busy !== null || suggesting}
-                    spellCheck={false}
-                    onChange={e => setBranchName(e.target.value)}
-                    style={{ flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
-                  />
-                  <button
-                    type="button"
-                    disabled={busy !== null || suggesting}
-                    onClick={() => void suggestName()}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12, fontWeight: 600, cursor: suggesting ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
-                  >
-                    {suggesting ? <WorkingSpinner blockId="suggest" size={12} /> : <SparkIcon />} {suggesting ? d.suggesting : d.suggestName}
-                  </button>
-                </div>
-                <span style={{ fontSize: 11, lineHeight: 1.4 }}>{d.branchNameHint}</span>
-              </div>
-            )}
           </>
         )}
 
@@ -230,7 +222,12 @@ export function ResultSection({
         {/* Everything a developer may want and nobody else needs: names, hashes, and the less common moves. Closed. */}
         {(kept || canApply) && (
           <div style={{ display: 'grid', gap: 8 }}>
-            <button type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen(o => !o)} style={{ ...linkButton, color: theme.dim }}>
+            <button
+              type="button"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen(o => !o)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}
+            >
               {d.moreOptions}
               <span aria-hidden="true" style={{ display: 'inline-block', transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease-out' }}>
                 ▾

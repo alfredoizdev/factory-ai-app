@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, rmSync } from 'node:fs'
-import { relative, resolve, sep } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { attachments, projects, runs } from '@/db/schema'
 import { ATTACHMENT_DIR } from '@/engine/attachments'
 import { stopPreview } from '@/engine/preview'
+import { SNAP_ROOT } from '@/engine/snapshots'
 import { DEFAULT_WORKTREE_ROOT } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
 
@@ -28,7 +29,7 @@ function inside(root: string, path: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !rel.startsWith(sep) && !rel.includes(`..${sep}`)
 }
 
-export function deleteRun(runId: string, options: { worktreeRoot?: string; attachmentDir?: string } = {}): void {
+export function deleteRun(runId: string, options: { worktreeRoot?: string; attachmentDir?: string; snapshotDir?: string } = {}): void {
   const run = db.select().from(runs).where(eq(runs.id, runId)).get()
   if (!run) throw new RunDeleteError(strings.errors.runNotFound, 404)
   if (LIVE.has(run.status)) throw new RunDeleteError(strings.history.stillLive, 409)
@@ -57,4 +58,6 @@ export function deleteRun(runId: string, options: { worktreeRoot?: string; attac
   }
   const dir = options.attachmentDir ?? ATTACHMENT_DIR
   for (const file of files) if (inside(dir, file)) rmSync(file, { force: true })
+  // Its before and after pictures go too. The run id is a ULID, so the folder is always inside the pictures folder.
+  if (/^[0-9A-Z]{26}$/i.test(runId)) rmSync(join(options.snapshotDir ?? SNAP_ROOT, runId), { recursive: true, force: true })
 }

@@ -7,6 +7,7 @@ import { strings } from '@/ui/strings'
 import type { ComposerSend } from './Composer'
 import { WorkingSpinner } from './BlockCard'
 import { PreviewButton } from './PreviewButton'
+import { BeforeAfterCard } from './BeforeAfter'
 
 /** How long a decision may wait for the run to move before the panel says it has not. */
 const PICKUP_WAIT_MS = 20_000
@@ -178,6 +179,9 @@ export function GateSection({
       )}
 
       {expanded && review && <ChangesModal files={review.files} diff={review.diff} truncated={review.truncated} onClose={() => setExpanded(false)} />}
+
+      {/* Before and after pictures, taken as soon as the change reaches the person. */}
+      {review && review.files.length > 0 && !decided && <BeforeAfterCard runId={runId} autoStart />}
 
       {/* Only a run that changed files has something to preview. */}
       {review && review.files.length > 0 && !decided && <PreviewButton runId={runId} />}

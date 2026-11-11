@@ -142,7 +142,10 @@ export function Composer({
     }
   }
 
-  addRef.current = add
+  // The page-wide paste and drop listeners call the newest add, which sees the newest images.
+  useEffect(() => {
+    addRef.current = add
+  })
 
   function remove(key: string) {
     onImages(prev => {
