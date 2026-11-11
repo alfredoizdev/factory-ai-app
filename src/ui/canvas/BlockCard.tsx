@@ -536,7 +536,8 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
         width: SPINE_WIDTH,
         minHeight: CARD_MIN_HEIGHT,
         display: 'flex',
-        flexDirection: 'column',
+        // Built from the bottom up: the drawing at the foot, the name rising from it, the state at the top.
+        flexDirection: 'column-reverse',
         alignItems: 'center',
         gap: 12,
         padding: '14px 0 16px',
@@ -562,7 +563,7 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
       <span
         aria-label={strings.canvas.stateAria(stateLabel)}
         style={{
-          marginTop: 'auto',
+          marginBottom: 'auto',
           width: 22,
           height: 22,
           borderRadius: '50%',
