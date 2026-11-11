@@ -67,3 +67,17 @@ test('an image the server refuses is marked, with its reason, and never counted 
   expect(thumb).toHaveAttribute('title', strings.attachments.notImage)
   expect(readyImageIds(latest)).toEqual([])
 })
+
+test('an image pasted or dropped anywhere on the page is attached, unless typing in another field', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'att-1' }))))
+  render(<Box />)
+  fireEvent.paste(document.body, { clipboardData: { files: [png('shot.png')], items: [] } })
+  expect(await screen.findByAltText('shot.png')).toBeInTheDocument()
+  fireEvent.drop(document.body, { dataTransfer: { files: [png('dragged.png')], types: ['Files'] } })
+  expect(await screen.findByAltText('dragged.png')).toBeInTheDocument()
+  const other = document.createElement('input')
+  document.body.appendChild(other)
+  fireEvent.paste(other, { clipboardData: { files: [png('no.png')], items: [] } })
+  expect(screen.queryByAltText('no.png')).toBeNull()
+  other.remove()
+})

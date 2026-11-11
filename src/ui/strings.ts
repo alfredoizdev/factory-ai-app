@@ -443,6 +443,8 @@ export const strings = {
     remove: (name: string) => `Remove ${name}`,
     uploading: 'Attaching…',
     dropHere: 'Drop images to attach them',
+    pasteHint: 'or paste one (⌘V), or drag it onto the page.',
+    browse: 'Browse files',
     failed: 'The image could not be attached.',
   },
   card: {

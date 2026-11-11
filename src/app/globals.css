@@ -2,6 +2,8 @@
 @config "../../tailwind.config.ts";
 
 :root {
+  /* Native parts (scrollbars, pickers) drawn dark, to match the app. */
+  color-scheme: dark;
   --background: #0b0e14;
   --foreground: #e6e9ef;
 }
@@ -9,6 +11,12 @@
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+/* Scrollbars: thin and dark everywhere. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3548 transparent;
 }
 
 /* The working indicator on a running block. It turns only while the block's state is running, which comes from a

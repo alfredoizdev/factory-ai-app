@@ -1,6 +1,6 @@
 'use client'
 
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
@@ -68,6 +68,50 @@ export function Composer({
     el.style.height = `${Math.min(Math.max(el.scrollHeight, BOX_MIN), BOX_MAX)}px`
   }, [text])
 
+  // Pasting a screenshot works anywhere on the page, not only with the cursor in the box, unless the person is typing
+  // in another field. The box's own paste is handled here too, once.
+  const addRef = useRef<(files: readonly File[]) => void>(() => undefined)
+  useEffect(() => {
+    if (disabled) return
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const elsewhere = target && target !== box.current && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      if (elsewhere || !e.clipboardData) return
+      const files = imagesIn(e.clipboardData)
+      if (files.length === 0) return
+      e.preventDefault()
+      addRef.current(files)
+      if (target !== box.current) box.current?.focus({ preventScroll: true })
+    }
+    // Dropping an image anywhere on the page attaches it too; the box shows it is ready while one is dragged over.
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes('Files') === true
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      setDragging(true)
+    }
+    const onDragLeave = (e: DragEvent) => {
+      if (e.relatedTarget === null) setDragging(false)
+    }
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      setDragging(false)
+      addRef.current([...(e.dataTransfer?.files ?? [])])
+      box.current?.focus({ preventScroll: true })
+    }
+    window.addEventListener('paste', onPaste)
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('paste', onPaste)
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [disabled])
+
   function add(files: readonly File[]) {
     setNotice(null)
     const pictures = files.filter(f => f.type.startsWith('image/'))
@@ -92,6 +136,8 @@ export function Composer({
     }
   }
 
+  addRef.current = add
+
   function remove(key: string) {
     onImages(prev => {
       const gone = prev.find(i => i.key === key)
@@ -103,18 +149,6 @@ export function Composer({
   return (
     <div
       data-testid="composer"
-      onDragOver={e => {
-        if (disabled || !e.dataTransfer.types.includes('Files')) return
-        e.preventDefault()
-        setDragging(true)
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={e => {
-        if (disabled) return
-        e.preventDefault()
-        setDragging(false)
-        add([...e.dataTransfer.files])
-      }}
       style={{ display: 'grid', gap: 6 }}
     >
       <label htmlFor={inputId} style={{ fontSize: 12.5, fontWeight: 600, color: theme.dim }}>
@@ -197,13 +231,6 @@ export function Composer({
           disabled={disabled}
           rows={8}
           onChange={e => onText(e.target.value)}
-          onPaste={e => {
-            const files = [...e.clipboardData.files]
-            if (files.length > 0) {
-              e.preventDefault()
-              add(files)
-            }
-          }}
           onKeyDown={e => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && onSubmit) {
               e.preventDefault()
@@ -224,21 +251,23 @@ export function Composer({
             font: 'inherit',
             fontSize: 14,
             lineHeight: 1.45,
+            scrollbarWidth: 'thin',
+            scrollbarColor: `${theme.floorLine} transparent`,
           }}
         />
         {/* A faint rule between what you write and what you attach. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: `1px solid ${theme.lineSoft}`, paddingTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderTop: `1px solid ${theme.lineSoft}`, paddingTop: 8 }}>
           <button
             type="button"
             disabled={disabled || images.length >= MAX_COMPOSER_IMAGES}
             onClick={() => picker.current?.click()}
             title={strings.attachments.add}
             aria-label={strings.attachments.add}
-            style={{ background: 'none', border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.dim, cursor: 'pointer', padding: '3px 8px', fontSize: 13 }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: `1px solid ${theme.border}`, borderRadius: 6, color: '#d6dce6', cursor: 'pointer', padding: '4px 10px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}
           >
-            📎
+            <ClipIcon /> {strings.attachments.browse}
           </button>
-          {imagesBusy(images) && <span style={{ fontSize: 11.5, color: theme.dim }}>{strings.attachments.uploading}</span>}
+          <span style={{ fontSize: 11.5, color: theme.dim }}>{imagesBusy(images) ? strings.attachments.uploading : strings.attachments.pasteHint}</span>
         </div>
         <input
           ref={picker}
@@ -258,5 +287,21 @@ export function Composer({
         </div>
       )}
     </div>
+  )
+}
+
+/** Images on the clipboard: as files, or, where a browser only lists them as items, from the items. */
+export function imagesIn(data: DataTransfer): File[] {
+  const files = [...data.files].filter(f => f.type.startsWith('image/'))
+  if (files.length > 0) return files
+  return [...data.items].filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter((f): f is File => f !== null)
+}
+
+/** A paper clip. */
+function ClipIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13 7.5 8 12.5a3.2 3.2 0 0 1-4.5-4.5l5.3-5.3a2.1 2.1 0 0 1 3 3L6.5 11a1.1 1.1 0 0 1-1.5-1.5L10 4.5" />
+    </svg>
   )
 }
