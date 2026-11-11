@@ -130,3 +130,37 @@ Routing (copy in `strings.run.notYet`): `input` → execute (system: "Request re
 
 - [ ] Full suite, `tsc --noEmit`, lint (0 errors), `npm run build`.
 - [ ] Manual: a throwaway git repo with one failing vitest test; run with Claude and the request "make the failing test pass"; confirm the worktree and branch exist, the user's checkout is clean, steps appear live, Tests shows real counts as evidence, the run parks at Human check. Record what was observed in the ledger, including anything that did not work.
+
+---
+
+## Verification record (2026-11-11)
+
+**Automated.** 366 unit tests pass, `tsc --noEmit` clean, lint 0 errors, `next build` succeeds. The Playwright e2e
+fails on this branch **and on `main` identically**: it needs the Inngest dev server (`npx inngest-cli dev`), which
+was not running and which this session is not permitted to start. Its one change here (finding the Demo badge by
+title, since the agent switch adds a second visible "Demo") is unverified until it runs with Inngest.
+
+**One real run**, driven through the real `orchestrateRun` with a stand-in for Inngest's step tools (the same way
+the executor tests drive it; only the Inngest enqueue was not exercised). Scratch repository: a cart function with
+two bugs, `node --test`, 2 of 4 passing. Request: make every test pass without changing the tests.
+
+| Observed | Result |
+|---|---|
+| Worktree + branch | `factory/01m75jysw6cwrrr44x69xk2h65` off the base commit, recorded on the run |
+| The person's checkout | clean, still on `main`, still containing the bugs |
+| Builder | fixed both bugs in `src/cart.js`, made no commit, ~14 s for the whole run |
+| Steps on the canvas | live, from real tool calls (two `Running: …` lines, clipped) |
+| Model's closing sentence | stored in `claims` ("…all 4 tests now pass") |
+| Evidence | `evidence` row from `test-runner`: exit 0, 4 of 4; re-run by hand in the worktree: 4 of 4 |
+| Usage | 96,195 tokens reported, cost `NULL` (not reported) |
+| Blocks not yet built | Plan, Review, Approve skipped with the milestone that brings them; parked at Human check |
+| Secrets in the run's events | 0 matches |
+
+**Noticed, not fixed here:**
+- The builder inherits the person's global Claude Code setup: five of their SessionStart hooks fired in the
+  probe run. Their plugins, MCP servers and CLAUDE.md therefore shape every build. Whether the builder should run
+  with a clean setup (`--setting-sources`, `--strict-mcp-config`) is a decision for the person, not made here.
+- The builder wrote the file through a shell heredoc, so the step read `Running: cat > src/cart.js …` rather than
+  `Editing src/cart.js`. Honest, but less legible; a later pass could recognise a heredoc write.
+- The demo project now points at the scratch repository. If that folder is deleted, a Claude run fails at the
+  worktree step with a sentence saying so.
