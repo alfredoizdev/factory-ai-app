@@ -37,8 +37,8 @@ async function newRun(settings: { repoPath?: string | null; testCommand?: string
 }
 
 type Script = Partial<Record<string, AgentEvent[]>>
-function filesProvider(script: Script, route?: (kind: string) => BlockRoute): AgentProvider & { calls: { kind: string; workdir?: string; testCommand?: string | null }[] } {
-  const calls: { kind: string; workdir?: string; testCommand?: string | null }[] = []
+function filesProvider(script: Script, route?: (kind: string) => BlockRoute): AgentProvider & { calls: { kind: string; workdir?: string; testCommand?: string | null; baseCommit?: string }[] } {
+  const calls: { kind: string; workdir?: string; testCommand?: string | null; baseCommit?: string }[] = []
   return {
     id: 'files',
     isDemo: false,
@@ -46,7 +46,7 @@ function filesProvider(script: Script, route?: (kind: string) => BlockRoute): Ag
     route: route ? kind => route(kind) : undefined,
     calls,
     async *execute(input) {
-      calls.push({ kind: input.blockKind, workdir: input.workdir, testCommand: input.testCommand })
+      calls.push({ kind: input.blockKind, workdir: input.workdir, testCommand: input.testCommand, baseCommit: input.baseCommit })
       for (const ev of script[input.blockKind] ?? [{ type: 'done', summary: 'ok', source: 'system' }]) yield ev
     },
   }
@@ -75,7 +75,7 @@ test('the worktree is made before any block runs, and every block is handed its 
   expect(await payloadOf(runId, 'run.workspace')).toEqual([{ branch: `factory/${runId}`, path: `/wt/${runId}`, baseCommit: 'abc' }])
   const row = db.select().from(runs).where(eq(runs.id, runId)).get()!
   expect([row.worktreePath, row.branch, row.baseCommit]).toEqual([`/wt/${runId}`, `factory/${runId}`, 'abc'])
-  expect(provider.calls.every(c => c.workdir === `/wt/${runId}` && c.testCommand === 'npm test')).toBe(true)
+  expect(provider.calls.every(c => c.workdir === `/wt/${runId}` && c.testCommand === 'npm test' && c.baseCommit === 'abc')).toBe(true)
 })
 
 test('a project with no repository fails the run before any agent starts, and says why', async () => {
@@ -106,7 +106,10 @@ test('a block the provider routes away is skipped with the provider\'s reason', 
   expect(await payloadOf(runId, 'node.skipped', 'review')).toEqual([{ blockId: 'review', reason: 'Not yet.' }])
 })
 
-const testRun: TestRun = { command: 'npm test', exitCode: 1, durationMs: 1234, counts: { passed: 3, failed: 1, total: 4 }, outputTail: 'FAIL src/a.test.ts' }
+const testRun: TestRun = {
+  command: 'npm test', exitCode: 1, signal: null, started: true, durationMs: 1234,
+  counts: { passed: 3, failed: 1, total: 4 }, outputTail: 'FAIL src/a.test.ts', changedTestFiles: ['test/a.test.ts'],
+}
 
 test('evidence is stored whole in its own table, and the event carries numbers only', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
@@ -116,7 +119,10 @@ test('evidence is stored whole in its own table, and the event carries numbers o
   expect(rows[0]!.source).toBe('test-runner')
   expect(JSON.parse(rows[0]!.dataJson)).toEqual(testRun)
   expect(await payloadOf(runId, 'node.evidence', 'tests')).toEqual([
-    { blockId: 'tests', kind: 'test_run', exitCode: 1, durationMs: 1234, counts: { passed: 3, failed: 1, total: 4 } },
+    {
+      blockId: 'tests', kind: 'test_run', exitCode: 1, signal: null, durationMs: 1234,
+      counts: { passed: 3, failed: 1, total: 4 }, changedTestFiles: ['test/a.test.ts'], changedTestFilesCount: 1,
+    },
   ])
   expect(JSON.stringify(await eventsSince(runId, 0))).not.toContain('FAIL src/a.test.ts')
 })
@@ -148,4 +154,20 @@ test('failing tests are recorded as the system\'s words and are not run a second
   expect(node(runId, 'tests').state).toBe('failed')
   const [failed] = await payloadOf(runId, 'node.failed', 'tests')
   expect(failed).toMatchObject({ cause: 'tests_failed', messageSource: 'system', message: '3 of 4 passed. 1 failed.' })
+})
+
+test('the text of an exception a provider throws is redacted before it is logged', async () => {
+  const runId = await newRun({ repoPath: '/repo' })
+  const throwing: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute(input) {
+      if (input.blockKind === 'build') throw new Error('crashed reading API_KEY=hunter2hunter2 ghp_abcdefghijklmnopqrstuvwxyz0123456789')
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  await drive(runId, throwing)
+  const logged = JSON.stringify(await eventsSince(runId, 0))
+  expect(logged).toContain('crashed reading')
+  expect(logged).not.toContain('hunter2hunter2')
+  expect(logged).not.toContain('ghp_')
 })

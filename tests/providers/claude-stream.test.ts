@@ -61,9 +61,14 @@ test('a failed result becomes an error, redacted', () => {
   expect((ev as { message: string }).message).toContain('[redacted]')
 })
 
-test('a result with an empty sentence still ends the stream', () => {
+test('a failed result with the model\'s words is the model\'s; without them the app writes the sentence', () => {
+  expect(mapStreamLine({ type: 'result', is_error: true, result: 'I could not do it.' }, WT)).toEqual([
+    { type: 'error', source: 'provider', message: 'I could not do it.' },
+  ])
+  expect(mapStreamLine({ type: 'result', is_error: true, subtype: 'error_max_turns' }, WT)).toEqual([
+    { type: 'error', source: 'system', message: 'The agent stopped: error_max_turns.' },
+  ])
   expect(mapStreamLine({ type: 'result', is_error: false, result: '' }, WT)[0]!.type).toBe('done')
-  expect(mapStreamLine({ type: 'result', is_error: true }, WT)[0]!.type).toBe('error')
 })
 
 test('system lines, hook output, tool results and anything unknown yield nothing', () => {

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { redact } from '@/engine/redact'
@@ -10,12 +10,21 @@ import { redact } from '@/engine/redact'
 export type TestCounts = { passed: number; failed: number; total: number }
 export type TestRun = {
   command: string
-  /** Null when the command never finished (it was stopped). */
+  /** Null when the command did not exit on its own: it was stopped, killed by a signal, or never started. */
   exitCode: number | null
+  /** The signal that killed it (an out-of-memory kill, a crash), when that is how it ended. Null otherwise. */
+  signal: string | null
+  /** False only when the command could not be started at all: nothing ran, so there is nothing measured. */
+  started: boolean
   durationMs: number
   counts: TestCounts | null
   /** The end of what the command printed, redacted. Stored as evidence, never put in an event. */
   outputTail: string
+  /**
+   * Test files or test configuration this run changed since its base commit. The agent works unattended and could
+   * rewrite the very tests that judge it, so a pass is only worth as much as this list is short. Null: not checked.
+   */
+  changedTestFiles: string[] | null
 }
 
 const TAIL_CHARS = 4000
@@ -65,15 +74,55 @@ export function runTestCommand(command: string, cwd: string, signal: AbortSignal
     if (signal.aborted) stop()
     else signal.addEventListener('abort', stop, { once: true })
 
-    const finish = (code: number | null) => {
+    const finish = (code: number | null, killedBy: string | null, began: boolean) => {
       signal.removeEventListener('abort', stop)
       // Counts read from the raw output, then the output is redacted before it is kept anywhere.
       const counts = stopped ? null : parseCounts(output)
-      resolve({ command, exitCode: stopped ? null : code, durationMs: Date.now() - started, counts, outputTail: redact(output).slice(-TAIL_CHARS) })
+      resolve({
+        command,
+        exitCode: stopped ? null : code,
+        // A kill the runner itself sent on abort is a cancellation, not something the tests did.
+        signal: stopped ? null : killedBy,
+        started: began,
+        durationMs: Date.now() - started,
+        counts,
+        outputTail: redact(output).slice(-TAIL_CHARS),
+        changedTestFiles: null,
+      })
     }
-    child.on('error', () => finish(null))
-    child.on('close', code => finish(code))
+    child.on('error', () => finish(null, null, false))
+    child.on('close', (code, killedBy) => finish(code, killedBy, true))
   })
+}
+
+// What decides whether tests pass: the tests themselves, the command that runs them, and the runner's configuration.
+const TEST_DEFINITION: readonly RegExp[] = [
+  /(^|\/)package\.json$/,
+  /(^|\/)(__tests__|tests?|spec|e2e)\//,
+  /\.(test|spec)\.[cm]?[jt]sx?$/,
+  /(^|\/)(vitest|jest|playwright|mocha|karma|cypress)\.config\.[cm]?[jt]s$/,
+  /(^|\/)\.mocharc(\.[a-z]+)?$/,
+  /(^|\/)(test_[^/]*|[^/]*_test)\.py$/,
+  /(^|\/)(pytest\.ini|conftest\.py|tox\.ini)$/,
+  /_test\.go$/,
+  /(^|\/)Makefile$/,
+]
+
+export function isTestDefinition(path: string): boolean {
+  return TEST_DEFINITION.some(re => re.test(path))
+}
+
+/** Every test-defining file changed in the worktree since `baseCommit`, committed or not, tracked or new. */
+export function changedTestFiles(cwd: string, baseCommit: string | undefined): string[] | null {
+  if (!baseCommit) return null
+  try {
+    const run = (args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    const changed = run(['diff', '--name-only', baseCommit]).split('\n')
+    const added = run(['ls-files', '--others', '--exclude-standard']).split('\n')
+    return [...new Set([...changed, ...added].map(l => l.trim()).filter(Boolean))].filter(isTestDefinition).sort()
+  } catch {
+    return null
+  }
 }
 
 const NPM_PLACEHOLDER = /no test specified/

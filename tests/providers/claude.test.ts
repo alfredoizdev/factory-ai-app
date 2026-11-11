@@ -80,6 +80,7 @@ test('an exit with no result is an error that carries the redacted end of stderr
   const events = await pending
   expect(events).toHaveLength(1)
   expect(events[0]!.type).toBe('error')
+  expect((events[0] as { source?: string }).source).toBe('system') // the app's sentence, not the model's words
   const message = (events[0] as { message: string }).message
   expect(message).toContain('code 1')
   expect(message).toContain('boom')
@@ -92,14 +93,14 @@ test('a missing claude command says so in plain words', async () => {
   const pending = collect(provider.execute(build, { signal: signal() }))
   child.stdout.end()
   setTimeout(() => child.emit('error', Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' })), 5)
-  expect(await pending).toEqual([{ type: 'error', message: strings.providers.claude.notFound }])
+  expect(await pending).toEqual([{ type: 'error', source: 'system', message: strings.providers.claude.notFound }])
 })
 
 test('no worktree means the agent is never started', async () => {
   const spawn = vi.fn()
   const provider = createClaudeProvider({ spawn: spawn as never })
   expect(await collect(provider.execute({ ...build, workdir: undefined }, { signal: signal() }))).toEqual([
-    { type: 'error', message: strings.providers.claude.noWorkdir },
+    { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir },
   ])
   expect(spawn).not.toHaveBeenCalled()
 })
@@ -117,7 +118,9 @@ test('cancelling stops the builder process', async () => {
   expect(events.every(e => e.type === 'step')).toBe(true) // nothing terminal is invented after a cancel
 })
 
-const testRun = (over: Partial<TestRun>): TestRun => ({ command: 'npm test', exitCode: 0, durationMs: 50, counts: null, outputTail: '', ...over })
+const testRun = (over: Partial<TestRun>): TestRun => ({
+  command: 'npm test', exitCode: 0, signal: null, started: true, durationMs: 50, counts: null, outputTail: '', changedTestFiles: [], ...over,
+})
 
 test('tests run the configured command and report evidence, then a sentence the app wrote', async () => {
   const runTests = vi.fn(async () => testRun({ counts: { passed: 4, failed: 0, total: 4 } }))
@@ -151,4 +154,18 @@ test('blocks the real agent does not do yet are skipped with a reason, never fak
   expect(routeFor('tests', { testCommand: 'npm test' })).toEqual({ mode: 'execute' })
   expect(routeFor('build', {})).toEqual({ mode: 'execute' })
   expect(routeFor('input', {})).toEqual({ mode: 'execute' })
+})
+
+test('tests killed by a signal are recorded as evidence and as a failure that is not retried', async () => {
+  const provider = createClaudeProvider({ runTests: async () => testRun({ exitCode: null, signal: 'SIGKILL' }) })
+  const events = await collect(provider.execute({ blockKind: 'tests', request: 'r', workdir: '/wt', testCommand: 'npm test' }, { signal: signal() }))
+  expect(events.map(e => e.type)).toEqual(['step', 'evidence', 'error'])
+  expect(events.at(-1)).toEqual({ type: 'error', source: 'system', cause: 'tests_failed', message: strings.run.testsKilled('SIGKILL') })
+})
+
+test('a test command that could not start leaves no evidence, says so, and is not retried', async () => {
+  const provider = createClaudeProvider({ runTests: async () => testRun({ exitCode: null, started: false }) })
+  const events = await collect(provider.execute({ blockKind: 'tests', request: 'r', workdir: '/wt', testCommand: 'npm test' }, { signal: signal() }))
+  expect(events.map(e => e.type)).toEqual(['step', 'error'])
+  expect(events.at(-1)).toEqual({ type: 'error', source: 'system', cause: 'tests_failed', message: strings.run.testsDidNotStart('npm test') })
 })

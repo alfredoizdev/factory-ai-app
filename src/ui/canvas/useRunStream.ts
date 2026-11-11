@@ -33,7 +33,7 @@ type RawNode = {
   failureMessage?: string
   failureSource?: string
   /** From node.evidence: what the test runner measured. */
-  evidence?: { counts: { passed: number; failed: number; total: number } | null; exitCode: number | null; durationMs: number }
+  evidence?: NodeRunView['evidence']
   /** From node.completed: tokens the provider reported. Undefined: it said nothing; null: it said "unknown". */
   tokens?: number | null
 }
@@ -105,7 +105,11 @@ function evidenceOf(payload: Record<string, unknown>): RawNode['evidence'] {
   const failed = count(raw?.failed)
   const total = count(raw?.total)
   const counts = passed !== null && failed !== null && total !== null && passed + failed <= total ? { passed, failed, total } : null
-  return { counts, exitCode, durationMs: duration }
+  const signal = typeof payload.signal === 'string' ? payload.signal : null
+  // Absent (an older event) and null (could not check) both mean unknown; only a real list counts as checked.
+  const files = Array.isArray(payload.changedTestFiles) ? payload.changedTestFiles.filter((f): f is string => typeof f === 'string') : null
+  const filesCount = files === null ? null : Math.max(count(payload.changedTestFilesCount) ?? 0, files.length)
+  return { counts, exitCode, signal, durationMs: duration, changedTestFiles: files, changedTestFilesCount: filesCount }
 }
 
 const KINDS: ReadonlySet<string> = new Set<BlockKind>(['input', 'plan', 'build', 'tests', 'review', 'approve', 'human', 'ship'])

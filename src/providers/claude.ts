@@ -2,7 +2,7 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
-import { runTestCommand as nodeRunTests } from '@/engine/test-runner'
+import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
 import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
 import { mapStreamLine } from '@/providers/claude-stream'
 import type { AgentEvent, AgentExecutionInput, AgentProvider, BlockRoute, ExecutionControls } from '@/providers/types'
@@ -18,6 +18,7 @@ export type ClaudeDeps = {
   spawn?: typeof nodeSpawn
   bin?: string
   runTests?: typeof nodeRunTests
+  changedTestFiles?: typeof gitChangedTestFiles
 }
 
 const SKIPPED: Partial<Record<BlockKind, string>> = {
@@ -42,7 +43,7 @@ export function claudeArgs(prompt: string): string[] {
 
 async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
   if (!input.workdir) {
-    yield { type: 'error', message: strings.providers.claude.noWorkdir }
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
     return
   }
   const workdir = input.workdir
@@ -54,7 +55,7 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
       env: process.env,
     })
   } catch {
-    yield { type: 'error', message: strings.providers.claude.notFound }
+    yield { type: 'error', source: 'system', message: strings.providers.claude.notFound }
     return
   }
 
@@ -88,11 +89,12 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
     const { code, missing } = await exited
     if (signal.aborted) return
     if (missing) {
-      yield { type: 'error', message: strings.providers.claude.notFound }
+      yield { type: 'error', source: 'system', message: strings.providers.claude.notFound }
       return
     }
     const tail = clip(redact(stderr.trim()).slice(-STDERR_TAIL), STDERR_TAIL)
-    yield { type: 'error', message: [strings.providers.claude.exitedWithoutResult(code), tail].filter(Boolean).join(' ') }
+    // The app's sentence, with the CLI's own stderr appended (redacted): neither part is a model's claim about the work.
+    yield { type: 'error', source: 'system', message: [strings.providers.claude.exitedWithoutResult(code), tail].filter(Boolean).join(' ') }
   } finally {
     signal.removeEventListener('abort', stop)
     // A builder still running after the stream ended (or after an abort) must not keep writing into the worktree.
@@ -103,14 +105,25 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
 async function* runTests(input: AgentExecutionInput, { signal }: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
   const command = input.testCommand?.trim()
   if (!input.workdir || !command) {
-    yield { type: 'error', message: strings.providers.claude.noWorkdir }
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
     return
   }
   yield { type: 'step', text: strings.providers.claude.runningTests(command) }
   const run = await deps.runTests(command, input.workdir, signal)
-  if (signal.aborted || run.exitCode === null) return
-  yield { type: 'evidence', kind: 'test_run', data: run }
+  if (signal.aborted) return // cancelled: the executor records that, and nothing was measured
+  // Nothing ran, so there is no evidence to record — only the fact that it could not start. Not retried either.
+  if (!run.started) {
+    yield { type: 'error', source: 'system', cause: 'tests_failed', message: strings.run.testsDidNotStart(command) }
+    return
+  }
+  // Checked after the run, against the base commit: anything the builder did to the tests is on the record with the result.
+  yield { type: 'evidence', kind: 'test_run', data: { ...run, changedTestFiles: deps.changedTestFiles(input.workdir, input.baseCommit) } }
   const c = run.counts
+  if (run.signal) {
+    // Killed (out of memory, a crash): a measured failure, recorded and not run a second time.
+    yield { type: 'error', source: 'system', cause: 'tests_failed', message: strings.run.testsKilled(run.signal) }
+    return
+  }
   if (run.exitCode === 0) {
     yield { type: 'done', source: 'system', summary: c ? strings.summary.testsPassed(c.passed, c.total) : strings.summary.passedWithoutCounts }
   } else {
@@ -124,7 +137,12 @@ async function* runTests(input: AgentExecutionInput, { signal }: ExecutionContro
 }
 
 export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
-  const full: Required<ClaudeDeps> = { spawn: deps.spawn ?? nodeSpawn, bin: deps.bin ?? 'claude', runTests: deps.runTests ?? nodeRunTests }
+  const full: Required<ClaudeDeps> = {
+    spawn: deps.spawn ?? nodeSpawn,
+    bin: deps.bin ?? 'claude',
+    runTests: deps.runTests ?? nodeRunTests,
+    changedTestFiles: deps.changedTestFiles ?? gitChangedTestFiles,
+  }
   return {
     id: CLAUDE_PROVIDER_ID,
     isDemo: false,

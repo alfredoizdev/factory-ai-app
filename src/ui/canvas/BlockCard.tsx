@@ -19,9 +19,17 @@ export type NodeRunView = {
 
 export type RunEvidence = {
   counts: { passed: number; failed: number; total: number } | null
-  /** Null when the process never finished. */
+  /** Null when the process did not exit on its own. */
   exitCode: number | null
+  /** The signal that killed it, when that is how it ended. */
+  signal?: string | null
   durationMs: number
+  /**
+   * Test files or test configuration this run changed (up to a screenful), and how many in all. A non-empty list means
+   * the agent touched what judges it, so the result is shown with that said. Null: it could not be checked.
+   */
+  changedTestFiles?: string[] | null
+  changedTestFilesCount?: number | null
 }
 
 /** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
@@ -509,6 +517,10 @@ function formatDuration(ms: number): string {
  */
 export function EvidenceStrip({ evidence }: { evidence: RunEvidence }) {
   const c = evidence.counts
+  const touched = evidence.changedTestFiles ?? []
+  const touchedCount = evidence.changedTestFilesCount ?? touched.length
+  // The check mark says "this was measured and nothing undercuts it". A run that changed its own tests loses it.
+  const clean = touchedCount === 0 && evidence.changedTestFiles !== null
   return (
     <div
       data-testid="evidence-strip"
@@ -521,9 +533,23 @@ export function EvidenceStrip({ evidence }: { evidence: RunEvidence }) {
       }}
     >
       <div style={{ ...CAPS, fontSize: 9.5, letterSpacing: '0.14em', color: '#7d8798', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-        <span aria-hidden="true" style={{ color: theme.passed }}>✓</span>
+        <span aria-hidden="true" style={{ color: clean ? theme.passed : theme.waiting }}>{clean ? '✓' : '!'}</span>
         {strings.canvas.evidence}
       </div>
+      {touchedCount > 0 && (
+        <div data-testid="tests-changed" role="note" style={{ fontSize: 12, color: theme.waiting, margin: '0 0 8px', lineHeight: 1.4 }}>
+          {strings.canvas.testsChanged(touchedCount)}{' '}
+          <span style={{ fontFamily: MONO, fontSize: 11.5, color: '#e7dcc4' }}>
+            {touched.slice(0, 3).join(', ')}
+            {touchedCount > 3 ? ` ${strings.canvas.andMore(touchedCount - 3)}` : ''}
+          </span>
+        </div>
+      )}
+      {evidence.changedTestFiles === null && (
+        <div data-testid="tests-unchecked" style={{ fontSize: 12, color: theme.skipped, margin: '0 0 8px' }}>
+          {strings.canvas.testsUnchecked}
+        </div>
+      )}
       {c && c.total > 0 && (
         <div
           role="img"
@@ -559,7 +585,7 @@ export function EvidenceStrip({ evidence }: { evidence: RunEvidence }) {
         <span>
           <dt style={{ display: 'inline' }}>{strings.canvas.exitCode} </dt>
           <dd style={{ display: 'inline', margin: 0, color: evidence.exitCode === 0 ? theme.passed : theme.failed, fontWeight: 600 }}>
-            {evidence.exitCode === null ? strings.canvas.notReported : evidence.exitCode}
+            {evidence.exitCode !== null ? evidence.exitCode : evidence.signal ? evidence.signal : strings.canvas.notReported}
           </dd>
         </span>
         <span>

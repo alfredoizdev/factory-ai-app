@@ -110,6 +110,9 @@ export const strings = {
     evidenceCounts: (passed: number, failed: number, total: number) =>
       failed > 0 ? `${passed} of ${total} passed, ${failed} failed` : `${passed} of ${total} passed`,
     exitCode: 'exit',
+    testsChanged: (n: number) => `This run changed ${n === 1 ? '1 test file' : `${n} test files`}, so the result also judges those changes:`,
+    andMore: (n: number) => `and ${n} more`,
+    testsUnchecked: 'Whether this run changed its own tests could not be checked.',
     took: 'took',
     claimTitle: 'This sentence was written by an AI. It has not been verified.',
     cost: 'Cost',
@@ -190,6 +193,8 @@ export const strings = {
     internalFailure: 'The run stopped because of an internal error.',
     notReached: 'An earlier step stopped the run, so this block never started.',
     noRepository: 'This project has no repository set, so the agent was not started.',
+    testsDidNotStart: (command: string) => `The test command could not be started: ${command}`,
+    testsKilled: (signal: string) => `The tests were killed (${signal}) before they finished.`,
     workspaceFailed: (detail: string) => `The working copy for this run could not be made: ${detail}`,
     couldNotStart: 'The run could not be started. Nothing ran.',
     demoBadge: 'Demo',

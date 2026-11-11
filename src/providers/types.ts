@@ -24,6 +24,8 @@ export type AgentExecutionInput = {
   workdir?: string
   /** The project's configured test command; null when none is set. */
   testCommand?: string | null
+  /** The commit the worktree started from, so a block can tell what this run changed. */
+  baseCommit?: string
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

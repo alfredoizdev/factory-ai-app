@@ -50,6 +50,7 @@ const defaultDeps: ExecutorDeps = {
   createWorktree: createRunWorktree,
 }
 
+const MAX_LISTED_FILES = 20
 /** A step line is short: it says what the agent is doing, it is not a log. */
 const STEP_MAX = 240
 
@@ -62,7 +63,7 @@ type Plan = {
   testCommand: string | null
 }
 /** What a block's execution may touch: the run's worktree (null for the demo) and the project's test command. */
-type Workspace = { workdir: string | null; testCommand: string | null }
+type Workspace = { workdir: string | null; testCommand: string | null; baseCommit: string | null }
 type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked' }
 
 const now = () => new Date().toISOString()
@@ -210,7 +211,13 @@ async function runAttempt(
 
   const consume = (async (): Promise<AttemptResult> => {
     try {
-      const input = { blockKind: block.kind, request, workdir: workspace.workdir ?? undefined, testCommand: workspace.testCommand }
+      const input = {
+        blockKind: block.kind,
+        request,
+        workdir: workspace.workdir ?? undefined,
+        testCommand: workspace.testCommand,
+        baseCommit: workspace.baseCommit ?? undefined,
+      }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') onStep(ev.text)
@@ -261,7 +268,17 @@ function recordEvidence(runId: string, nodeRunId: string, blockId: string, data:
         runId,
         nodeRunId,
         type: 'node.evidence',
-        payload: { blockId, kind: 'test_run', exitCode: data.exitCode, durationMs: data.durationMs, counts: data.counts },
+        payload: {
+          blockId,
+          kind: 'test_run',
+          exitCode: data.exitCode,
+          signal: data.signal,
+          durationMs: data.durationMs,
+          counts: data.counts,
+          // Paths only, at most a screenful: enough to show that the tests were touched, and which.
+          changedTestFiles: data.changedTestFiles?.slice(0, MAX_LISTED_FILES).map(f => clip(f, 160)) ?? null,
+          changedTestFilesCount: data.changedTestFiles?.length ?? null,
+        },
       },
       tx,
     )
@@ -360,7 +377,8 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
             ? strings.run.providerCrashed
             : strings.run.noResult
     // The exception's own text is kept: a failure whose cause is lost cannot be explained to the person reading it.
-    const detail = result.kind === 'crashed' ? result.detail : undefined
+    // Redacted like every other text from a provider: an exception message can carry a token or a path with one.
+    const detail = result.kind === 'crashed' ? clip(redact(result.detail), 300) : undefined
 
     // maxAttempts is 2 per node, with one deliberate exception: a timeout is never retried. A hang that already
     // used the whole timeout would double the wait before a person sees anything, and the cause is recorded
@@ -475,9 +493,9 @@ function loadPlan(runId: string): Plan {
 // copy cannot be made, the run fails with that sentence rather than letting an agent start somewhere else.
 function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Workspace | { failed: string } {
   const provider = deps.resolveProvider(plan.providerId)
-  if (!provider.needsWorkspace) return { workdir: null, testCommand: plan.testCommand }
+  if (!provider.needsWorkspace) return { workdir: null, testCommand: plan.testCommand, baseCommit: null }
   const existing = db.select().from(runs).where(eq(runs.id, runId)).get()
-  if (existing?.worktreePath) return { workdir: existing.worktreePath, testCommand: plan.testCommand }
+  if (existing?.worktreePath) return { workdir: existing.worktreePath, testCommand: plan.testCommand, baseCommit: existing.baseCommit }
   if (!plan.repoPath) return { failed: strings.run.noRepository }
   try {
     const ws = (deps.createWorktree ?? createRunWorktree)(plan.repoPath, runId)
@@ -485,7 +503,7 @@ function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Worksp
       tx.update(runs).set({ worktreePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit }).where(eq(runs.id, runId)).run()
       appendEventSync({ runId, type: 'run.workspace', payload: { branch: ws.branch, path: ws.path, baseCommit: ws.baseCommit } }, tx)
     })
-    return { workdir: ws.path, testCommand: plan.testCommand }
+    return { workdir: ws.path, testCommand: plan.testCommand, baseCommit: ws.baseCommit }
   } catch (e) {
     return { failed: strings.run.workspaceFailed(clip(redact(e instanceof Error ? e.message : String(e)), 300)) }
   }

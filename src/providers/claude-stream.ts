@@ -66,7 +66,12 @@ export function mapStreamLine(line: unknown, workdir: string): AgentEvent[] {
   }
   if (line.type === 'result') {
     const text = clip(redact(str(line.result).trim()), SUMMARY_MAX)
-    if (line.is_error === true) return [{ type: 'error', message: text || `The agent stopped: ${str(line.subtype) || 'error'}.` }]
+    if (line.is_error === true) {
+      // The model's own words when it gave any; otherwise a sentence the app writes from the CLI's status code.
+      return text
+        ? [{ type: 'error', source: 'provider', message: text }]
+        : [{ type: 'error', source: 'system', message: `The agent stopped: ${str(line.subtype) || 'error'}.` }]
+    }
     // total_cost_usd is deliberately dropped: it is an API-price estimate, not what a subscription pays.
     return [{ type: 'done', summary: text, source: 'provider', usage: { tokens: reportedTokens(line.usage) } }]
   }

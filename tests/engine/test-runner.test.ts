@@ -1,7 +1,8 @@
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { detectTestCommand, parseCounts, runTestCommand } from '@/engine/test-runner'
+import { execFileSync } from 'node:child_process'
+import { changedTestFiles, detectTestCommand, isTestDefinition, parseCounts, runTestCommand } from '@/engine/test-runner'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'factory-tests-'))
 
@@ -44,6 +45,14 @@ test('the output tail is bounded and redacted', async () => {
   expect(run.outputTail).not.toContain('ghp_')
 })
 
+test('a command killed by a signal records the signal, so it can be reported as a measured failure', async () => {
+  const run = await runTestCommand('echo started; kill -9 $$', tmp(), new AbortController().signal)
+  expect(run.exitCode).toBeNull()
+  expect(run.signal).toBe('SIGKILL')
+  expect(run.started).toBe(true)
+  expect(run.outputTail).toContain('started')
+})
+
 test('aborting stops the command and records no exit code', async () => {
   const controller = new AbortController()
   const started = Date.now()
@@ -51,6 +60,7 @@ test('aborting stops the command and records no exit code', async () => {
   setTimeout(() => controller.abort(), 100)
   const run = await pending
   expect(run.exitCode).toBeNull()
+  expect(run.signal).toBeNull() // the runner's own kill is a cancellation, not something the tests did
   expect(Date.now() - started).toBeLessThan(5000)
 })
 
@@ -67,4 +77,40 @@ test('the test command is detected from package.json, never from npm\'s placehol
   const broken = tmp()
   writeFileSync(join(broken, 'package.json'), '{ not json')
   expect(detectTestCommand(broken)).toBeNull()
+})
+
+test('what counts as a test definition: tests, the command that runs them, and the runner\'s configuration', () => {
+  for (const p of ['package.json', 'apps/web/package.json', 'test/cart.test.js', 'src/__tests__/a.ts', 'src/a.spec.tsx',
+    'vitest.config.ts', 'jest.config.mjs', '.mocharc.json', 'tests/conftest.py', 'pkg/a_test.go', 'test_api.py', 'Makefile']) {
+    expect(isTestDefinition(p)).toBe(true)
+  }
+  for (const p of ['src/cart.js', 'README.md', 'src/testing-utils.ts', 'src/latest.ts', 'contest.py']) expect(isTestDefinition(p)).toBe(false)
+})
+
+test('changed test files are listed against the base commit, committed, edited or new', () => {
+  const dir = tmp()
+  const git = (...a: string[]) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim()
+  git('init', '-q')
+  git('config', 'user.email', 't@e.com')
+  git('config', 'user.name', 't')
+  writeFileSync(join(dir, 'package.json'), '{"scripts":{"test":"node --test"}}')
+  writeFileSync(join(dir, 'cart.js'), 'x')
+  git('add', '.')
+  git('commit', '-q', '-m', 'base')
+  const base = git('rev-parse', 'HEAD')
+  expect(changedTestFiles(dir, base)).toEqual([])
+
+  writeFileSync(join(dir, 'cart.js'), 'fixed') // the code itself: not a test definition
+  expect(changedTestFiles(dir, base)).toEqual([])
+  writeFileSync(join(dir, 'package.json'), '{"scripts":{"test":"echo Tests 5 passed (5)"}}') // the gaming case
+  writeFileSync(join(dir, 'new.test.js'), 'new') // an untracked new test
+  expect(changedTestFiles(dir, base)).toEqual(['new.test.js', 'package.json'])
+  git('add', '.')
+  git('commit', '-q', '-m', 'agent committed anyway')
+  expect(changedTestFiles(dir, base)).toEqual(['new.test.js', 'package.json'])
+})
+
+test('without a base commit, or outside a repository, the check reports that it could not tell', () => {
+  expect(changedTestFiles(tmp(), undefined)).toBeNull()
+  expect(changedTestFiles(tmp(), 'abc123')).toBeNull()
 })
