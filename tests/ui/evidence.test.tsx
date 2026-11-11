@@ -132,3 +132,45 @@ test('tests killed by a signal show the signal where the exit code would be', ()
   render(<BlockCard block={tests} view={evidenceView({ exitCode: null, signal: 'SIGKILL', changedTestFiles: [] })} />)
   expect(within(screen.getByTestId('evidence-strip')).getByText('SIGKILL')).toBeInTheDocument()
 })
+
+const human = blocks.find(b => b.id === 'human')!
+const assessedView = (payload: Record<string, unknown>, ending: Omit<Wire, 'sequence'>) =>
+  fold([
+    { type: 'node.queued', payload: { blockId: 'human' } },
+    { type: 'node.assessed', payload: { blockId: 'human', ...payload } },
+    { type: 'node.started', payload: { blockId: 'human' } }, // as the executor sends it: queued, then running, then the end
+    ending,
+  ]).human!
+
+test('a change measured as low risk says so, and why, on the human check', () => {
+  const view = assessedView(
+    { level: 'low', reasons: ['1 file, 2 lines, nothing sensitive, tests passed and untouched.'] },
+    { type: 'node.completed', payload: { blockId: 'human', summary: strings.risk.passedLow, summarySource: 'system' } },
+  )
+  render(<BlockCard block={human} view={view} />)
+  expect(screen.getByTestId('risk-strip')).toHaveAttribute('data-level', 'low')
+  expect(screen.getByTestId('risk-strip')).toHaveTextContent(strings.risk.label.low)
+  expect(screen.getByText(strings.risk.passedLow)).toBeInTheDocument()
+  expect(screen.queryByText(/AI says/i)).toBeNull()
+})
+
+test('a change that needs the person lists what was found', () => {
+  const view = assessedView(
+    { level: 'high', reasons: ['It changes src/lib/stripe.ts (payments).'] },
+    { type: 'node.waiting_approval', payload: { blockId: 'human' } },
+  )
+  render(<BlockCard block={human} view={view} />)
+  expect(screen.getByTestId('risk-strip')).toHaveAttribute('data-level', 'high')
+  expect(screen.getByText('It changes src/lib/stripe.ts (payments).')).toBeInTheDocument()
+})
+
+test('a malformed assessment draws nothing', () => {
+  const view = assessedView({ level: 'medium', reasons: ['x'] }, { type: 'node.waiting_approval', payload: { blockId: 'human' } })
+  expect(view.risk).toBeUndefined()
+})
+
+test('the event bar reads the assessment in words', async () => {
+  const { describeEvent } = await import('@/ui/EventBar')
+  const line = describeEvent({ sequence: 1, type: 'node.assessed', payload: { blockId: 'human', level: 'high', reasons: ['It changes package.json (dependencies and configuration).'] } }, human)
+  expect(line).toEqual({ text: 'Needs you: It changes package.json (dependencies and configuration).', isClaim: false })
+})

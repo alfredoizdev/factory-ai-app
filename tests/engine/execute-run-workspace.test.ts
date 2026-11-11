@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
@@ -24,10 +28,13 @@ const step: StepApi = {
   },
 }
 
-async function newRun(settings: { repoPath?: string | null; testCommand?: string | null } = {}): Promise<string> {
+async function newRun(settings: { repoPath?: string | null; testCommand?: string | null; autoApproveLowRisk?: boolean } = {}): Promise<string> {
   const projectId = ulid()
   const workflowId = ulid()
-  await db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: now(), repoPath: settings.repoPath ?? null, testCommand: settings.testCommand ?? null })
+  await db.insert(projects).values({
+    id: projectId, projectId, name: 'p', createdAt: now(),
+    repoPath: settings.repoPath ?? null, testCommand: settings.testCommand ?? null, autoApproveLowRisk: settings.autoApproveLowRisk ?? false,
+  })
   await db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: now(), updatedAt: now() })
   await saveDraft(workflowId, defaultGraph())
   await publishVersion(workflowId)
@@ -190,4 +197,67 @@ test('evidence commits together with the block\'s ending: a block that never end
   expect(node(runId, 'tests').state).toBe('cancelled')
   expect(db.select().from(evidence).where(eq(evidence.runId, runId)).all()).toEqual([])
   expect(await payloadOf(runId, 'node.evidence')).toEqual([])
+})
+
+// ---- the human check, measured -----------------------------------------------------------------------------------
+
+/** A real repository whose worktree holds `changes` on top of one commit, standing in for the run's worktree. */
+function realWorktree(changes: Record<string, string>): ExecutorDeps['createWorktree'] {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-gate-'))
+  const git = (...a: string[]) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim()
+  const write = (p: string, body: string) => {
+    mkdirSync(dirname(join(dir, p)), { recursive: true })
+    writeFileSync(join(dir, p), body)
+  }
+  git('init', '-q')
+  git('config', 'user.email', 't@e.com')
+  git('config', 'user.name', 't')
+  write('src/app/page.tsx', 'one\ntwo\n')
+  git('add', '.')
+  git('commit', '-q', '-m', 'base')
+  const baseCommit = git('rev-parse', 'HEAD')
+  for (const [p, body] of Object.entries(changes)) write(p, body)
+  return () => ({ path: dir, branch: 'factory/x', baseCommit })
+}
+
+const passingTests: TestRun = { ...testRun, exitCode: 0, counts: { passed: 4, failed: 0, total: 4 }, changedTestFiles: [] }
+const withTests = (data: TestRun = passingTests) =>
+  filesProvider({ tests: [{ type: 'evidence', kind: 'test_run', data }, { type: 'done', summary: 'x', source: 'system' }] })
+
+test('with the switch on, a small, measured-safe change passes the human check on its own and the run goes on', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
+  await drive(runId, withTests(), realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
+  expect(node(runId, 'human').state).toBe('passed')
+  expect(await payloadOf(runId, 'node.assessed', 'human')).toMatchObject([{ level: 'low', filesCount: 1, linesChanged: 2 }])
+  expect(await payloadOf(runId, 'node.completed', 'human')).toMatchObject([{ summary: strings.risk.passedLow, summarySource: 'system', autoApproved: true }])
+  expect(node(runId, 'ship').state).not.toBe('queued')
+})
+
+test('with the switch off, the same change still stops for the person, with the measurement on record', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false })
+  await drive(runId, withTests(), realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
+  expect(node(runId, 'human').state).toBe('waiting_approval')
+  expect(await payloadOf(runId, 'node.assessed', 'human')).toMatchObject([{ level: 'low' }])
+})
+
+test('a change to something sensitive stops for the person even with the switch on, and says what', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
+  await drive(runId, withTests(), realWorktree({ 'src/lib/stripe.ts': 'charge()\n' }))
+  expect(node(runId, 'human').state).toBe('waiting_approval')
+  const [assessed] = await payloadOf(runId, 'node.assessed', 'human')
+  expect(assessed!.level).toBe('high')
+  expect(String(assessed!.reasons)).toContain('src/lib/stripe.ts')
+})
+
+test('with no tests run, nothing is low risk, even a one-line change', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: null, autoApproveLowRisk: true })
+  await drive(runId, filesProvider({}), realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
+  expect(node(runId, 'human').state).toBe('waiting_approval')
+  expect(String((await payloadOf(runId, 'node.assessed', 'human'))[0]!.reasons)).toContain(strings.risk.noTests)
+})
+
+test('a run whose tests changed stops for the person', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
+  await drive(runId, withTests({ ...passingTests, changedTestFiles: ['test/a.test.ts'] }), realWorktree({ 'src/app/page.tsx': 'x\n' }))
+  expect(node(runId, 'human').state).toBe('waiting_approval')
 })

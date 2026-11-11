@@ -12,8 +12,8 @@ beforeAll(() => {
   }
 })
 
-const noRepo = { projectId: 'p1', repoPath: null, testCommand: null }
-const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test' }
+const noRepo = { projectId: 'p1', repoPath: null, testCommand: null, autoApproveLowRisk: false }
+const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false }
 const runButton = () => screen.getByRole('button', { name: strings.run.run })
 
 test('the demo is the default, and choosing Claude shows where it works and that it is not sandboxed', () => {
@@ -104,6 +104,24 @@ test('closing the folder window changes nothing', async () => {
     await vi.waitFor(() => expect(screen.getByRole('button', { name: new RegExp(strings.settings.choose) })).toBeEnabled())
     expect(screen.getByLabelText(strings.settings.repoLabel)).toHaveValue('/repo')
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('the low-risk switch starts off and saves the moment it is turned on', async () => {
+  const fetchMock = vi.fn(async (_u: string, init?: RequestInit) =>
+    new Response(JSON.stringify({ ...withRepo, ...(JSON.parse(String(init?.body)) as object) })))
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
+    fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    const box = screen.getByRole('checkbox', { name: new RegExp(strings.settings.autoLowLabel) })
+    expect(box).not.toBeChecked()
+    fireEvent.click(box)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))).toEqual({ autoApproveLowRisk: true })
+    expect(box).toBeChecked()
   } finally {
     vi.unstubAllGlobals()
   }

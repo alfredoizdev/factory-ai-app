@@ -17,14 +17,14 @@ export class ProjectSettingsError extends Error {
   }
 }
 
-export type ProjectSettings = { projectId: string; repoPath: string | null; testCommand: string | null }
+export type ProjectSettings = { projectId: string; repoPath: string | null; testCommand: string | null; autoApproveLowRisk: boolean }
 
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
 export function getProjectSettings(projectId: string): ProjectSettings {
   const row = db.select().from(projects).where(eq(projects.id, projectId)).get()
   if (!row) throw new ProjectSettingsError(strings.settings.noProject)
-  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand }
+  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk }
 }
 
 function validRepoRoot(path: string): string {
@@ -53,6 +53,12 @@ export function setProjectRepo(projectId: string, path: string): { repoPath: str
   const testCommand = current.testCommand ?? detectTestCommand(repoPath)
   db.update(projects).set({ repoPath, testCommand }).where(eq(projects.id, projectId)).run()
   return { repoPath, testCommand }
+}
+
+/** The person's choice to let measured low-risk changes pass the human check on their own. */
+export function setAutoApproveLowRisk(projectId: string, on: boolean): void {
+  getProjectSettings(projectId)
+  db.update(projects).set({ autoApproveLowRisk: on }).where(eq(projects.id, projectId)).run()
 }
 
 export function setTestCommand(projectId: string, command: string | null): void {

@@ -47,7 +47,7 @@ test('a valid repository is stored, and the obvious test command is suggested', 
   const id = newProject()
   const dir = repo({ tests: true })
   expect(setProjectRepo(id, dir)).toEqual({ repoPath: dir, testCommand: 'npm test' })
-  expect(getProjectSettings(id)).toEqual({ projectId: id, repoPath: dir, testCommand: 'npm test' })
+  expect(getProjectSettings(id)).toEqual({ projectId: id, repoPath: dir, testCommand: 'npm test', autoApproveLowRisk: false })
 })
 
 test('a test command the person already set is never overwritten by the suggestion', () => {

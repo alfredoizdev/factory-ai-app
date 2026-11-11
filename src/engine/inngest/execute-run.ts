@@ -8,6 +8,7 @@ import { canTransition, rollUpRunStatus, type NodeState, type RunStatus } from '
 import { appendEventSync, type DbHandle, type EventType } from '@/engine/events'
 import { APPROVAL_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { clip, redact } from '@/engine/redact'
+import { assessRisk, type RiskAssessment, type TestFacts } from '@/engine/risk'
 import type { TestRun } from '@/engine/test-runner'
 import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
 import { claudeProvider } from '@/providers/claude'
@@ -61,6 +62,8 @@ type Plan = {
   blocks: PlannedBlock[]
   repoPath: string | null
   testCommand: string | null
+  /** Read once when the run starts: changing the switch mid-run does not change this run. */
+  autoApproveLowRisk: boolean
 }
 /** What a block's execution may touch: the run's worktree (null for the demo) and the project's test command. */
 type Workspace = { workdir: string | null; testCommand: string | null; baseCommit: string | null }
@@ -441,6 +444,67 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
   return { outcome: 'failed' } // unreachable: the loop always returns
 }
 
+// What the tests of this run measured, read back from its evidence: the gate is judged on records, not on a summary.
+function testFactsOf(runId: string): TestFacts {
+  const runsOfTests = db.select().from(evidence).where(eq(evidence.runId, runId)).all()
+    .filter(e => e.kind === 'test_run')
+    .map(e => JSON.parse(e.dataJson) as TestRun)
+  return {
+    testsRan: runsOfTests.length > 0,
+    testsPassed: runsOfTests.length > 0 && runsOfTests.every(t => t.exitCode === 0 && !t.signal),
+    // Unknown (null) counts as changed: what could not be checked is not assumed untouched.
+    testsChanged: runsOfTests.some(t => t.changedTestFiles === null || (t.changedTestFiles?.length ?? 0) > 0),
+  }
+}
+
+function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): RiskAssessment | null {
+  if (!workspace.workdir || !workspace.baseCommit) return null
+  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, testFactsOf(runId))
+  withTx(tx => {
+    const node = openNodeIn(tx, runId, block.id)
+    if (!node || outcomeOf(node.state)) return
+    appendEventSync(
+      {
+        runId,
+        nodeRunId: node.id,
+        type: 'node.assessed',
+        payload: {
+          blockId: block.id,
+          level: assessment.level,
+          reasons: assessment.reasons.map(r => clip(r, 200)),
+          filesCount: assessment.files.length,
+          linesChanged: assessment.linesChanged,
+        },
+      },
+      tx,
+    )
+  })
+  return assessment
+}
+
+// The person chose not to be asked about low-risk changes, and this one measured low: the gate opens on its own,
+// saying so in the app's own words. The assessment that justified it is already on the record (node.assessed).
+function passLowRiskGate(runId: string, block: PlannedBlock): Outcome {
+  return withTx((tx): Outcome => {
+    const node = openNodeIn(tx, runId, block.id)
+    if (!node) return { outcome: 'cancelled' }
+    const settled = outcomeOf(node.state)
+    if (settled) return { outcome: settled }
+    if (node.state === 'queued') {
+      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return { outcome: 'cancelled' }
+      tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+    }
+    const passed = transitionNode(
+      tx,
+      node,
+      'passed',
+      { type: 'node.completed', payload: { summary: strings.risk.passedLow, summarySource: 'system', autoApproved: true } },
+      { summary: strings.risk.passedLow },
+    )
+    return { outcome: passed ? 'passed' : 'cancelled' }
+  })
+}
+
 // A human block never calls a provider: it records that it is waiting and the function parks.
 function parkHumanNode(runId: string, block: PlannedBlock): Outcome {
   const result = withTx((tx): Outcome => {
@@ -496,7 +560,14 @@ function loadPlan(runId: string): Plan {
     return { id: b.id, kind: b.kind, enabled: b.enabled, timeoutMs: typeof t === 'number' && t > 0 ? t : DEFAULT_TIMEOUT_MS }
   })
   const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
-  return { providerId: run.providerId, request: run.request, blocks, repoPath: project?.repoPath ?? null, testCommand: project?.testCommand ?? null }
+  return {
+    providerId: run.providerId,
+    request: run.request,
+    blocks,
+    repoPath: project?.repoPath ?? null,
+    testCommand: project?.testCommand ?? null,
+    autoApproveLowRisk: project?.autoApproveLowRisk ?? false,
+  }
 }
 
 // The run's working copy, made once before any block runs. A provider that touches no files (the demo) gets none. If the
@@ -540,7 +611,14 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     } else if (route?.mode === 'skip') {
       result = await step.run(`node-${block.id}`, () => skipNode(runId, block, route.reason))
     } else if (block.kind === 'human') {
-      result = await step.run(`node-${block.id}`, () => parkHumanNode(runId, block))
+      // A run that changed files is measured before the gate, so the card can say what it would be waved through or
+      // stopped for. It passes on its own only when the person turned that on and the measurement says low risk.
+      const risk = prepared.workdir && prepared.baseCommit ? await step.run(`assess-${block.id}`, () => assessGate(runId, block, prepared)) : null
+      if (risk?.level === 'low' && plan.autoApproveLowRisk) {
+        result = await step.run(`node-${block.id}`, () => passLowRiskGate(runId, block))
+      } else {
+        result = await step.run(`node-${block.id}`, () => parkHumanNode(runId, block))
+      }
       if (result.outcome === 'parked') {
         const decision = await step.waitForEvent(`approval-${block.id}`, {
           event: APPROVAL_DECIDED,

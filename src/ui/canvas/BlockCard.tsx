@@ -15,6 +15,8 @@ export type NodeRunView = {
   usage?: { tokens: number | null; costCents: number | null }
   /** What a non-model process measured (a test run). Absent: nothing was measured for this block. */
   evidence?: RunEvidence
+  /** The measured risk of the run's change, on the human check. Absent: not measured (a demo run). */
+  risk?: { level: 'low' | 'high'; reasons: string[] }
 }
 
 export type RunEvidence = {
@@ -34,7 +36,7 @@ export type RunEvidence = {
 
 /** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
 export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'summaryIsClaim' | 'usage'> &
-  Partial<Pick<NodeRunView, 'steps' | 'evidence'>>
+  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk'>>
 
 // The domain and visual vocabularies are separate on purpose.
 const VISUAL: Record<NodeState, VisualState> = {
@@ -285,6 +287,7 @@ export function BlockCard({
       </p>
 
       {view.evidence && <EvidenceStrip evidence={view.evidence} />}
+      {view.risk && <RiskStrip risk={view.risk} />}
 
       {issues.map(message => (
         <p
@@ -621,5 +624,29 @@ export function WorkingSpinner({ blockId, size = 20 }: { blockId: string; size?:
       <circle cx="10" cy="10" r="8" fill="none" stroke={theme.tint('running', 0.25)} strokeWidth="2.5" />
       <path d="M10 2a8 8 0 0 1 8 8" fill="none" stroke={theme.running} strokeWidth="2.5" strokeLinecap="round" />
     </svg>
+  )
+}
+
+/**
+ * What was measured about the change before the human check: low risk (and why), or what needs the person. Built
+ * from the diff and the test records by the app, never from the agent, so it is drawn like evidence, not a claim.
+ */
+export function RiskStrip({ risk }: { risk: { level: 'low' | 'high'; reasons: string[] } }) {
+  const low = risk.level === 'low'
+  const tone = low ? theme.passed : theme.waiting
+  return (
+    <div
+      data-testid="risk-strip"
+      data-level={risk.level}
+      style={{ marginTop: 12, background: theme.tint(low ? 'passed' : 'waiting', 0.06), border: `1px solid ${theme.tint(low ? 'passed' : 'waiting', 0.3)}`, borderRadius: 10, padding: '9px 11px 10px' }}
+    >
+      <div style={{ ...CAPS, fontSize: 9.5, letterSpacing: '0.14em', color: tone, marginBottom: 6 }}>{strings.risk.label[risk.level]}</div>
+      <ul style={{ margin: 0, paddingLeft: 16, display: 'grid', gap: 3, fontSize: 12.5, color: '#d6dce6', lineHeight: 1.4 }}>
+        {risk.reasons.slice(0, 4).map(r => (
+          <li key={r}>{r}</li>
+        ))}
+      </ul>
+      {risk.reasons.length > 4 && <div style={{ fontSize: 12, color: theme.dim, marginTop: 4 }}>{strings.canvas.andMore(risk.reasons.length - 4)}</div>}
+    </div>
   )
 }

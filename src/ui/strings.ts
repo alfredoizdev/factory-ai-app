@@ -129,6 +129,29 @@ export const strings = {
     notInRun: 'Not part of this run',
     notInRunDetail: 'Added after this run began. It will take part in the next run.',
   },
+  risk: {
+    areas: {
+      secrets: 'secrets and environment',
+      auth: 'sign-in and sessions',
+      payments: 'payments',
+      database: 'the database',
+      server: 'server routes',
+      config: 'dependencies and configuration',
+      deploy: 'deployment',
+    },
+    touches: (path: string, area: string) => `It changes ${path} (${area}).`,
+    tooManyFiles: (n: number, max: number) => `It changes ${n} files; low risk is at most ${max}.`,
+    tooManyLines: (n: number, max: number) => `It changes ${n} lines; low risk is at most ${max}.`,
+    noTests: 'No tests were run, so nothing shows it works.',
+    testsFailed: 'The tests did not pass.',
+    testsChanged: 'It changed its own tests.',
+    nothingChanged: 'It changed no files.',
+    unreadable: 'What it changed could not be read, so it is treated as high risk.',
+    lowBecause: (files: number, lines: number) =>
+      `${files} ${files === 1 ? 'file' : 'files'}, ${lines} ${lines === 1 ? 'line' : 'lines'}, nothing sensitive, tests passed and untouched.`,
+    passedLow: 'Not needed: a low-risk change, and you chose not to be asked for those.',
+    label: { low: 'Low risk', high: 'Needs you' },
+  },
   sidebar: {
     label: 'Tools',
     open: 'Open the sidebar',
@@ -175,6 +198,8 @@ export const strings = {
     notSandboxed: 'Claude works on its own in a separate copy of the repository. It is not sandboxed.',
     needsRepo: 'Set the repository before running Claude.',
     choose: 'Choose folder…',
+    autoLowLabel: 'Do not stop for low-risk changes',
+    autoLowHelp: 'Small changes that touch nothing sensitive and pass the tests skip your check. Anything else still waits for you.',
     choosing: 'Choose the folder in the window that opened…',
     choosingHint: 'If you cannot see the window, it may be behind this one.',
     pickerMacOnly: 'Choosing a folder from a window only works on a Mac. Type the path instead.',
@@ -242,6 +267,8 @@ export const strings = {
     pointItOutAria: (label: string) => `Point it out on the canvas: ${label}`,
     started: 'Started.',
     waiting: 'Stopped and waiting for a person.',
+    assessed: (level: 'low' | 'high', reasons: readonly string[]) =>
+      `${level === 'low' ? 'Measured as low risk' : 'Needs you'}: ${reasons.join(' ')}`,
     measured: (counts: string | null, exitCode: number | null) => {
       const head = counts ? `Tests measured: ${counts}.` : 'Tests measured.'
       return exitCode === null ? head : `${head} Exit code ${exitCode}.`

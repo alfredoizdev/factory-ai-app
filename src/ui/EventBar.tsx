@@ -30,6 +30,10 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
   if (event.type === 'node.step') return { text: str(payload.text) ?? '', isClaim: false }
   if (event.type === 'node.started') return { text: strings.events.started, isClaim: false }
   if (event.type === 'node.waiting_approval') return { text: strings.events.waiting, isClaim: false }
+  if (event.type === 'node.assessed') {
+    const reasons = Array.isArray(payload.reasons) ? payload.reasons.filter((r): r is string => typeof r === 'string') : []
+    return { text: strings.events.assessed(payload.level === 'low' ? 'low' : 'high', reasons), isClaim: false }
+  }
   if (event.type === 'node.evidence') {
     // A measured fact: never a claim. Built from the numbers in the payload, the only part the event carries.
     const c = payload.counts as { passed?: unknown; failed?: unknown; total?: unknown } | null | undefined

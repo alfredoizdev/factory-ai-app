@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `auto_approve_low_risk` integer DEFAULT false NOT NULL;

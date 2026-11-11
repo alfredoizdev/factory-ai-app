@@ -616,7 +616,16 @@ knowingly rather than discovered later.
 2. **Does the user want to validate demand with agencies before M5–M6?** The
    design assumes building first, validating later — which is the user's call,
    already made, but worth revisiting at M4.
-3. **May a person ever opt a risk class out of the human gate?** rsc-harness
+3. **Decided 2026-11-11 by the user: yes, for low-risk changes, as a per-project switch.** Small changes that
+   touch nothing sensitive and pass untouched tests ("easy UI/UX and simple business logic", in the user's
+   words) need not wait for a person. Implemented as: the risk is *measured* from the worktree's diff and the
+   test records, never asked of the agent (≤ 8 files, ≤ 300 lines, no sign-in/payments/database/server
+   routes/config/dependencies/deployment/secrets paths, tests ran, passed and were not changed; anything
+   unmeasurable is high). The measurement is recorded on the human check (`node.assessed`) whether or not it
+   opens it; the switch is off until the person turns it on; an auto-opened check says so and never reads as
+   "You approved it". Known limit: an unattended agent could put sensitive logic in an innocuous-looking path;
+   the size cap narrows that, it does not remove it. Original question, kept for the record:
+   **May a person ever opt a risk class out of the human gate?** rsc-harness
    lets low-risk work land on green CI with nobody looking. This design keeps
    the gate on every run (§8.1, idea 2). If agencies in the validation
    conversations say a gate on a typo fix is the friction that makes them turn

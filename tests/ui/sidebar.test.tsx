@@ -13,7 +13,7 @@ beforeAll(() => {
 })
 beforeEach(() => window.localStorage.clear())
 
-const settings = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test' }
+const settings = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false }
 const page = () => render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={settings} />)
 
 test('the request is a large box in the sidebar, which starts open', () => {

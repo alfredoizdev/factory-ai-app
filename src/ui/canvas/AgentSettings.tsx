@@ -38,6 +38,28 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
   const tone = state === 'saved' ? theme.passed : state === 'failed' ? theme.failed : theme.border
 
   const [choosing, setChoosing] = useState(false)
+  const [autoLow, setAutoLow] = useState(settings.autoApproveLowRisk)
+
+  // The switch saves on its own: it is one decision, and leaving it half-set would be worse than one more request.
+  async function toggleAutoLow(on: boolean) {
+    setAutoLow(on)
+    try {
+      const res = await fetch(`/api/projects/${settings.projectId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ autoApproveLowRisk: on }),
+      })
+      const body = (await res.json().catch(() => null)) as (ProjectSettings & { error?: string }) | null
+      if (!res.ok || !body) {
+        setAutoLow(!on)
+        return setMessage({ text: body?.error ?? strings.settings.saveFailed, ok: false })
+      }
+      onSaved(body)
+    } catch {
+      setAutoLow(!on)
+      setMessage({ text: strings.settings.saveFailed, ok: false })
+    }
+  }
 
   async function save(values: { repoPath: string; testCommand: string } = { repoPath, testCommand }) {
     setBusy(true)
@@ -126,6 +148,14 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
           onChange={e => setTestCommand(e.target.value)}
           style={{ ...field, width: '100%', boxSizing: 'border-box' }}
         />
+      </label>
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: theme.dim, lineHeight: 1.4, cursor: 'pointer' }}>
+        <input type="checkbox" checked={autoLow} onChange={e => void toggleAutoLow(e.target.checked)} style={{ marginTop: 2 }} />
+        <span>
+          <span style={{ color: 'inherit', fontWeight: 600 }}>{strings.settings.autoLowLabel}</span>
+          <br />
+          {strings.settings.autoLowHelp}
+        </span>
       </label>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
       <button

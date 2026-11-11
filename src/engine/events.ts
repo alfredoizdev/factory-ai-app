@@ -15,6 +15,8 @@ export type NodeEventType =
   | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'
   // A fact from a non-model process (a test run). Carries numbers only; the output itself stays in the evidence table.
   | 'node.evidence'
+  // The measured risk of a run's change, recorded on the human check before it opens or stops.
+  | 'node.assessed'
 export type EventType = RunEventType | NodeEventType
 
 // Events carry only nodeRunId, so every node.* payload names its block: the client maps an event to a block without a join.

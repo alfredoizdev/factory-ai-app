@@ -34,6 +34,8 @@ type RawNode = {
   failureSource?: string
   /** From node.evidence: what the test runner measured. */
   evidence?: NodeRunView['evidence']
+  /** From node.assessed: the measured risk of the run's change. */
+  risk?: NodeRunView['risk']
   /** From node.completed: tokens the provider reported. Undefined: it said nothing; null: it said "unknown". */
   tokens?: number | null
 }
@@ -67,6 +69,13 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
     const evidence = evidenceOf(payload)
     if (!node || !evidence) return moved
     return { nodes: { ...prev.nodes, [blockId]: { ...node, evidence } }, lastSequence: event.sequence }
+  }
+
+  if (event.type === 'node.assessed') {
+    const level = payload.level === 'low' || payload.level === 'high' ? payload.level : undefined
+    const reasons = Array.isArray(payload.reasons) ? payload.reasons.filter((r): r is string => typeof r === 'string') : []
+    if (!node || !level) return moved
+    return { nodes: { ...prev.nodes, [blockId]: { ...node, risk: { level, reasons } } }, lastSequence: event.sequence }
   }
 
   const state = NODE_EVENT_STATE[event.type]
@@ -115,9 +124,10 @@ function evidenceOf(payload: Record<string, unknown>): RawNode['evidence'] {
 const KINDS: ReadonlySet<string> = new Set<BlockKind>(['input', 'plan', 'build', 'tests', 'review', 'approve', 'human', 'ship'])
 
 // Evidence and usage travel to the card as they were recorded; usage cost is never reported for a real builder.
-function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage'> {
+function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk'> {
   return {
     ...(n.evidence ? { evidence: n.evidence } : {}),
+    ...(n.risk ? { risk: n.risk } : {}),
     ...(n.tokens !== undefined ? { usage: { tokens: n.tokens, costCents: null } } : {}),
   }
 }

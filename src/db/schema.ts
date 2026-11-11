@@ -14,6 +14,9 @@ export const projects = sqliteTable('projects', {
   repoPath: text('repo_path'),
   // The project's configured test command. It is the allow-list: nothing else runs as an evidence step.
   testCommand: text('test_command'),
+  // The person's choice: a run whose change is measured as low risk does not stop at the human check. Off unless
+  // they turn it on; never a default.
+  autoApproveLowRisk: integer('auto_approve_low_risk', { mode: 'boolean' }).notNull().default(false),
   createdAt: text('created_at').notNull(),
 })
 
