@@ -39,8 +39,10 @@ export const CommandCard = forwardRef<
     onFollowUp: (runId: string) => void
     /** Empties the composer once what it held has been sent. */
     onSent: () => void
+    /** The branch a fresh run starts from, so nobody builds on the wrong one by surprise. */
+    startsFrom?: string | null
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent }, ref) {
+>(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startsFrom }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
   const placeholder = mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
@@ -88,6 +90,11 @@ export const CommandCard = forwardRef<
       {mode === 'idle' && (
         <>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{strings.sidebar.runTitle}</div>
+          {startsFrom && (
+            <div data-testid="starts-from" style={{ fontSize: 12, color: theme.dim, marginTop: -6, overflowWrap: 'anywhere' }}>
+              {strings.delivery.startsFrom(startsFrom)}
+            </div>
+          )}
           {composer}
           <button
             type="button"

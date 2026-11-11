@@ -150,3 +150,13 @@ test('the palette wire: adding a block while a run holds review-1 never hands ou
   expect(state('review-1')).toBe('queued') // still the run's block, not overwritten by the new one
   expect(screen.getByTestId('node-review-2')).toHaveAttribute('data-state', 'not_in_run')
 })
+
+test('New task in the top bar appears once the run is over, and clears it for a fresh one', async () => {
+  page()
+  await emit('run.started')
+  expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.newTask) })).toBeNull() // not while it works
+  await emit('run.completed')
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(strings.delivery.newTask) }))
+  expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.newTask) })).toBeNull()
+  expect(screen.getByText(strings.sidebar.runTitle)).toBeInTheDocument()
+})

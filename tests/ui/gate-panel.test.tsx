@@ -147,3 +147,10 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   expect(await screen.findByTestId('pushed')).toHaveTextContent(strings.delivery.pushed('feature/my-name'))
   expect(screen.getByRole('link', { name: new RegExp(strings.delivery.openPullRequest) })).toHaveAttribute('href', 'https://github.com/a/b/pull/new/feature/my-name')
 })
+
+test('a fresh task says which branch it starts from', () => {
+  vi.stubGlobal('fetch', routes())
+  const base = { text: '', onText: () => {}, images: [], onImages: () => {}, onRun: () => {}, canRun: false, onFollowUp: () => {}, onSent: () => {} }
+  render(<CommandCard {...base} runId={null} mode="idle" startsFrom="ai/watch-buttons" />)
+  expect(screen.getByTestId('starts-from')).toHaveTextContent(strings.delivery.startsFrom('ai/watch-buttons'))
+})

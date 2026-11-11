@@ -17,14 +17,30 @@ export class ProjectSettingsError extends Error {
   }
 }
 
-export type ProjectSettings = { projectId: string; repoPath: string | null; testCommand: string | null; autoApproveLowRisk: boolean }
+export type ProjectSettings = {
+  projectId: string
+  repoPath: string | null
+  testCommand: string | null
+  autoApproveLowRisk: boolean
+  /** The branch the repository is on right now, read live: a fresh run starts from it. Null when detached or unknown. */
+  currentBranch: string | null
+}
 
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
 export function getProjectSettings(projectId: string): ProjectSettings {
   const row = db.select().from(projects).where(eq(projects.id, projectId)).get()
   if (!row) throw new ProjectSettingsError(strings.settings.noProject)
-  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk }
+  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk, currentBranch: branchOf(row.repoPath) }
+}
+
+function branchOf(repo: string | null): string | null {
+  if (!repo) return null
+  try {
+    return git(repo, ['symbolic-ref', '--quiet', '--short', 'HEAD']) || null
+  } catch {
+    return null
+  }
 }
 
 function validRepoRoot(path: string): string {

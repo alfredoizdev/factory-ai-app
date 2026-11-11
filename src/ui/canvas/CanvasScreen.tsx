@@ -116,6 +116,21 @@ export function CanvasScreen({
     }
   }
 
+  // Leaves the finished run on screen behind and opens an empty task; the branch it will start from is read again,
+  // since the person may have switched branches meanwhile.
+  function newTask() {
+    setRun(null)
+    setHighlightedId(null)
+    setMessage(null)
+    clearComposer()
+    if (settings) {
+      fetch(`/api/projects/${settings.projectId}`)
+        .then(r => (r.ok ? (r.json() as Promise<ProjectSettings>) : null))
+        .then(next => next && setSettings(next))
+        .catch(() => undefined)
+    }
+  }
+
   async function cancel() {
     if (!run) return
     setMessage(null)
@@ -128,7 +143,18 @@ export function CanvasScreen({
   }
 
   const live = runStatus !== null && LIVE.has(runStatus)
-  const statusText = run === null ? null : runStatus !== null ? strings.run.status[runStatus] : connected ? null : strings.run.connecting
+  // A finished run's state is about the run on screen, not about what the buttons beside it will do: say so.
+  const finished = runStatus === 'completed' || runStatus === 'failed' || runStatus === 'cancelled'
+  const statusText =
+    run === null
+      ? null
+      : runStatus !== null
+        ? finished
+          ? strings.run.lastRun(strings.run.status[runStatus])
+          : strings.run.status[runStatus]
+        : connected
+          ? null
+          : strings.run.connecting
 
   const canRun = !busy && !live && request.trim() !== '' && !claudeBlocked && !imagesBusy(images)
 
@@ -186,6 +212,14 @@ export function CanvasScreen({
         <button type="button" style={headerButton} disabled={!live} onClick={cancel}>
           {strings.run.cancel}
         </button>
+        {/* A finished run stays on screen until the person moves on: this clears it for a separate, fresh task. */}
+        {run && !live && (
+          <button type="button" style={{ ...headerButton, fontWeight: 600 }} onClick={newTask}>
+            ＋ {strings.delivery.newTask}
+          </button>
+        )}
+        {/* The buttons act; what follows describes the run on screen, so it sits apart, at the far end. */}
+        <span aria-hidden="true" style={{ flex: 1 }} />
         {run?.providerId === DEMO_PROVIDER_ID && (
           <span
             title={strings.run.demoTitle}
@@ -278,6 +312,7 @@ export function CanvasScreen({
           canRun={canRun}
           onFollowUp={id => void watchRun(id)}
           onSent={clearComposer}
+          startsFrom={settings?.currentBranch}
         />
         <Canvas
           graph={graph}
