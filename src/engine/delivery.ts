@@ -61,6 +61,25 @@ export function deliveryState(runId: string): Delivery {
   }
 }
 
+/**
+ * Commits whatever the agent left uncommitted in the run's worktree, on the run's own branch, and returns the commit
+ * the branch now points at. Used to keep an approved change before it is brought over or built upon.
+ */
+export function keepCommit(run: { id: string; request: string; worktreePath: string | null }): string {
+  const wt = run.worktreePath!
+  git(wt, ['add', '-A'])
+  if (git(wt, ['diff', '--cached', '--name-only']) !== '') {
+    const message = `${clip(run.request.replace(/\s+/g, ' ').trim(), 72)}\n\nMade by an agent in AI Factory, run ${run.id}, and approved by a person.`
+    git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
+  }
+  return git(wt, ['rev-parse', 'HEAD'])
+}
+
+/** True once this run's change was brought into the project. */
+export function wasDelivered(runId: string): boolean {
+  return deliveredRecord(runId) !== null
+}
+
 /** Commits the approved change on the run's branch and applies it, uncommitted, to the person's checkout. Once. */
 export function deliverToProject(runId: string): Delivery {
   const found = approvedAndFinished(runId)
@@ -77,19 +96,15 @@ export function deliverToProject(runId: string): Delivery {
   if (git(repo, ['status', '--porcelain']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
 
   // 1. Keep it: one commit on the run's own branch, in the agent's worktree. Their branches are not touched.
-  git(wt, ['add', '-A'])
-  const files = git(wt, ['diff', '--cached', '--name-only', run.baseCommit!]).split('\n').filter(Boolean)
+  // A follow-up whose parent was never brought over starts from the parent's base, so both changes travel together.
+  const from = run.deliveryBase ?? run.baseCommit!
+  const commit = keepCommit(run)
+  const files = git(wt, ['diff', '--name-only', from, commit]).split('\n').filter(Boolean)
   if (files.length === 0) throw new DeliveryError(strings.delivery.nothing, 409)
-  const pending = git(wt, ['diff', '--cached', '--name-only']).split('\n').filter(Boolean)
-  if (pending.length > 0) {
-    const message = `${clip(run.request.replace(/\s+/g, ' ').trim(), 72)}\n\nMade by an agent in AI Factory, run ${run.id}, and approved by a person.`
-    git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
-  }
-  const commit = git(wt, ['rev-parse', 'HEAD'])
 
   // 2. Bring it over: the whole change since the base, applied to their checkout, unstaged. Checked first, so a
   // change that no longer fits (they edited the same lines since) is refused whole, never half-applied.
-  const patch = git(wt, ['diff', '--binary', run.baseCommit!, commit])
+  const patch = git(wt, ['diff', '--binary', from, commit])
   const dir = mkdtempSync(join(tmpdir(), 'factory-delivery-'))
   const file = join(dir, 'change.patch')
   try {

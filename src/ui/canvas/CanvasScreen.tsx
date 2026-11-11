@@ -10,6 +10,7 @@ import { theme } from '@/ui/theme'
 import { AgentSettings } from './AgentSettings'
 import { WorkingSpinner } from './BlockCard'
 import { GatePanel } from './GatePanel'
+import { ResultPanel } from './ResultPanel'
 import { Canvas, RUN_INPUT_ID } from './Canvas'
 import { useRunStream, type RunStatus } from './useRunStream'
 
@@ -57,6 +58,15 @@ export function CanvasScreen({
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
   const flushRef = useRef<(() => Promise<boolean>) | null>(null)
   const gateRef = useRef<HTMLElement | null>(null)
+  const resultRef = useRef<HTMLElement | null>(null)
+
+  // A follow-up is a new run: the canvas switches to watching it, the same way a new run started from the sidebar does.
+  async function watchRun(runId: string) {
+    const detail = await fetch(`/api/runs/${runId}`)
+    if (!detail.ok) return setMessage(await readError(detail, strings.run.startFailed))
+    setHighlightedId(null)
+    setRun((await detail.json()) as RunInfo)
+  }
 
   // The blocks are always passed: without them the hook cannot say what a block did in its own words.
   const { views, events, runStatus, connected } = useRunStream(run?.runId ?? null, run?.blocks)
@@ -230,6 +240,33 @@ export function CanvasScreen({
             <span aria-hidden="true">⚠</span>
             {statusText}
           </button>
+        ) : statusText && runStatus === 'completed' && run && run.providerId !== DEMO_PROVIDER_ID ? (
+          // Finished: the status takes the person to the result, where the change can be brought over or continued.
+          <button
+            type="button"
+            data-testid="run-status"
+            title={strings.delivery.title}
+            onClick={() => {
+              resultRef.current?.focus()
+              resultRef.current?.scrollIntoView?.({ block: 'nearest' })
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              background: theme.tint('passed', 0.12),
+              color: theme.passed,
+              border: `1px solid ${theme.tint('passed', 0.5)}`,
+              borderRadius: 999,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <span aria-hidden="true">✓</span>
+            {statusText}
+          </button>
         ) : (
           statusText && (
             <span
@@ -251,6 +288,9 @@ export function CanvasScreen({
             runId={run.runId}
             risk={Object.values(views).find(v => v.state === 'waiting_approval')?.risk}
           />
+        )}
+        {run && runStatus === 'completed' && run.providerId !== DEMO_PROVIDER_ID && (
+          <ResultPanel key={run.runId} ref={resultRef} runId={run.runId} onFollowUp={id => void watchRun(id)} />
         )}
         <Canvas
           graph={graph}

@@ -39,8 +39,8 @@ export type StepApi = {
 
 export type ExecutorDeps = {
   resolveProvider: (providerId: string) => AgentProvider
-  /** Makes the run's working copy. Only called for a provider that is not the demo. */
-  createWorktree?: (repoPath: string, runId: string) => RunWorkspace
+  /** Makes the run's working copy. Only called for a provider that works on files. `startPoint`: a follow-up's parent commit. */
+  createWorktree?: (repoPath: string, runId: string, startPoint?: string) => RunWorkspace
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -49,7 +49,7 @@ const defaultDeps: ExecutorDeps = {
     if (id === CLAUDE_PROVIDER_ID) return claudeProvider
     throw new NonRetriableError(`Unknown provider ${id}`)
   },
-  createWorktree: createRunWorktree,
+  createWorktree: (repo, runId, startPoint) => createRunWorktree(repo, runId, undefined, startPoint),
 }
 
 const MAX_LISTED_FILES = 20
@@ -65,9 +65,11 @@ type Plan = {
   testCommand: string | null
   /** Read once when the run starts: changing the switch mid-run does not change this run. */
   autoApproveLowRisk: boolean
+  /** A follow-up's parent request: what is already done in the folder it starts from. */
+  previousRequest: string | null
 }
 /** What a block's execution may touch: the run's worktree (null for the demo) and the project's test command. */
-type Workspace = { workdir: string | null; testCommand: string | null; baseCommit: string | null }
+type Workspace = { workdir: string | null; testCommand: string | null; baseCommit: string | null; previousRequest?: string | null }
 type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked' }
 
 const now = () => new Date().toISOString()
@@ -223,6 +225,7 @@ async function runAttempt(
         testCommand: workspace.testCommand,
         baseCommit: workspace.baseCommit ?? undefined,
         revisionNote: revisionNote ?? undefined,
+        previousRequest: workspace.previousRequest ?? undefined,
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
@@ -622,6 +625,7 @@ function loadPlan(runId: string): Plan {
     repoPath: project?.repoPath ?? null,
     testCommand: project?.testCommand ?? null,
     autoApproveLowRisk: project?.autoApproveLowRisk ?? false,
+    previousRequest: run.parentRunId ? (db.select({ r: runs.request }).from(runs).where(eq(runs.id, run.parentRunId)).get()?.r ?? null) : null,
   }
 }
 
@@ -634,7 +638,10 @@ function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Worksp
   if (existing?.worktreePath) return { workdir: existing.worktreePath, testCommand: plan.testCommand, baseCommit: existing.baseCommit }
   if (!plan.repoPath) return { failed: strings.run.noRepository }
   try {
-    const ws = (deps.createWorktree ?? createRunWorktree)(plan.repoPath, runId)
+    // A follow-up starts from its parent's approved commit, recorded as its base when it was created.
+    const startPoint = existing?.parentRunId ? (existing.baseCommit ?? undefined) : undefined
+    const make = deps.createWorktree ?? ((r: string, id: string, sp?: string) => createRunWorktree(r, id, undefined, sp))
+    const ws = make(plan.repoPath, runId, startPoint)
     withTx(tx => {
       tx.update(runs).set({ worktreePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit }).where(eq(runs.id, runId)).run()
       appendEventSync({ runId, type: 'run.workspace', payload: { branch: ws.branch, path: ws.path, baseCommit: ws.baseCommit } }, tx)
@@ -651,11 +658,12 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   const started = await step.run('start', () => startRun(runId))
   if (!started) return // cancelled (or already finished) before it began
 
-  const prepared = await step.run('workspace', () => prepareWorkspace(runId, plan, deps))
-  if ('failed' in prepared) {
-    await step.run('fail', () => finishRun(runId, 'failed', { cause: 'workspace_failed', message: prepared.failed }))
+  const workspace = await step.run('workspace', () => prepareWorkspace(runId, plan, deps))
+  if ('failed' in workspace) {
+    await step.run('fail', () => finishRun(runId, 'failed', { cause: 'workspace_failed', message: workspace.failed }))
     return
   }
+  const prepared: Workspace = { ...workspace, previousRequest: plan.previousRequest }
   const provider = deps.resolveProvider(plan.providerId)
 
   // Rounds: the first walks every block; when the person asks for changes, the next round walks again from the

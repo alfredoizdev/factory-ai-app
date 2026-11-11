@@ -108,3 +108,103 @@ test('only the app\'s own page can write into the project', async () => {
   expect(res.status).toBe(403)
   expect(git(repo, 'status', '--porcelain')).toBe('')
 })
+
+// ---- follow-ups ---------------------------------------------------------------------------------------------------
+
+import { startFollowUp } from '@/engine/follow-up'
+import { orchestrateRun, type StepApi } from '@/engine/inngest/execute-run'
+import type { AgentProvider } from '@/providers/types'
+
+class Parked extends Error {}
+const parkStep: StepApi = {
+  run: async (_id, fn) => JSON.parse(JSON.stringify((await fn()) ?? null)),
+  waitForEvent: async () => {
+    throw new Parked()
+  },
+}
+
+/** A builder that records what it was asked and writes one more line into page.tsx. */
+function lineWriter(line: string) {
+  const seen: { previousRequest?: string; request: string }[] = []
+  const provider: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute(input) {
+      if (input.blockKind === 'build') {
+        seen.push({ previousRequest: input.previousRequest, request: input.request })
+        const fs = await import('node:fs')
+        fs.appendFileSync(join(input.workdir!, 'page.tsx'), `${line}\n`)
+      }
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  return { provider, seen }
+}
+
+test('a follow-up starts from the approved change, is told about it, and its check shows only what is new', async () => {
+  const { runId: parentId, repo } = await finishedRun()
+  const { runId } = await startFollowUp(parentId, 'Make the text uppercase')
+  const { provider, seen } = lineWriter('text: uppercase')
+  db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId)).run()
+  try {
+    await orchestrateRun(runId, parkStep, { resolveProvider: () => provider })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  expect(seen).toEqual([{ previousRequest: 'Outline buttons in the other team colour', request: 'Make the text uppercase' }])
+  const child = db.select().from(runs).where(eq(runs.id, runId)).get()!
+  // Its worktree already holds the parent's change...
+  expect(readFileSync(join(child.worktreePath!, 'page.tsx'), 'utf8')).toBe('button: outline\nfooter: same\ntext: uppercase\n')
+  // ...and what it is judged on is only the new line.
+  const { changeUnderReview } = await import('@/engine/approvals')
+  expect(changeUnderReview(runId)!.files).toEqual([{ path: 'page.tsx', added: 1, removed: 0 }])
+  expect(child.parentRunId).toBe(parentId)
+  // The person's project is still untouched: nothing is brought over until they say so.
+  expect(git(repo, 'status', '--porcelain')).toBe('')
+})
+
+test('bringing a follow-up over carries its parent along when the parent was never brought over', async () => {
+  const { runId: parentId, repo } = await finishedRun()
+  const { runId } = await startFollowUp(parentId, 'uppercase')
+  const { provider } = lineWriter('text: uppercase')
+  db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId)).run()
+  try {
+    await orchestrateRun(runId, parkStep, { resolveProvider: () => provider })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  approveAndFinish(runId)
+  deliverToProject(runId)
+  expect(readFileSync(join(repo, 'page.tsx'), 'utf8')).toBe('button: outline\nfooter: same\ntext: uppercase\n')
+  expect(existsSync(join(repo, 'Button.tsx'))).toBe(true)
+})
+
+test('when the parent was already brought over, the follow-up brings only its own change', async () => {
+  const { runId: parentId, repo } = await finishedRun()
+  deliverToProject(parentId)
+  git(repo, 'add', '-A')
+  git(repo, 'commit', '-q', '-m', 'took the first change')
+  const { runId } = await startFollowUp(parentId, 'uppercase')
+  const { provider } = lineWriter('text: uppercase')
+  db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId)).run()
+  try {
+    await orchestrateRun(runId, parkStep, { resolveProvider: () => provider })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  approveAndFinish(runId)
+  expect(deliverToProject(runId).files).toEqual(['page.tsx'])
+  expect(readFileSync(join(repo, 'page.tsx'), 'utf8')).toBe('button: outline\nfooter: same\ntext: uppercase\n')
+})
+
+test('a follow-up needs a note, and a parent that was approved and finished', async () => {
+  const { runId } = await finishedRun({ approved: false })
+  await expect(startFollowUp(runId, 'x')).rejects.toThrow(strings.followUp.notEligible)
+  const ok = await finishedRun()
+  await expect(startFollowUp(ok.runId, '  ')).rejects.toThrow(strings.followUp.needNote)
+})
+
+function approveAndFinish(runId: string) {
+  const human = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === 'human')!
+  db.insert(approvals).values({ id: ulid(), projectId: human.projectId, runId, nodeRunId: human.id, decision: 'approved', actor: 'me', diffHash: 'h', createdAt: now(), consumedAt: now() }).run()
+  db.update(runs).set({ status: 'completed' }).where(eq(runs.id, runId)).run()
+}

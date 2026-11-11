@@ -28,6 +28,8 @@ export type AgentExecutionInput = {
   baseCommit?: string
   /** Set on a later round: what the person asked to change after looking at the previous one. */
   revisionNote?: string
+  /** Set on a follow-up run: the approved request whose change is already in the folder. */
+  previousRequest?: string
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

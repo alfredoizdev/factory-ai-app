@@ -212,6 +212,17 @@ export const strings = {
     nothing: 'This run changed no files, so there is nothing to bring.',
     conflict: (branch: string) => `Your project changed in the same places since this run began, so the change does not fit cleanly. Nothing was changed. It is kept on the local branch ${branch} to merge by hand.`,
   },
+  followUp: {
+    title: 'Another change',
+    hint: 'It starts from this approved change and works only on what you ask now.',
+    placeholder: 'What to change next',
+    start: 'Reopen with this change',
+    starting: 'Starting the follow-up…',
+    needNote: 'Say what to change next.',
+    notEligible: 'Only a finished run that a person approved can be continued.',
+    couldNotKeep: 'The approved change could not be saved to build on.',
+    followsFrom: (request: string) => `Continues from: ${request}`,
+  },
   sidebar: {
     label: 'Tools',
     open: 'Open the sidebar',
@@ -354,6 +365,15 @@ export const strings = {
       exitedWithoutResult: (code: number | null) =>
         code === null ? 'The agent was stopped before it reported a result.' : `The agent exited (code ${code}) without reporting a result.`,
       recordingRequest: 'Recording the request',
+      followUpPrompt: (previous: string, request: string) =>
+        [
+          `An earlier change was made and approved in this directory: ${previous}`,
+          'It is already here. Keep it, and on top of it do this:',
+          request,
+          '',
+          'Work only inside the current directory. Do not commit, push or create branches.',
+          'When you are done, reply with one plain sentence saying what you changed.',
+        ].join('\n'),
       revisePrompt: (request: string, note: string) =>
         [
           `The request was: ${request}`,

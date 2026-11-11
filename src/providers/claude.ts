@@ -76,7 +76,9 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
   try {
     const prompt = input.revisionNote
       ? strings.providers.claude.revisePrompt(input.request, input.revisionNote)
-      : strings.providers.claude.buildPrompt(input.request)
+      : input.previousRequest
+        ? strings.providers.claude.followUpPrompt(input.previousRequest, input.request)
+        : strings.providers.claude.buildPrompt(input.request)
     child = deps.spawn(deps.bin, claudeArgs(prompt), {
       cwd: workdir,
       stdio: ['ignore', 'pipe', 'pipe'],

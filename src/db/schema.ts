@@ -59,6 +59,13 @@ export const runs = sqliteTable(
     worktreePath: text('worktree_path'),
     branch: text('branch'),
     baseCommit: text('base_commit'),
+    /** Set on a follow-up: the run whose approved change this one continues from. */
+    parentRunId: text('parent_run_id'),
+    /**
+     * Where bringing this run into the project starts from. For a follow-up whose parent was never brought over, the
+     * parent's own starting point, so both changes travel together; otherwise null and baseCommit is used.
+     */
+    deliveryBase: text('delivery_base'),
     createdAt: text('created_at').notNull(),
     startedAt: text('started_at'),
     finishedAt: text('finished_at'),
