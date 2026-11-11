@@ -5,6 +5,7 @@ import type { ProjectSummary } from '@/engine/projects'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { AddProjectDialog } from './AddProjectDialog'
+import { SettingsIcon } from './SettingsIcon'
 import { WorkingSpinner } from './BlockCard'
 
 const s = strings.projectSwitcher
@@ -156,7 +157,7 @@ export function ProjectSwitcher({ workflowId, style, onOpenSettings }: { workflo
                   </button>
                   {onOpenSettings && (
                     <button type="button" onClick={() => (setOpen(false), onOpenSettings())} style={smallButton(false)}>
-                      ⚙ {s.settings}
+                      <SettingsIcon size={12} /> {s.settings}
                     </button>
                   )}
                 </div>

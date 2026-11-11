@@ -4,6 +4,7 @@ import { PastTasks } from './PastTasks'
 import { TasksDrawer } from './TasksDrawer'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
+import { SettingsIcon } from './SettingsIcon'
 import { shipView } from './shipView'
 import type { ShipState } from '@/engine/ship'
 import { useCallback, useRef, useState } from 'react'
@@ -234,10 +235,7 @@ export function CanvasScreen({
         <ProjectSwitcher workflowId={workflowId} style={headerButton} onOpenSettings={settings ? () => setSettingsOpen(true) : undefined} />
         {settings && (
           <button type="button" aria-label={strings.projectSettings.open} title={strings.projectSettings.open} onClick={() => setSettingsOpen(true)} style={{ ...headerButton, padding: '6px 9px', display: 'grid', placeItems: 'center' }}>
-            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-              <circle cx="8" cy="8" r="2.2" />
-              <path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4" strokeLinecap="round" />
-            </svg>
+            <SettingsIcon size={17} />
           </button>
         )}
         {settingsOpen && settings && <ProjectSettingsDialog settings={settings} onClose={() => setSettingsOpen(false)} onSaved={setSettings} />}
