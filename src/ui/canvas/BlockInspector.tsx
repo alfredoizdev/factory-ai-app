@@ -32,11 +32,13 @@ export function BlockInspector({
 }) {
   const model = typeof block.config.model === 'string' ? block.config.model : ''
 
-  function setModel(value: string) {
+  function setConfig(key: 'model' | 'modelFrontend' | 'modelBackend', value: string) {
     // An empty model means "use the default": drop the key rather than store an empty string.
-    const { model: _old, ...rest } = block.config
-    onChange({ ...block, config: value === '' ? rest : { ...rest, model: value } })
+    const { [key]: _old, ...rest } = block.config
+    onChange({ ...block, config: value === '' ? rest : { ...rest, [key]: value } })
   }
+  const setModel = (value: string) => setConfig('model', value)
+  const configured = (key: 'modelFrontend' | 'modelBackend') => (typeof block.config[key] === 'string' ? (block.config[key] as string) : '')
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
@@ -53,6 +55,19 @@ export function BlockInspector({
           onChange={e => setModel(e.target.value)}
         />
       </label>
+      {block.kind === 'build' && (
+        <>
+          <label>
+            {strings.editing.modelFrontend}
+            <input style={field} value={configured('modelFrontend')} placeholder={strings.editing.sameAsModel} onChange={e => setConfig('modelFrontend', e.target.value)} />
+          </label>
+          <label>
+            {strings.editing.modelBackend}
+            <input style={field} value={configured('modelBackend')} placeholder={strings.editing.sameAsModel} onChange={e => setConfig('modelBackend', e.target.value)} />
+          </label>
+          <p style={{ margin: 0, fontSize: 12, color: theme.skipped }}>{strings.editing.areaHint}</p>
+        </>
+      )}
       {runOnScreen && <p style={{ margin: 0, fontSize: 12, color: theme.skipped }}>{strings.editing.appliesNextRun}</p>}
       <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <input

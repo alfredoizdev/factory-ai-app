@@ -1,3 +1,4 @@
+import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 import { ulid } from 'ulid'
@@ -42,6 +43,8 @@ export type ExecutorDeps = {
   resolveProvider: (providerId: string) => AgentProvider
   /** Makes the run's working copy. Only called for a provider that works on files. `startPoint`: a follow-up's parent commit. */
   createWorktree?: (repoPath: string, runId: string, startPoint?: string, request?: string) => RunWorkspace
+  /** Reads whether a request is front end or back end, for a block with a model per area. */
+  classifyArea?: (request: string) => Promise<Area | null>
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -57,7 +60,18 @@ const MAX_LISTED_FILES = 20
 /** A step line is short: it says what the agent is doing, it is not a log. */
 const STEP_MAX = 240
 
-type PlannedBlock = { id: string; kind: BlockKind; enabled: boolean; timeoutMs: number; model?: string }
+type PlannedBlock = {
+  id: string
+  kind: BlockKind
+  enabled: boolean
+  timeoutMs: number
+  model?: string
+  /** Models for front-end and back-end work, chosen by what the request is about (see model-routing). */
+  modelFrontend?: string
+  modelBackend?: string
+  /** Set once the area is known: the sentence saying which model was chosen and why, shown on the card. */
+  routeNote?: string
+}
 type Plan = {
   providerId: string
   request: string
@@ -334,6 +348,10 @@ async function runProviderNode(
         return { outcome: 'cancelled' }
       }
       tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+      // Which model was chosen for this request, and why: first on the card, before the agent's own steps.
+      if (block.routeNote) {
+        appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: node.attempt, text: block.routeNote } }, tx)
+      }
     }
     return node
   })
@@ -622,6 +640,10 @@ function loadPlan(runId: string): Plan {
   const blocks = ordered.map(b => {
     const t = (b.config as { timeoutMs?: unknown }).timeoutMs
     const model = (b.config as { model?: unknown }).model
+    const named = (key: 'modelFrontend' | 'modelBackend') => {
+      const v = (b.config as Record<string, unknown>)[key]
+      return typeof v === 'string' && v.trim() !== '' ? { [key]: v.trim() } : {}
+    }
     return {
       id: b.id,
       kind: b.kind,
@@ -629,6 +651,8 @@ function loadPlan(runId: string): Plan {
       timeoutMs: typeof t === 'number' && t > 0 ? t : DEFAULT_TIMEOUT_MS,
       // The model written on the block, from the frozen version: what the card shows is what the agent runs with.
       ...(typeof model === 'string' && model.trim() !== '' ? { model: model.trim() } : {}),
+      ...named('modelFrontend'),
+      ...named('modelBackend'),
     }
   })
   const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
@@ -669,7 +693,20 @@ function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Worksp
 
 // Deliberately tolerant: it never reads run.created, so a run missing that event still executes.
 export async function orchestrateRun(runId: string, step: StepApi, deps: ExecutorDeps = defaultDeps): Promise<void> {
-  const plan = await step.run('plan', () => loadPlan(runId))
+  const loaded = await step.run('plan', () => loadPlan(runId))
+  // A builder with a model per area: what the request is about is read once, durably, and the choice is fixed for the run.
+  const routing = loaded.blocks.some(wantsRouting)
+  const area = routing ? await step.run('classify', () => (deps.classifyArea ?? classifyArea)(loaded.request)) : null
+  const plan: Plan = routing
+    ? {
+        ...loaded,
+        blocks: loaded.blocks.map(b => {
+          if (!wantsRouting(b)) return b
+          const routed = routeModel(b, area)
+          return { ...b, model: routed.model, routeNote: routed.note }
+        }),
+      }
+    : loaded
   const started = await step.run('start', () => startRun(runId))
   if (!started) return // cancelled (or already finished) before it began
 

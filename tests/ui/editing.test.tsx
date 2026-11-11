@@ -191,6 +191,19 @@ describe('BlockInspector', () => {
     expect(onChange).toHaveBeenLastCalledWith({ ...block, config: {} })
   })
 
+  test('a Build block offers a model per area; other blocks do not', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(<BlockInspector block={block} onChange={onChange} />)
+    fireEvent.change(screen.getByLabelText('Model for front-end work'), { target: { value: 'sonnet' } })
+    expect(onChange).toHaveBeenLastCalledWith({ ...block, config: { modelFrontend: 'sonnet' } })
+    rerender(<BlockInspector block={{ ...block, config: { modelBackend: 'opus' } }} onChange={onChange} />)
+    expect(screen.getByLabelText('Model for back-end work')).toHaveValue('opus')
+    fireEvent.change(screen.getByLabelText('Model for back-end work'), { target: { value: '' } })
+    expect(onChange).toHaveBeenLastCalledWith({ ...block, config: {} })
+    rerender(<BlockInspector block={{ ...block, id: 'tests', kind: 'tests' }} onChange={onChange} />)
+    expect(screen.queryByLabelText('Model for front-end work')).toBeNull()
+  })
+
   test('the enabled checkbox toggles enabled', () => {
     const onChange = vi.fn()
     render(<BlockInspector block={block} onChange={onChange} />)

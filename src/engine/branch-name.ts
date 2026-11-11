@@ -52,7 +52,7 @@ export function fallbackWords(request: string): string | null {
 export type AskModel = (prompt: string) => Promise<string>
 
 /** One short, tool-less call to a fast model, without the person's own settings, hooks or MCP servers. */
-const askClaude: AskModel = prompt =>
+export const askClaude: AskModel = prompt =>
   new Promise((resolve, reject) => {
     execFile(
       'claude',

@@ -21,6 +21,12 @@ export const strings = {
     duplicateSingleton: (label: string) => `Only one ${label} block is allowed.`,
     disabledRequired: (label: string) => `The ${label} block is required and cannot be disabled.`,
   },
+  routing: {
+    area: { frontend: 'front end', backend: 'back end', both: 'front and back end' },
+    unknown: 'not clear',
+    defaultModel: 'the default model',
+    note: (area: string, model: string) => `Area of this change: ${area}. Building with ${model}.`,
+  },
   summary: {
     shippedTo: (branch: string) => `Pushed ${branch} to origin.`,
     generic: {
@@ -281,6 +287,10 @@ export const strings = {
     name: 'Name',
     model: 'Model',
     modelPlaceholder: 'Default model',
+    modelFrontend: 'Model for front-end work',
+    modelBackend: 'Model for back-end work',
+    sameAsModel: 'Same as Model',
+    areaHint: 'When either is set, a quick check reads the request first, and the card says which area it found and which model it used.',
     appliesNextRun: 'Changes here apply from the next run. The cards on screen show the run that already happened.',
     closeSettings: 'Close block settings',
     enabled: 'Enabled',

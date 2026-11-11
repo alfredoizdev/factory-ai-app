@@ -405,3 +405,57 @@ test('the model written on the Build block, as frozen in the run, reaches the bu
   expect(models).toContain('build:opus')
   expect(models).toContain('tests:-') // a block with no model set gets none: the agent's default
 })
+
+test('a Build block with a model per area builds with the one for what the request is about, and says so', async () => {
+  const { workflowVersions } = await import('@/db/schema')
+  const { strings } = await import('@/ui/strings')
+  const runId = await newRun({ repoPath: '/repo' })
+  const run = db.select().from(runs).where(eq(runs.id, runId)).get()!
+  const version = db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)).get()!
+  const graph = JSON.parse(version.graphJson) as { blocks: { kind: string; config: Record<string, unknown> }[] }
+  Object.assign(graph.blocks.find(b => b.kind === 'build')!.config, { model: 'opus', modelFrontend: 'sonnet', modelBackend: 'opus' })
+  db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id)).run()
+  const models: string[] = []
+  const provider: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute(input) {
+      models.push(`${input.blockKind}:${input.model ?? '-'}`)
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  const asked: string[] = []
+  try {
+    await orchestrateRun(runId, step, {
+      resolveProvider: () => provider,
+      createWorktree: (_r, id) => ({ path: `/wt/${id}`, branch: `factory/${id}`, baseCommit: 'abc' }),
+      classifyArea: async r => (asked.push(r), 'frontend'),
+    })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  expect(asked).toHaveLength(1)
+  expect(models).toContain('build:sonnet')
+  const steps = (await payloadOf(runId, 'node.step', 'build')).map(p => p.text)
+  expect(steps[0]).toBe(strings.routing.note('front end', 'sonnet'))
+})
+
+test('without per-area models the request is not read for routing', async () => {
+  const runId = await newRun({ repoPath: '/repo' })
+  let asked = false
+  const provider: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute() {
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  try {
+    await orchestrateRun(runId, step, {
+      resolveProvider: () => provider,
+      createWorktree: (_r, id) => ({ path: `/wt/${id}`, branch: `factory/${id}`, baseCommit: 'abc' }),
+      classifyArea: async () => ((asked = true), 'backend'),
+    })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  expect(asked).toBe(false)
+})
