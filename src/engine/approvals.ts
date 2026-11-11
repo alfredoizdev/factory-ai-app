@@ -8,6 +8,7 @@ import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { approvals, nodeRuns, runs } from '@/db/schema'
 import { stopPreview } from '@/engine/preview'
+import { claimAttachments } from '@/engine/attachments'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
 
@@ -109,7 +110,11 @@ export function recordDecision(runId: string, decision: Decision, fields: { acto
 export type GateDeps = { send: (data: { runId: string; decision: Decision }) => Promise<unknown>; actor?: () => string }
 
 /** The person's decision at a human check, as the app makes it: checked, recorded, then delivered. */
-export async function decideGate(runId: string, input: { decision: Decision; reason?: string | null; diffHash: string }, deps: GateDeps) {
+export async function decideGate(
+  runId: string,
+  input: { decision: Decision; reason?: string | null; diffHash: string; attachments?: readonly string[] },
+  deps: GateDeps,
+) {
   const run = db.select().from(runs).where(eq(runs.id, runId)).get()
   if (!run) throw new GateError(strings.errors.runNotFound, 404)
   if (run.status !== 'waiting_approval' || !waitingHumanNode(runId)) throw new GateError(strings.gate.notWaiting, 409)
@@ -123,6 +128,8 @@ export async function decideGate(runId: string, input: { decision: Decision; rea
   const current = changeUnderReview(runId)?.hash ?? NO_CHANGE
   if (input.diffHash !== current) throw new GateError(strings.gate.changedSinceSeen, 409)
   const row = recordDecision(runId, input.decision, { actor: (deps.actor ?? localActor)(), reason: input.reason, diffHash: current })
+  // Images sent with a request for changes go to that round only.
+  if (input.decision === 'changes') claimAttachments(input.attachments ?? [], runId, row.id)
   try {
     await deps.send({ runId, decision: input.decision })
   } catch {
@@ -141,7 +148,7 @@ const DECISIONS: ReadonlySet<string> = new Set<Decision>(['approved', 'rejected'
  * The decision recorded for this human check that the run has not acted on yet, newest first, and marks it acted on.
  * Null when there is none. What the executor acts on — never the event. Each round of a run needs its own decision.
  */
-export function takeRecordedDecision(runId: string, nodeRunId: string): { decision: Decision; note: string | null } | null {
+export function takeRecordedDecision(runId: string, nodeRunId: string): { decision: Decision; note: string | null; approvalId: string } | null {
   return db.transaction(
     tx => {
       const row = tx
@@ -152,7 +159,7 @@ export function takeRecordedDecision(runId: string, nodeRunId: string): { decisi
         .get()
       if (!row || !DECISIONS.has(row.decision)) return null
       tx.update(approvals).set({ consumedAt: new Date().toISOString() }).where(eq(approvals.id, row.id)).run()
-      return { decision: row.decision as Decision, note: row.reason }
+      return { decision: row.decision as Decision, note: row.reason, approvalId: row.id }
     },
     { behavior: 'immediate' },
   )

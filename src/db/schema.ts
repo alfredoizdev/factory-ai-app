@@ -186,3 +186,22 @@ export const approvals = sqliteTable(
   },
   t => [index('approvals_run_idx').on(t.runId)],
 )
+
+// Images a person attached to a request, a request for changes, or a follow-up. The file lives under the app's own
+// data folder; the agent is given read access to it and told where it is.
+export const attachments = sqliteTable(
+  'attachments',
+  {
+    id: text('id').primaryKey(),
+    /** Null until the request it was attached to is sent. */
+    runId: text('run_id').references(() => runs.id, { onDelete: 'cascade' }),
+    /** Set when it came with a request for changes, so it reaches that round and no other. */
+    approvalId: text('approval_id').references(() => approvals.id, { onDelete: 'cascade' }),
+    path: text('path').notNull(),
+    name: text('name').notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  t => [index('attachments_run_idx').on(t.runId)],
+)

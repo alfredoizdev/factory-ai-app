@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process'
+import { dirname } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
@@ -60,10 +61,12 @@ export function routeFor(kind: BlockKind, context: { testCommand?: string | null
   return { mode: 'execute' }
 }
 
-export function claudeArgs(prompt: string): string[] {
+export function claudeArgs(prompt: string, imageDir?: string): string[] {
   // The prompt is an argument, never interpolated into a shell. bypassPermissions is the design's unattended builder
-  // (§6): it works inside its worktree without a prompt per command. It is not a sandbox.
-  return ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions']
+  // (§6): it works inside its worktree without a prompt per command. It is not a sandbox. With images, their folder
+  // is added as a directory the agent may read, and nothing else.
+  const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions']
+  return imageDir ? [...args, '--add-dir', imageDir] : args
 }
 
 async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
@@ -79,7 +82,9 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
       : input.previousRequest
         ? strings.providers.claude.followUpPrompt(input.previousRequest, input.request)
         : strings.providers.claude.buildPrompt(input.request)
-    child = deps.spawn(deps.bin, claudeArgs(prompt), {
+    const images = input.images ?? []
+    const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
+    child = deps.spawn(deps.bin, claudeArgs(withImages, images.length > 0 ? dirname(images[0]!) : undefined), {
       cwd: workdir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,

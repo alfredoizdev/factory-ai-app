@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MAX_IMAGES } from '@/engine/attachments'
 import { decideGate, GateError } from '@/engine/approvals'
 import { APPROVAL_DECIDED, inngest } from '@/engine/inngest/client'
 import { requireOwnPage } from '@/engine/same-origin'
@@ -8,6 +9,7 @@ const bodySchema = z.object({
   decision: z.enum(['approved', 'rejected', 'changes']),
   reason: z.string().max(2000).nullable().optional(),
   diffHash: z.string().min(1),
+  attachments: z.array(z.string()).max(MAX_IMAGES).optional(),
 })
 
 // The person's decision at a human check. Only from the app's own page; recorded before it is delivered.

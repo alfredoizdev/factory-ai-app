@@ -30,6 +30,8 @@ export type AgentExecutionInput = {
   revisionNote?: string
   /** Set on a follow-up run: the approved request whose change is already in the folder. */
   previousRequest?: string
+  /** Absolute paths of images the person attached for this round, for the agent to look at. */
+  images?: string[]
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

@@ -1,11 +1,12 @@
 import { z } from 'zod'
+import { claimAttachments, MAX_IMAGES } from '@/engine/attachments'
 import { FollowUpError, startFollowUp } from '@/engine/follow-up'
 import { inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { failUnstartedRun } from '@/engine/run'
 import { requireOwnPage } from '@/engine/same-origin'
 import { strings } from '@/ui/strings'
 
-const bodySchema = z.object({ note: z.string().max(4000) })
+const bodySchema = z.object({ note: z.string().max(4000), attachments: z.array(z.string()).max(MAX_IMAGES).optional() })
 
 // Another change on top of an approved one: a new run that starts from it. Starts an unattended agent, so only the
 // app's own page may ask.
@@ -17,6 +18,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
     const created = await startFollowUp(runId, body.data.note)
+    claimAttachments(body.data.attachments ?? [], created.runId)
     try {
       await inngest.send({ name: RUN_REQUESTED, data: { runId: created.runId } })
     } catch {

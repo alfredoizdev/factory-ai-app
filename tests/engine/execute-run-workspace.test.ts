@@ -346,3 +346,41 @@ test('a failing test in round 1 does not count against round 2 once it passes', 
   expect(assessed.map(a => a.level)).toEqual(['high', 'low'])
   expect(node(runId, 'human').state).toBe('passed')
 })
+
+test('round 1 is handed the request\'s images; a round of changes gets only the images sent with it', async () => {
+  const { saveAttachment, claimAttachments } = await import('@/engine/attachments')
+  const png = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex')
+  const imgDir = mkdtempSync(join(tmpdir(), 'factory-img-'))
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
+  const first = saveAttachment('mock.png', png, imgDir)
+  claimAttachments([first.id], runId)
+  const provider = withTests()
+  const imagesSeen: (string[] | undefined)[] = []
+  const recording: AgentProvider = {
+    ...provider,
+    async *execute(input, controls) {
+      if (input.blockKind === 'build') imagesSeen.push(input.images)
+      yield* provider.execute(input, controls)
+    },
+  }
+  const step = decisionsStep(runId, [{ decision: 'changes', note: 'like this one' }])
+  const original = step.waitForEvent
+  step.waitForEvent = async (...args) => {
+    // The request for changes comes with its own image, attached to that decision.
+    const result = await original(...args)
+    const { approvals } = await import('@/db/schema')
+    const decision = db.select().from(approvals).where(eq(approvals.runId, runId)).all().at(-1)!
+    const second = saveAttachment('better.png', png, imgDir)
+    claimAttachments([second.id], runId, decision.id)
+    return result
+  }
+  try {
+    await orchestrateRun(runId, step, { resolveProvider: () => recording, createWorktree: realWorktree({ 'src/app/page.tsx': 'x\n' }) })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  expect(imagesSeen).toHaveLength(2)
+  expect(imagesSeen[0]).toEqual([join(imgDir, `${first.id}.png`)])
+  expect(imagesSeen[1]).toHaveLength(1)
+  expect(imagesSeen[1]![0]).not.toBe(imagesSeen[0]![0])
+})

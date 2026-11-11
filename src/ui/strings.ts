@@ -223,6 +223,16 @@ export const strings = {
     couldNotKeep: 'The approved change could not be saved to build on.',
     followsFrom: (request: string) => `Continues from: ${request}`,
   },
+  attachments: {
+    notImage: 'Only images can be attached: PNG, JPEG, GIF or WebP.',
+    tooBig: (mb: number) => `That image is larger than ${mb} MB.`,
+    tooMany: (n: number) => `At most ${n} images per request.`,
+    add: 'Attach images',
+    remove: (name: string) => `Remove ${name}`,
+    uploading: 'Attaching…',
+    dropHere: 'Drop images to attach them',
+    failed: 'The image could not be attached.',
+  },
   sidebar: {
     label: 'Tools',
     open: 'Open the sidebar',
@@ -365,6 +375,8 @@ export const strings = {
       exitedWithoutResult: (code: number | null) =>
         code === null ? 'The agent was stopped before it reported a result.' : `The agent exited (code ${code}) without reporting a result.`,
       recordingRequest: 'Recording the request',
+      imagesNote: (paths: readonly string[]) =>
+        ['The person attached these images. Look at each one with the Read tool before you start:', ...paths.map(p => `- ${p}`)].join('\n'),
       followUpPrompt: (previous: string, request: string) =>
         [
           `An earlier change was made and approved in this directory: ${previous}`,

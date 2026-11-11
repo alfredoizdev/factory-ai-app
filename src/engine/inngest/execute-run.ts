@@ -9,6 +9,7 @@ import { appendEventSync, type DbHandle, type EventType } from '@/engine/events'
 import { APPROVAL_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { clip, redact } from '@/engine/redact'
 import { MAX_REVISIONS, takeRecordedDecision, type Decision } from '@/engine/approvals'
+import { imagePathsFor } from '@/engine/attachments'
 import { assessRisk, type RiskAssessment, type TestFacts } from '@/engine/risk'
 import type { TestRun } from '@/engine/test-runner'
 import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
@@ -200,6 +201,7 @@ async function runAttempt(
   runId: string,
   workspace: Workspace,
   revisionNote: string | null,
+  images: readonly string[],
   onStep: (text: string) => void,
   onEvidence: (data: TestRun) => void,
 ): Promise<AttemptResult> {
@@ -226,6 +228,7 @@ async function runAttempt(
         baseCommit: workspace.baseCommit ?? undefined,
         revisionNote: revisionNote ?? undefined,
         previousRequest: workspace.previousRequest ?? undefined,
+        images: images.length > 0 ? [...images] : undefined,
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
@@ -314,6 +317,7 @@ async function runProviderNode(
   deps: ExecutorDeps,
   workspace: Workspace,
   revisionNote: string | null = null,
+  images: readonly string[] = [],
 ): Promise<Outcome> {
   // Resolved before any row exists, so an unknown provider cannot strand a node.
   const provider = deps.resolveProvider(plan.providerId)
@@ -344,6 +348,7 @@ async function runProviderNode(
       runId,
       workspace,
       revisionNote,
+      images,
       text => {
         withTx(tx => {
           const node = freshNode(opened.id)
@@ -551,7 +556,7 @@ function reopenForRevision(runId: string, blocks: readonly PlannedBlock[], round
 /** How many unrecorded decisions a gate tolerates before it stops listening (the run stays waiting). */
 const MAX_IGNORED_DECISIONS = 20
 
-function readRecordedDecision(runId: string, block: PlannedBlock): { decision: Decision; note: string | null } | null {
+function readRecordedDecision(runId: string, block: PlannedBlock): { decision: Decision; note: string | null; approvalId: string } | null {
   const node = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
   if (!node) return null
   const decided = takeRecordedDecision(runId, node.id)
@@ -671,6 +676,8 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   // (round 1 keeps the original ids, so a run already in flight replays unchanged).
   let round = 1
   let revisionNote: string | null = null
+  // Round 1 sees the images sent with the request; a later round sees only those sent with its request for changes.
+  let revisionImages: string[] = await step.run('images', () => imagePathsFor(runId))
   let from = 0
   rounds: while (true) {
   const id = (name: string) => (round === 1 ? name : `${name}-r${round}`)
@@ -695,7 +702,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         // The event only says "look": what was decided is read from the approvals table, where the app records the
         // person's decision before sending it. An event with no record behind it (sent by anything else) is noted
         // and ignored, and the gate keeps waiting.
-        let decided: { decision: Decision; note: string | null } | null = null
+        let decided: { decision: Decision; note: string | null; approvalId: string } | null = null
         for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && decided === null; attempt++) {
           // The first wait keeps the id it had before decisions were read from records, so a run parked under that
           // code still resumes after an update. Changing a step id under a parked run makes it wait for a second event.
@@ -720,6 +727,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           if (!reopened) return // cancelled meanwhile
           round = next
           revisionNote = note
+          revisionImages = await step.run(id(`images-${block.id}`), () => imagePathsFor(runId, decided!.approvalId))
           from = start
           continue rounds
         }
@@ -728,7 +736,8 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
       }
     } else {
       const note = revisionNote
-      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, note))
+      const images = revisionImages
+      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, note, images))
     }
     if (result.outcome === 'cancelled') return // run.cancelled and node.cancelled were written by cancelRun
     if (result.outcome === 'failed') {
