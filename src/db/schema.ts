@@ -62,6 +62,10 @@ export const runs = sqliteTable(
     versionId: text('version_id').notNull().references(() => workflowVersions.id, { onDelete: 'restrict' }),
     status: text('status').notNull(),
     request: text('request').notNull(),
+    /** A short name for the task, the person's or suggested from the request: how it is told apart on screen. */
+    title: text('title'),
+    /** True once the person named the task: a later suggestion never replaces their words. */
+    titleByPerson: integer('title_by_person', { mode: 'boolean' }).notNull().default(false),
     providerId: text('provider_id').notNull(),
     // The run's own working copy (one per run, never per job). Null for demo runs, which touch no repository.
     worktreePath: text('worktree_path'),

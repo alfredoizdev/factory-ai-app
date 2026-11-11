@@ -9,6 +9,7 @@ import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
 import { isOnHold } from '@/engine/ship'
+import { cleanTitle, fallbackTitle, titleOf } from '@/engine/title'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
 
@@ -166,6 +167,8 @@ export async function createRun(input: {
   providerId?: RunProviderId
   /** The branch a real run starts from. Absent: the project's main branch, whatever branch the folder is on. */
   startFrom?: string
+  /** The person's name for the task. Absent: a cut of the request, which a suggestion may improve later. */
+  title?: string
 }): Promise<{ runId: string; versionId: string }> {
   const wf = requireWorkflow(input.workflowId)
   const providerId = input.providerId ?? DEMO_PROVIDER_ID
@@ -209,6 +212,8 @@ export async function createRun(input: {
           versionId: version.id,
           status: 'queued',
           request: input.request,
+          title: (input.title && cleanTitle(input.title)) || fallbackTitle(input.request),
+          titleByPerson: !!(input.title && cleanTitle(input.title)),
           providerId,
           baseCommit,
           createdAt: now(),
@@ -284,6 +289,8 @@ export type RunSummary = {
   branch: string | null
   providerId: string
   parentRunId: string | null
+  /** What the task is called: the person's name for it, or one made from its request. */
+  title: string
   /** Its pull request is ready and the person put it on hold. */
   onHold: boolean
 }
@@ -299,11 +306,12 @@ export function listRuns(workflowId: string, limit = 50): RunSummary[] {
       branch: runs.branch,
       providerId: runs.providerId,
       parentRunId: runs.parentRunId,
+      title: runs.title,
     })
     .from(runs)
     .where(eq(runs.workflowId, workflowId))
     .orderBy(desc(sql`rowid`))
     .limit(limit)
     .all()
-    .map(r => ({ ...r, onHold: isOnHold(r.runId) }))
+    .map(r => ({ ...r, title: titleOf(r), onHold: isOnHold(r.runId) }))
 }

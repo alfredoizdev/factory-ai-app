@@ -450,7 +450,6 @@ export function Canvas({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-  const unpin = focusOverride === null ? undefined : close
 
   const nodes: CardNode[] = [
     ...graph.blocks.map(block => {
@@ -475,8 +474,10 @@ export function Canvas({
           breadcrumb: hasRun ? [] : chainTo(graph, block.id),
           collapsed: placed?.collapsed ?? false,
           cardWidth: hasRun ? CARD_WIDTH : undefined,
-          collapseLabel: hasRun ? strings.canvas.unpin : strings.canvas.close,
-          onCollapse: hasRun ? unpin : close,
+          collapseLabel: strings.canvas.close,
+          // While a run is on screen a clicked card simply stays open: no button on it. A click on the empty canvas or
+          // Escape lets the view follow the work again.
+          onCollapse: hasRun ? undefined : close,
           // From the card itself: any removable block while editing, and while a run is on screen only the blocks
           // added since, so a card showing what happened in the run never offers to delete itself.
           onRemove: canRemove(graph, block) && (!hasRun || !view) ? () => removeFromDraft(block.id) : undefined,
@@ -498,8 +499,8 @@ export function Canvas({
         breadcrumb: hasRun ? [] : chainTo({ blocks: [...(runBlocks ?? [])] }, block.id),
         collapsed: placementOf(block)?.collapsed ?? false,
         cardWidth: hasRun ? CARD_WIDTH : undefined,
-        collapseLabel: hasRun ? strings.canvas.unpin : strings.canvas.close,
-        onCollapse: hasRun ? unpin : close,
+        collapseLabel: strings.canvas.close,
+        onCollapse: hasRun ? undefined : close,
       },
     })),
   ]

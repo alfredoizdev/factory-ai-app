@@ -71,6 +71,13 @@
       "when": 1794431130835,
       "tag": "0009_cooing_junta",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1794437143335,
+      "tag": "0010_high_power_man",
+      "breakpoints": true
     }
   ]
 }

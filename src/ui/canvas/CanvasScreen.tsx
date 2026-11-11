@@ -2,6 +2,7 @@
 
 import { PastTasks } from './PastTasks'
 import { TasksDrawer } from './TasksDrawer'
+import { TaskTitle } from './TaskTitle'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { SettingsIcon } from './SettingsIcon'
@@ -21,7 +22,7 @@ import { Canvas, RUN_INPUT_ID } from './Canvas'
 import { useRunStream, type RunStatus } from './useRunStream'
 
 /** The run being watched. `blocks` are the frozen version it executes, not the draft. */
-export type RunInfo = { runId: string; providerId: string; blocks: Block[] }
+export type RunInfo = { runId: string; providerId: string; blocks: Block[]; title?: string }
 
 const LIVE: ReadonlySet<RunStatus> = new Set<RunStatus>(['queued', 'running', 'waiting_approval'])
 
@@ -64,6 +65,8 @@ export function CanvasScreen({
   const claudeBlocked = agent === CLAUDE_PROVIDER_ID && !settings?.repoPath
   const [request, setRequest] = useState('')
   const [images, setImages] = useState<ComposerImage[]>([])
+  // The name the person gives a new task, if any; empty, the app names it from the request.
+  const [taskName, setTaskName] = useState('')
   const clearComposer = () => {
     setRequest('')
     setImages(prev => {
@@ -176,6 +179,7 @@ export function CanvasScreen({
           request,
           provider: agent,
           attachments: readyImageIds(images),
+          ...(taskName.trim() ? { title: taskName.trim() } : {}),
           ...(agent === CLAUDE_PROVIDER_ID && chosenStart ? { startFrom: chosenStart } : {}),
         }),
       })
@@ -186,6 +190,7 @@ export function CanvasScreen({
       setHighlightedId(null)
       setRun((await detail.json()) as RunInfo)
       clearComposer()
+      setTaskName('')
     } catch {
       setMessage(strings.run.startFailed)
     } finally {
@@ -397,6 +402,7 @@ export function CanvasScreen({
       {/* clip, not hidden: a hidden box can still be scrolled by the browser (find in page, scrollIntoView), which would
           slide the whole canvas sideways to show the closed drawer. A clipped one cannot scroll at all. */}
       <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'clip' }}>
+        {run && !loading && <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} />}
         {/* Top right of the canvas, where the list it opens slides in from. */}
         <button
           type="button"
@@ -482,6 +488,8 @@ export function CanvasScreen({
           startOptions={agent === CLAUDE_PROVIDER_ID ? startOptions : []}
           startFrom={startFrom}
           onStartFrom={setStartFrom}
+          taskName={taskName}
+          onTaskName={setTaskName}
           loading={loading}
         />
         <Canvas

@@ -22,6 +22,13 @@ test('lists past tasks with how each ended, marks the open one, and opens one on
   expect(onOpen).toHaveBeenCalledWith('r1')
 })
 
+test('each task shows its name as a label, with what was asked under it', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ runs: [{ ...runs[0], title: 'Crest circle' }] }))))
+  render(<PastTasks workflowId="w1" currentRunId={null} refreshKey="x" onOpen={() => {}} />)
+  expect(await screen.findByTestId('task-name-r2')).toHaveTextContent('Crest circle')
+  expect(screen.getByText('Remove the white circle')).toBeInTheDocument()
+})
+
 test('an empty history says so', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ runs: [] }))))
   render(<PastTasks workflowId="w1" currentRunId={null} refreshKey="x" onOpen={() => {}} />)

@@ -23,20 +23,13 @@ function renderRun() {
 async function openPlan() {
   fireEvent.click(await screen.findByTestId('node-plan'))
   expect(screen.queryByText(strings.editing.inspectorEmpty)).toBeNull()
-  expect(screen.getByText(strings.canvas.unpin, { selector: 'button' })).toBeInTheDocument()
+  // While a run is on screen a clicked card carries no button of its own.
+  expect(screen.queryByText(strings.canvas.close, { selector: 'button' })).toBeNull()
 }
 
 function expectBackToStart() {
   expect(screen.getByText(strings.editing.inspectorEmpty)).toBeInTheDocument()
-  expect(screen.queryByText(strings.canvas.unpin, { selector: 'button' })).toBeNull()
 }
-
-test('a card opened by a click has a Close button that returns to the first view', async () => {
-  renderRun()
-  await openPlan()
-  fireEvent.click(screen.getByText(strings.canvas.unpin, { selector: 'button' }))
-  expectBackToStart()
-})
 
 test('Escape closes the opened card', async () => {
   renderRun()

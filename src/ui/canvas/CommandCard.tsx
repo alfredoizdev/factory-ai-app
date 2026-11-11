@@ -52,8 +52,11 @@ export const CommandCard = forwardRef<
     onStartFrom?: (branch: string) => void
     /** The task is still loading: placeholders instead of a card that would change under the person's eyes. */
     loading?: boolean
+    /** The name for a new task, optional. Absent: no field. */
+    taskName?: string
+    onTaskName?: (v: string) => void
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false }, ref) {
+>(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
@@ -126,6 +129,20 @@ export const CommandCard = forwardRef<
                   </option>
                 ))}
               </select>
+            </label>
+          )}
+          {onTaskName && (
+            <label style={{ display: 'grid', gap: 4, fontSize: 12.5, fontWeight: 600, color: theme.dim }}>
+              <span>
+                {strings.title.label} <span style={{ fontWeight: 400 }}>{strings.title.optional}</span>
+              </span>
+              <input
+                value={taskName ?? ''}
+                maxLength={60}
+                placeholder={strings.title.placeholder}
+                onChange={e => onTaskName(e.target.value)}
+                style={{ font: 'inherit', fontSize: 13.5, fontWeight: 400, padding: '7px 10px', background: theme.card, color: '#e6e9ef', border: `1px solid ${theme.border}`, borderRadius: 8 }}
+              />
             </label>
           )}
           {composer}

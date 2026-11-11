@@ -136,10 +136,14 @@ export function PastTasks({
                 cursor: 'pointer',
               }}
             >
-              <span style={{ fontSize: 12.5, lineHeight: 1.35, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+              {/* The task's name first, as its label; what was asked, quieter, under it. */}
+              <span data-testid={`task-name-${r.runId}`} style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.3, color: '#e6e9ef', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {r.parentRunId ? '↺ ' : ''}
-                {r.request}
+                {r.title ?? r.request}
               </span>
+              {r.title && r.title !== r.request && (
+                <span style={{ fontSize: 12, lineHeight: 1.35, color: theme.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.request}</span>
+              )}
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: theme.dim }}>
                 {r.onHold ? (
                   // On hold: ready to merge, waiting on the person. A pause mark, in the waiting colour.

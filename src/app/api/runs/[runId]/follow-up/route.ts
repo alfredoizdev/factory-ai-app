@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { claimAttachments, MAX_IMAGES } from '@/engine/attachments'
 import { FollowUpError, startFollowUp } from '@/engine/follow-up'
+import { improveTitle } from '@/engine/title'
 import { inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { failUnstartedRun } from '@/engine/run'
 import { requireOwnPage } from '@/engine/same-origin'
@@ -19,6 +20,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
   try {
     const created = await startFollowUp(runId, body.data.note)
     claimAttachments(body.data.attachments ?? [], created.runId)
+    void improveTitle(created.runId, body.data.note).catch(() => undefined)
     try {
       await inngest.send({ name: RUN_REQUESTED, data: { runId: created.runId } })
     } catch {
