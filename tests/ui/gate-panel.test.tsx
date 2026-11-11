@@ -95,11 +95,12 @@ test('waiting: after deciding it waits with a spinner, and says plainly if the r
   }
 })
 
-test('there is one box to write in, whatever the moment', () => {
+test('there is one box to write in, whatever the moment', async () => {
   vi.stubGlobal('fetch', routes())
   for (const mode of ['idle', 'waiting', 'done'] as const) {
     const { unmount } = render(<Card mode={mode} />)
-    expect(screen.getAllByRole('textbox')).toHaveLength(1)
+    // The result card waits for its state behind placeholders, then shows its one box.
+    expect(await screen.findAllByRole('textbox')).toHaveLength(1)
     unmount()
   }
   render(<Card mode="working" />)

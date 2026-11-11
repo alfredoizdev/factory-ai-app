@@ -6,6 +6,7 @@ import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
 import { PauseIcon } from './PastTasks'
+import { Bone } from './Skeleton'
 
 const POLL_MS = 8000
 /** After a merge, how long to keep asking GitHub before saying nothing reported. */
@@ -104,7 +105,14 @@ export function ShipSection({
     }
   }
 
-  if (state === null) return null
+  // Placeholders the size of what comes: GitHub takes a moment to answer, and the card must not jump when it does.
+  if (state === null)
+    return (
+      <div data-testid="ship-skeleton" aria-busy="true" style={{ display: 'grid', gap: 6 }}>
+        <Bone height={38} radius={8} />
+        <Bone width="70%" height={10} />
+      </div>
+    )
   const hint: CSSProperties = { fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }
   return (
     <div data-testid="ship-section" style={{ display: 'grid', gap: 6 }}>

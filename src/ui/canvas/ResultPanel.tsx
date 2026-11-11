@@ -7,6 +7,7 @@ import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
 import { ShipSection } from './ShipSection'
+import { CardSkeleton } from './Skeleton'
 import type { ComposerSend } from './Composer'
 
 /**
@@ -35,6 +36,8 @@ export function ResultSection({
   onShipState?: (state: ShipState) => void
 }) {
   const [delivery, setDelivery] = useState<Delivery | null>(null)
+  // Whether the delivery state has been asked for yet: until then, placeholders where the card will be.
+  const [asked, setAsked] = useState(false)
   const [busy, setBusy] = useState<Mode | 'follow' | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
   // The branch name the person writes, or asks the app to suggest. Empty: one is suggested when the change is saved.
@@ -60,6 +63,7 @@ export function ResultSection({
       .then(r => (r.ok ? (r.json() as Promise<Delivery>) : null))
       .then(d => live && d && setDelivery(d))
       .catch(() => undefined)
+      .finally(() => live && setAsked(true))
     return () => {
       live = false
     }
@@ -126,6 +130,7 @@ export function ResultSection({
   }
 
   // Not (yet) known to be an approved, finished run: only the composer, for a fresh request from the top bar.
+  if (!asked) return <CardSkeleton />
   if (!delivery?.eligible) return <>{composer()}</>
 
   const kept = delivery.kept && delivery.branch !== null

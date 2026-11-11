@@ -253,12 +253,14 @@ export function useRunStream(
   /** Null: there is no run to watch, so nothing connects and nothing is shown. */
   runId: string | null,
   blocks?: readonly Block[],
-): { views: Record<string, NodeRunView>; lastSequence: number; connected: boolean; events: readonly Wire[]; runStatus: RunStatus | null } {
+): { views: Record<string, NodeRunView>; lastSequence: number; connected: boolean; events: readonly Wire[]; runStatus: RunStatus | null; loaded: boolean } {
   const [state, dispatch] = useReducer(reducer, null, () => nothingHeld(runId))
   const held = state.runId === runId ? state : nothingHeld(runId)
   const { stream, log } = held
   const [connected, setConnected] = useReducer((_: boolean, v: boolean) => v, false)
   const cursor = useRef(0)
+  // The run whose recorded events have all arrived: until then the page shows placeholders, not a run assembling itself.
+  const [loadedFor, setLoadedFor] = useReducer((_: string | null, v: string | null) => v, null)
 
   useEffect(() => {
     cursor.current = 0
@@ -275,6 +277,8 @@ export function useRunStream(
     const connect = () => {
       const es = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events?after=${cursor.current}`)
       source = es
+      if (typeof es.addEventListener === 'function') es.addEventListener('caughtup', () => setLoadedFor(runId))
+      else setLoadedFor(runId)
       es.onopen = () => {
         failures = 0
         setConnected(true)
@@ -300,14 +304,17 @@ export function useRunStream(
       }
     }
     connect()
+    // Never stuck on placeholders: if the end of the replay is not heard of, the run is shown anyway.
+    const fallback = setTimeout(() => setLoadedFor(runId), 2500)
 
     return () => {
       disposed = true
+      clearTimeout(fallback)
       clearTimeout(timer)
       source?.close()
     }
   }, [runId])
 
   const views = useMemo(() => toViews(stream.nodes, blocks, stream.shipped), [stream.nodes, blocks, stream.shipped])
-  return { views, lastSequence: stream.lastSequence, connected, events: log.events, runStatus: log.runStatus }
+  return { views, lastSequence: stream.lastSequence, connected, events: log.events, runStatus: log.runStatus, loaded: runId !== null && loadedFor === runId }
 }

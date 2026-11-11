@@ -31,6 +31,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ runId: string }
   let timer: ReturnType<typeof setTimeout> | undefined
   let closed = false
   let lastWrite = Date.now()
+  let caughtUp = false
   const encoder = new TextEncoder()
 
   const stream = new ReadableStream<Uint8Array>({
@@ -47,6 +48,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ runId: string }
             controller.enqueue(encoder.encode(`id: ${e.sequence}\ndata: ${JSON.stringify(e)}\n\n`))
             cursor = e.sequence
             lastWrite = Date.now()
+          }
+          // Once, after the replay: everything recorded so far has been sent, so the page can show the run whole.
+          if (!caughtUp) {
+            caughtUp = true
+            controller.enqueue(encoder.encode(`event: caughtup\ndata: ${cursor}\n\n`))
           }
           if (Date.now() - lastWrite >= KEEPALIVE_MS) {
             controller.enqueue(encoder.encode(': keep-alive\n\n'))

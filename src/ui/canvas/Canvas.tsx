@@ -17,6 +17,7 @@ import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, SPINE_WIDTH, 
 import { autoFocus, fisheyeLayout, laneViewport, type Placement } from './fisheye'
 import { SidebarIcon, type SidebarIconName } from './SidebarIcons'
 import { usePersistentFlag } from './usePersistentFlag'
+import { LaneSkeleton } from './Skeleton'
 
 export type { NodeRunView }
 
@@ -219,7 +220,10 @@ export function Canvas({
   flushRef,
   sidebarTop,
   sidebarLog,
+  loading = false,
 }: {
+  /** A task is still loading: placeholders stand where its cards will be, and the cards appear once it is whole. */
+  loading?: boolean
   graph: Graph
   nodeRuns?: NodeRunView[]
   /** Persists the draft and returns what is wrong with it. Absent: edits stay on screen only. */
@@ -732,13 +736,14 @@ export function Canvas({
 
       <div ref={pane} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
         <Depth floorRef={floorRef} />
+        {loading && <LaneSkeleton count={runBlocks?.length ?? graph.blocks.length} />}
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
           // While the lane lays itself out around the work, cards glide to their new places instead of jumping.
           className={hasRun && !reducedMotion ? 'factory-glide' : undefined}
-          style={{ background: 'transparent', zIndex: 1 }}
+          style={{ background: 'transparent', zIndex: 1, opacity: loading ? 0 : 1, transition: reducedMotion ? 'none' : 'opacity 220ms ease-out' }}
           onMove={(_, vp) => parallax(vp)}
           onPaneClick={close}
           onInit={instance => {

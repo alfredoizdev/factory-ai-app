@@ -7,7 +7,7 @@ import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { SettingsIcon } from './SettingsIcon'
 import { shipView } from './shipView'
 import type { ShipState } from '@/engine/ship'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Block, Graph, ValidationIssue } from '@/domain/graph'
 import type { ProjectSettings } from '@/engine/project-settings'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
@@ -86,7 +86,16 @@ export function CanvasScreen({
   }
 
   // The blocks are always passed: without them the hook cannot say what a block did in its own words.
-  const { views, events, runStatus, connected } = useRunStream(run?.runId ?? null, run?.blocks)
+  const { views, events, runStatus, connected, loaded } = useRunStream(run?.runId ?? null, run?.blocks)
+  // Once a task's events are all in, a moment more for its cards to settle where they belong, then it is shown whole.
+  const [shownFor, setShownFor] = useState<string | null>(null)
+  useEffect(() => {
+    if (!loaded || !run) return
+    const id = run.runId
+    const t = setTimeout(() => setShownFor(id), 250)
+    return () => clearTimeout(t)
+  }, [loaded, run])
+  const loading = !!run && shownFor !== run.runId
 
   // Saves go one at a time, each naming the draft version it builds on, so a page left open from earlier can never
   // overwrite a newer flow: the server refuses, and the page says to reload. keepalive lets a save started as the
@@ -436,7 +445,7 @@ export function CanvasScreen({
           />
         </TasksDrawer>
         <CommandCard
-          key={`${run?.runId ?? 'none'}-${mode}`}
+          key={`${run?.runId ?? 'none'}-${loading ? 'loading' : mode}`}
           ref={cardRef}
           mode={mode}
           runId={run?.runId ?? null}
@@ -453,6 +462,7 @@ export function CanvasScreen({
           startOptions={agent === CLAUDE_PROVIDER_ID ? startOptions : []}
           startFrom={startFrom}
           onStartFrom={setStartFrom}
+          loading={loading}
         />
         <Canvas
           graph={graph}
@@ -461,6 +471,7 @@ export function CanvasScreen({
           runBlocks={run?.blocks}
           highlightedId={highlightedId}
           flushRef={flushRef}
+          loading={loading}
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
       </div>

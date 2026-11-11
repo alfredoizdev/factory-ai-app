@@ -8,6 +8,7 @@ import type { ComposerSend } from './Composer'
 import { WorkingSpinner } from './BlockCard'
 import { PreviewButton } from './PreviewButton'
 import { BeforeAfterCard } from './BeforeAfter'
+import { Bone } from './Skeleton'
 
 /** How long a decision may wait for the run to move before the panel says it has not. */
 const PICKUP_WAIT_MS = 20_000
@@ -133,7 +134,13 @@ export function GateSection({
       )}
 
       {loadError && <div style={{ fontSize: 12.5, color: theme.failed }}>{strings.gate.loadFailed}</div>}
-      {!review && !loadError && <div style={{ fontSize: 12.5, color: theme.dim }}>{strings.gate.loading}</div>}
+      {!review && !loadError && (
+        <div aria-busy="true" aria-label={strings.gate.loading} style={{ display: 'grid', gap: 8, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118' }}>
+          <Bone width="35%" height={10} />
+          <Bone height={12} />
+          <Bone width="80%" height={12} />
+        </div>
+      )}
       {review && (
         // What changed, in its own card with its own scroll: opening the change never pushes the box and the buttons
         // out of the card.

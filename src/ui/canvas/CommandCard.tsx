@@ -9,6 +9,7 @@ import { Composer, imagesBusy, readyImageIds, type ComposerImage, type ComposerS
 import { GateSection } from './GatePanel'
 import { ResultSection } from './ResultPanel'
 import { COMMAND_CARD_WIDTH } from './layout'
+import { CardSkeleton } from './Skeleton'
 import type { ShipState } from '@/engine/ship'
 
 export type CardMode = 'idle' | 'working' | 'waiting' | 'done'
@@ -47,8 +48,10 @@ export const CommandCard = forwardRef<
     /** The one chosen; a fresh task starts from the main branch unless the person picks another. */
     startFrom?: string | null
     onStartFrom?: (branch: string) => void
+    /** The task is still loading: placeholders instead of a card that would change under the person's eyes. */
+    loading?: boolean
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState }, ref) {
+>(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
   const placeholder = mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
@@ -97,7 +100,8 @@ export const CommandCard = forwardRef<
         outline: 'none',
       }}
     >
-      {mode === 'idle' && (
+      {loading && <CardSkeleton />}
+      {!loading && mode === 'idle' && (
         <>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{strings.sidebar.runTitle}</div>
           {startOptions.length === 1 && (
@@ -141,16 +145,16 @@ export const CommandCard = forwardRef<
           </button>
         </>
       )}
-      {mode === 'working' && (
+      {!loading && mode === 'working' && (
         <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 600, color: '#cfe0ff' }}>
           <WorkingSpinner blockId="card" size={20} />
           {strings.card.working}
         </div>
       )}
-      {mode === 'waiting' && runId && (
+      {!loading && mode === 'waiting' && runId && (
         <GateSection runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} />
       )}
-      {mode === 'done' && runId && (
+      {!loading && mode === 'done' && runId && (
         <ResultSection
           onShipState={onShipState}
           runId={runId}
