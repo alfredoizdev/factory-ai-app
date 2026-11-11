@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { MAX_IMAGES } from '@/engine/attachments'
 import { decideGate, GateError } from '@/engine/approvals'
 import { APPROVAL_DECIDED, inngest } from '@/engine/inngest/client'
+import { learnFrom } from '@/engine/memory'
 import { requireOwnPage } from '@/engine/same-origin'
 import { strings } from '@/ui/strings'
 
@@ -21,6 +22,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
     const row = await decideGate(runId, body.data, { send: data => inngest.send({ name: APPROVAL_DECIDED, data }) })
+    // What the person said may hold for later tasks too: learned in the background, never in the way of the decision.
+    const source = body.data.decision === 'approved' ? 'approved' : body.data.decision === 'rejected' ? 'rejected' : 'changes'
+    void learnFrom(runId, body.data.reason, source).catch(() => undefined)
     return Response.json({ decision: row.decision, actor: row.actor, at: row.createdAt })
   } catch (e) {
     if (e instanceof GateError) return Response.json({ error: e.message }, { status: e.status })

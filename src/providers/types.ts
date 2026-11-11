@@ -43,6 +43,8 @@ export type AgentExecutionInput = {
   model?: string
   /** The plan the person checked: the builder's work list. Absent: no plan (the builder works from the request). */
   jobs?: Job[]
+  /** The project's rules from earlier tasks, to follow unless this request says otherwise. */
+  notes?: string[]
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

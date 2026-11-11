@@ -5,8 +5,9 @@ import type { ProjectSettings } from '@/engine/project-settings'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { AgentSettings } from './AgentSettings'
+import { ProjectMemory } from './ProjectMemory'
 
-/** The project's own settings, in their own window: its folder, its test command, the low-risk switch. */
+/** The project's own settings, in their own window: its folder, its test command, the low-risk switch, its memory. */
 export function ProjectSettingsDialog({ settings, onClose, onSaved }: { settings: ProjectSettings; onClose: () => void; onSaved: (next: ProjectSettings) => void }) {
   const panel = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -36,6 +37,7 @@ export function ProjectSettingsDialog({ settings, onClose, onSaved }: { settings
         </div>
         <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.projectSettings.what}</span>
         <AgentSettings settings={settings} onSaved={onSaved} />
+        <ProjectMemory projectId={settings.projectId} />
       </div>
     </div>
   )

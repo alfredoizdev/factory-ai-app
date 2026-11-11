@@ -453,6 +453,28 @@ export const strings = {
     save: 'Save the name',
     cancel: 'Keep the old name',
   },
+  memory: {
+    title: 'Project memory',
+    what: 'Rules every new task on this project starts with. The app learns them from what you say on tasks (only what should hold for later), or you write them here.',
+    none: 'Nothing yet. Notes you give when approving or asking for changes teach it.',
+    on: 'On',
+    edit: 'Edit',
+    delete: 'Delete',
+    remove: (text: string) => `Delete the rule: ${text}`,
+    addLabel: 'A new rule',
+    placeholder: 'e.g. Buttons keep a 3px border in the team colour',
+    add: 'Add',
+    empty: 'Write the rule first.',
+    notFound: 'That rule is gone.',
+    failed: 'That did not save. Try again.',
+    source: {
+      person: 'Written by you',
+      approved: 'Learned when you approved',
+      changes: 'Learned when you asked for changes',
+      rejected: 'Learned when you turned a change down',
+      replan: 'Learned when you asked for a new plan',
+    },
+  },
   prompts: {
     title: 'What was asked',
     earlier: 'Earlier task',
@@ -461,6 +483,7 @@ export const strings = {
     kind: {
       request: 'You asked',
       followUp: 'You continued',
+      memory: 'Project rules given',
       replan: 'New plan asked',
       changes: 'Changes asked',
       reviewer: 'Reviewer asked',
@@ -740,6 +763,8 @@ export const strings = {
         ].join('\n'),
       noBase: 'This run does not know where its change started, so it cannot be reviewed.',
       plannerChangedFiles: 'The planner changed files, which planning must never do, so its plan was not used.',
+      rulesNote: (notes: readonly string[]) =>
+        ['The person set these rules for this project on earlier tasks. Follow them unless this request says otherwise:', ...notes.map(n => `- ${n}`)].join('\n'),
       workListNote: (list: string) => ['The person checked this plan. Work through it, job by job:', list].join('\n'),
       planPrompt: (request: string, previous?: string, note?: string) =>
         [

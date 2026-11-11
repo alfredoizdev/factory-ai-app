@@ -66,6 +66,8 @@ export const runs = sqliteTable(
     title: text('title'),
     /** True once the person named the task: a later suggestion never replaces their words. */
     titleByPerson: integer('title_by_person', { mode: 'boolean' }).notNull().default(false),
+    /** The project rules this task was given when it started (JSON list of texts); null before it started. */
+    memoryJson: text('memory_json'),
     providerId: text('provider_id').notNull(),
     // The run's own working copy (one per run, never per job). Null for demo runs, which touch no repository.
     worktreePath: text('worktree_path'),
@@ -216,4 +218,25 @@ export const attachments = sqliteTable(
     createdAt: text('created_at').notNull(),
   },
   t => [index('attachments_run_idx').on(t.runId)],
+)
+
+/**
+ * The project's memory: lessons that hold beyond one task ("buttons use a 3px border", "never touch the header").
+ * Learned from what the person said on a task (a fast model keeps only what is general), or written by them. Each says
+ * where it came from; the person can edit, switch off or delete any of them.
+ */
+export const projectNotes = sqliteTable(
+  'project_notes',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    /** 'person' when written by hand; otherwise the kind of message it was learned from. */
+    source: text('source').notNull(),
+    /** The task it was learned on; null when written by hand. Not a foreign key: deleting the task keeps the lesson. */
+    runId: text('run_id'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: text('created_at').notNull(),
+  },
+  t => [index('project_notes_project_idx').on(t.projectId)],
 )

@@ -139,7 +139,8 @@ async function* runPlanner(input: AgentExecutionInput, controls: ExecutionContro
   }
   const workdir = input.workdir
   const before = deps.snapshot(workdir)
-  const prompt = strings.providers.claude.planPrompt(input.request, input.previousRequest, input.revisionNote)
+  const asked = strings.providers.claude.planPrompt(input.request, input.previousRequest, input.revisionNote)
+  const prompt = input.notes && input.notes.length > 0 ? `${asked}\n\n${strings.providers.claude.rulesNote(input.notes)}` : asked
   const images = input.images ?? []
   const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
   const args = reviewerArgs(withImages, input.model)
@@ -185,7 +186,8 @@ async function* runBuilder(input: AgentExecutionInput, controls: ExecutionContro
       ? strings.providers.claude.followUpPrompt(input.previousRequest, input.request)
       : strings.providers.claude.buildPrompt(input.request)
   // The plan the person checked, on the first round: the builder works through it. Later rounds carry their own note.
-  const planned = input.jobs && input.jobs.length > 0 && !input.revisionNote ? `${prompt}\n\n${strings.providers.claude.workListNote(workList(input.jobs))}` : prompt
+  const ruled = input.notes && input.notes.length > 0 ? `${prompt}\n\n${strings.providers.claude.rulesNote(input.notes)}` : prompt
+  const planned = input.jobs && input.jobs.length > 0 && !input.revisionNote ? `${ruled}\n\n${strings.providers.claude.workListNote(workList(input.jobs))}` : ruled
   const images = input.images ?? []
   const withImages = images.length > 0 ? `${planned}\n\n${strings.providers.claude.imagesNote(images)}` : planned
   yield* runClaude(deps, workdir, claudeArgs(withImages, images.length > 0 ? dirname(images[0]!) : undefined, input.model), controls)

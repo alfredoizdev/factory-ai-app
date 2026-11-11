@@ -1,5 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { defaultReviewerModel, reviewRevisionNote, type Review } from '@/engine/review'
+import { giveRules } from '@/engine/memory'
 import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
 import { and, desc, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
@@ -108,6 +109,8 @@ type Workspace = {
   revisionFrom?: 'person' | 'reviewer'
   /** The plan the person checked, for the builder. */
   jobs?: Job[]
+  /** The project's rules this task was given when it started. */
+  notes?: string[]
 }
 type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
 
@@ -270,6 +273,7 @@ async function runAttempt(
         images: images.length > 0 ? [...images] : undefined,
         model: block.model,
         ...(block.kind === 'build' && workspace.jobs ? { jobs: workspace.jobs } : {}),
+        ...((block.kind === 'build' || block.kind === 'plan') && workspace.notes && workspace.notes.length > 0 ? { notes: workspace.notes } : {}),
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
@@ -859,6 +863,11 @@ function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Worksp
   }
 }
 
+// Rules are for a real agent working on the project; the demo touches nothing and is given none.
+function provider_needsRules(plan: Plan): boolean {
+  return plan.providerId !== DEMO_PROVIDER_ID
+}
+
 // Deliberately tolerant: it never reads run.created, so a run missing that event still executes.
 export async function orchestrateRun(runId: string, step: StepApi, deps: ExecutorDeps = defaultDeps): Promise<void> {
   const loaded = await step.run('plan', () => loadPlan(runId))
@@ -896,7 +905,9 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     await step.run('fail', () => finishRun(runId, 'failed', { cause: 'workspace_failed', message: workspace.failed }))
     return
   }
-  let prepared: Workspace = { ...workspace, previousRequest: plan.previousRequest }
+  // The project's rules, fixed for this task when it starts: what the person taught on earlier tasks.
+  const notes = provider_needsRules(plan) ? await step.run('memory', () => giveRules(runId)) : []
+  let prepared: Workspace = { ...workspace, previousRequest: plan.previousRequest, notes }
   const provider = deps.resolveProvider(plan.providerId)
 
   // Rounds: the first walks every block; when the person asks for changes, the next round walks again from the

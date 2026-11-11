@@ -78,6 +78,20 @@
       "when": 1794437143335,
       "tag": "0010_high_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1794439215308,
+      "tag": "0011_chunky_brother_voodoo",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794439238701,
+      "tag": "0012_safe_rhino",
+      "breakpoints": true
     }
   ]
 }

@@ -24,6 +24,8 @@ export type RunEventType =
   | 'run.on_hold'
   // Pictures of the site before and after the change, taken by a browser: the page, which pictures exist, and the change they show.
   | 'run.snapshots'
+  // The project rules this task was given when it started.
+  | 'run.memory'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'
   | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'

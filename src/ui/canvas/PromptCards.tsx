@@ -10,6 +10,7 @@ import { whenText } from './PastTasks'
 const TONE: Record<PromptKind, string> = {
   request: theme.running,
   followUp: theme.running,
+  memory: '#2dd4bf',
   replan: theme.waiting,
   changes: theme.waiting,
   reviewer: '#a78bfa',
@@ -21,6 +22,7 @@ const TONE: Record<PromptKind, string> = {
 export const PROMPT_BLOCK: Record<PromptKind, 'input' | 'plan' | 'review' | 'human'> = {
   request: 'input',
   followUp: 'input',
+  memory: 'input',
   replan: 'plan',
   reviewer: 'review',
   changes: 'human',

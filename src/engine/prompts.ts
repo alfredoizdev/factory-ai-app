@@ -5,7 +5,7 @@ import { approvals, events, runs } from '@/db/schema'
 // Everything that was asked of the agents on one task, in order: the request, every new plan and every change the
 // person asked for, and what a reviewer sent back. Each says who asked. What a decision said goes with it too.
 
-export type PromptKind = 'request' | 'followUp' | 'replan' | 'changes' | 'reviewer' | 'approvedNote' | 'rejectedNote'
+export type PromptKind = 'request' | 'followUp' | 'memory' | 'replan' | 'changes' | 'reviewer' | 'approvedNote' | 'rejectedNote'
 export type Prompt = {
   kind: PromptKind
   text: string
@@ -36,6 +36,10 @@ function promptsOfOne(runId: string): Prompt[] {
   for (const e of db.select().from(events).where(eq(events.runId, runId)).orderBy(asc(events.sequence)).all()) {
     const p = JSON.parse(e.payloadJson) as Record<string, unknown>
     const text = typeof p.note === 'string' ? p.note.trim() : ''
+    // The project's rules the task was given: the agent read them with the request.
+    if (e.type === 'run.memory' && Array.isArray(p.notes) && p.notes.length > 0) {
+      out.push({ kind: 'memory', text: (p.notes as unknown[]).filter((n): n is string => typeof n === 'string').map(n => `• ${n}`).join('\n'), at: e.createdAt })
+    }
     if (e.type === 'node.plan_decided' && e.nodeRunId) planNodes.add(e.nodeRunId)
     if (e.type === 'node.plan_decided' && p.action === 'replan' && text) out.push({ kind: 'replan', text, at: e.createdAt })
     // One reopen event per reopened block: the note is taken once, from the first block of the round.

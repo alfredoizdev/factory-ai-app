@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { inngest, PLAN_DECIDED } from '@/engine/inngest/client'
 import { currentPlan, decidePlan, MAX_JOBS, PlanError } from '@/engine/plan'
+import { learnFrom } from '@/engine/memory'
 import { requireOwnPage } from '@/engine/same-origin'
 import { strings } from '@/ui/strings'
 
@@ -26,6 +27,7 @@ export async function POST(req: Request, ctx: Ctx) {
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
     decidePlan(runId, body.data)
+    if (body.data.action === 'replan') void learnFrom(runId, body.data.note, 'replan').catch(() => undefined)
   } catch (e) {
     if (e instanceof PlanError) return Response.json({ error: e.message }, { status: e.status })
     throw e

@@ -12,7 +12,9 @@ function stubFetch(mock: (url: string, init?: RequestInit) => Promise<Response>)
       ? Promise.resolve(new Response('{"runs":[]}'))
       : String(url) === '/api/projects' && !init?.method
         ? Promise.resolve(new Response('{"projects":[]}'))
-        : mock(url, init),
+        : String(url).endsWith('/notes') && !init?.method
+          ? Promise.resolve(new Response('{"notes":[]}'))
+          : mock(url, init),
   )
 }
 
