@@ -162,6 +162,8 @@ export const strings = {
     resumed: 'A person approved. The run continues.',
     internalFailure: 'The run stopped because of an internal error.',
     notReached: 'An earlier step stopped the run, so this block never started.',
+    noRepository: 'This project has no repository set, so the agent was not started.',
+    workspaceFailed: (detail: string) => `The working copy for this run could not be made: ${detail}`,
     couldNotStart: 'The run could not be started. Nothing ran.',
     demoBadge: 'Demo',
     demoTitle: 'Simulated run. No real agent did this work.',

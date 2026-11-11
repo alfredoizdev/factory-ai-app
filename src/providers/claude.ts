@@ -128,6 +128,7 @@ export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
   return {
     id: CLAUDE_PROVIDER_ID,
     isDemo: false,
+    needsWorkspace: true,
     route: routeFor,
     async *execute(input, controls) {
       if (input.blockKind === 'input') {

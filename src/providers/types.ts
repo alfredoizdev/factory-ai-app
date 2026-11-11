@@ -34,6 +34,8 @@ export type ExecutionControls = { signal: AbortSignal }
 export interface AgentProvider {
   id: string
   isDemo: boolean
+  /** True when the provider works on files: the executor makes the run's worktree before any block runs. */
+  needsWorkspace?: boolean
   /** Absent: the provider executes every block it is given. */
   route?(kind: BlockKind, context: { testCommand?: string | null }): BlockRoute
   execute(input: AgentExecutionInput, controls: ExecutionControls): AsyncIterable<AgentEvent>
