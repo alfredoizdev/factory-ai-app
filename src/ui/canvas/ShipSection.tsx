@@ -43,10 +43,25 @@ function CheckList({ checks }: { checks: Check[] }) {
  * Shipping from the result card: open the pull request, watch the checks the repository runs (whatever they are),
  * then merge into main only on the person's own, confirmed click. Afterwards it shows what reported on main.
  */
-export function ShipSection({ runId, button }: { runId: string; button: (busy: unknown) => CSSProperties }) {
+export function ShipSection({
+  runId,
+  button,
+  onState,
+}: {
+  runId: string
+  button: (busy: unknown) => CSSProperties
+  /** Told every time the shipping state is read, so the Ship card on the canvas can show the same progress. */
+  onState?: (state: ShipState) => void
+}) {
   // When it was read is kept with it: how long ago a merge happened is measured against that, not the clock mid-render.
   const [state, setLoaded] = useState<(ShipState & { readAt: number }) | null>(null)
-  const setState = useCallback((next: ShipState) => setLoaded({ ...next, readAt: Date.now() }), [])
+  const setState = useCallback(
+    (next: ShipState) => {
+      setLoaded({ ...next, readAt: Date.now() })
+      onState?.(next)
+    },
+    [onState],
+  )
   const [busy, setBusy] = useState<'open' | 'merge' | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)

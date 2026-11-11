@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Delivery } from '@/engine/delivery'
+import type { ShipState } from '@/engine/ship'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
@@ -20,6 +21,7 @@ export function ResultSection({
   imagesBusy,
   composer,
   onFollowUp,
+  onShipState,
 }: {
   runId: string
   /** The shared composer's text: what to change next, on top of this approved change. */
@@ -28,6 +30,7 @@ export function ResultSection({
   imagesBusy: boolean
   composer: ReactNode
   onFollowUp: (runId: string) => void
+  onShipState?: (state: ShipState) => void
 }) {
   const [delivery, setDelivery] = useState<Delivery | null>(null)
   const [busy, setBusy] = useState<Mode | 'follow' | null>(null)
@@ -140,7 +143,7 @@ export function ResultSection({
               </>
             )}
             {/* Shipping is GitHub's pull request, its checks and a merge the person confirms. */}
-            <ShipSection runId={runId} button={primaryButton} />
+            <ShipSection runId={runId} button={primaryButton} onState={onShipState} />
           </div>
         ) : (
           <>

@@ -23,6 +23,12 @@ export const strings = {
   },
   ship: {
     shipIt: 'Ship it',
+    stepPushed: 'Sent to GitHub',
+    stepPr: (n: number) => `Opened pull request #${n}`,
+    cardChecking: (done: number, total: number) => `Waiting for the checks: ${done} of ${total} done.`,
+    cardReady: 'Every check passed. Merge it from the card when you are ready.',
+    cardDeploying: 'Merged into main. Waiting for the deploy to finish…',
+    cardLive: 'Merged into main and live.',
     shipWhat: 'Sends this change to GitHub and opens a pull request, then waits for the checks your repository runs. It asks you before anything goes into main.',
     opening: 'Opening the pull request…',
     pr: (n: number) => `Pull request #${n}`,

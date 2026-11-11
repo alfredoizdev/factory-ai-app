@@ -8,6 +8,7 @@ import { WorkingSpinner } from './BlockCard'
 import { Composer, imagesBusy, readyImageIds, type ComposerImage } from './Composer'
 import { GateSection } from './GatePanel'
 import { ResultSection } from './ResultPanel'
+import type { ShipState } from '@/engine/ship'
 
 export type CardMode = 'idle' | 'working' | 'waiting' | 'done'
 
@@ -37,6 +38,7 @@ export const CommandCard = forwardRef<
     onRun: () => void
     canRun: boolean
     onFollowUp: (runId: string) => void
+    onShipState?: (state: ShipState) => void
     /** Empties the composer once what it held has been sent. */
     onSent: () => void
     /** The branches a fresh task may start from, the project's main branch first. Empty: not shown. */
@@ -45,7 +47,7 @@ export const CommandCard = forwardRef<
     startFrom?: string | null
     onStartFrom?: (branch: string) => void
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom }, ref) {
+>(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
   const placeholder = mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
@@ -145,6 +147,7 @@ export const CommandCard = forwardRef<
       )}
       {mode === 'done' && runId && (
         <ResultSection
+          onShipState={onShipState}
           runId={runId}
           note={text}
           imageIds={readyImageIds(images)}

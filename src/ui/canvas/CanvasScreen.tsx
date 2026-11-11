@@ -2,6 +2,8 @@
 
 import { PastTasks } from './PastTasks'
 import { TasksDrawer } from './TasksDrawer'
+import { shipView } from './shipView'
+import type { ShipState } from '@/engine/ship'
 import { useCallback, useRef, useState } from 'react'
 import type { Block, Graph, ValidationIssue } from '@/domain/graph'
 import type { ProjectSettings } from '@/engine/project-settings'
@@ -119,6 +121,13 @@ export function CanvasScreen({
   const chosenStart = startFrom !== null && startOptions.includes(startFrom) ? startFrom : (startOptions[0] ?? null)
 
   const [tasksOpen, setTasksOpen] = useState(false)
+  // What GitHub says about shipping this run, as the result card last read it; the Ship card shows the same thing.
+  const [shipFor, setShipFor] = useState<{ runId: string; state: ShipState } | null>(null)
+  const runIdNow = run?.runId ?? null
+  const setShip = useCallback((state: ShipState) => runIdNow && setShipFor({ runId: runIdNow, state }), [runIdNow])
+  const shipBlock = run?.blocks.find(b => b.kind === 'ship')
+  const shipped = shipFor && shipFor.runId === runIdNow && shipBlock ? shipView(shipBlock.id, shipFor.state) : null
+  const withShip = shipped && shipBlock ? { ...views, [shipBlock.id]: shipped } : views
   const closeTasks = useCallback(() => setTasksOpen(false), [])
 
   async function startRun() {
@@ -374,6 +383,7 @@ export function CanvasScreen({
           onRun={() => void startRun()}
           canRun={canRun}
           onFollowUp={id => void watchRun(id)}
+          onShipState={setShip}
           onSent={clearComposer}
           startOptions={agent === CLAUDE_PROVIDER_ID ? startOptions : []}
           startFrom={startFrom}
@@ -382,7 +392,7 @@ export function CanvasScreen({
         <Canvas
           graph={graph}
           save={save}
-          nodeRuns={Object.values(views)}
+          nodeRuns={Object.values(withShip)}
           runBlocks={run?.blocks}
           highlightedId={highlightedId}
           flushRef={flushRef}
