@@ -158,9 +158,12 @@ export function BlockCard({
         borderLeftWidth: 4,
         borderLeftColor: accent,
         borderRadius: 14,
-        padding: '15px 16px 13px',
+        // Room at the foot while it runs, so the spinner there never sits on the last line of text.
+        padding: view.state === 'running' ? '15px 16px 44px' : '15px 16px 13px',
         boxShadow: GLOWING.has(visual) ? theme.glow(visual) : 'none',
         fontSize: 13,
+        // Text with no spaces (a commit id, a long path, a shell command) wraps inside the card instead of spilling out.
+        overflowWrap: 'anywhere',
         opacity: !block.enabled ? 0.55 : view.notBuilt ? 0.6 : 1,
       }}
     >

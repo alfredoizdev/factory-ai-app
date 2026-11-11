@@ -156,3 +156,13 @@ test('a stage not built yet says so instead of "Skipped"', () => {
   expect(screen.getByText(strings.canvas.notBuilt)).toBeInTheDocument()
   expect(screen.queryByText(strings.canvas.stateLabel.skipped)).toBeNull()
 })
+
+test('long unbroken text wraps inside the card, and a running card keeps room for its spinner', () => {
+  const view = { state: 'running' as const, summary: 'x', summaryIsClaim: false, steps: ['Running: git diff 1460e74f6c65e6123a02bd04f8329749615f34c6'] }
+  const { rerender } = render(<BlockCard expanded block={buildBlock} view={view} />)
+  const card = screen.getByTestId('block-card-build')
+  expect(card.style.overflowWrap).toBe('anywhere')
+  expect(card.style.paddingBottom).toBe('44px')
+  rerender(<BlockCard expanded block={buildBlock} view={{ ...view, state: 'passed' }} />)
+  expect(card.style.paddingBottom).toBe('13px')
+})
