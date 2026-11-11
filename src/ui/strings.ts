@@ -288,6 +288,9 @@ export const strings = {
     steps: 'Steps',
     earlierStepsHidden: (n: number) => `${n} earlier ${n === 1 ? 'step is' : 'steps are'} not shown`,
     collapse: 'Collapse',
+    // A clicked card stays open; this lets the view follow the work again.
+    unpin: 'Follow the work',
+    unpinTitle: 'You opened this card, so it stays open. Press to let the view follow the work again.',
     followWork: 'Follow the work',
     close: 'Close',
     breadcrumbAria: 'Where this block sits in the flow',

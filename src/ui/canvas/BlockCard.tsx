@@ -289,8 +289,14 @@ export function BlockCard({
                 cursor: 'pointer',
                 fontSize: 12,
                 padding: '3px 8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                whiteSpace: 'nowrap',
               }}
+              title={collapseLabel === strings.canvas.unpin ? strings.canvas.unpinTitle : undefined}
             >
+              {collapseLabel === strings.canvas.unpin && <FollowIcon />}
               {collapseLabel}
             </button>
           )}
@@ -728,5 +734,14 @@ export function RemoveButton({ label, onRemove }: { label: string; onRemove: () 
         <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5" />
       </svg>
     </button>
+  )
+}
+
+/** Follow: two arrows pointing in, the card going back into the flow. */
+function FollowIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13.5 6.5h-4v-4M9.5 6.5 14 2M2.5 9.5h4v4M6.5 9.5 2 14" />
+    </svg>
   )
 }
