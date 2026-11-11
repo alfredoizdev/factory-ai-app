@@ -554,7 +554,8 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
       }}
     >
       <TypeMark kind={block.kind} colour={accent} size={26} />
-      <span className="factory-display" style={{ writingMode: 'vertical-rl', fontSize: 14, fontWeight: 600, letterSpacing: '0.04em', color: '#aeb7c6' }}>
+      {/* Read from bottom to top, like the spine of a book. */}
+      <span className="factory-display" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: 18, fontWeight: 600, letterSpacing: '0.05em', color: '#c3cbd8', whiteSpace: 'nowrap' }}>
         {block.label}
       </span>
       {view?.state === 'running' && <WorkingSpinner blockId={block.id} size={18} />}
