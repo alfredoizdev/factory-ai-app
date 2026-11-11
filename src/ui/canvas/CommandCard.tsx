@@ -72,12 +72,15 @@ export const CommandCard = forwardRef<
         maxWidth: 'calc(100% - 32px)',
         maxHeight: 'calc(100% - 32px)',
         overflowY: 'auto',
+        // Never sideways: a long branch name or path wraps or is cut short instead of widening the card.
+        overflowX: 'hidden',
         background: `linear-gradient(180deg, ${frame.from} 0%, ${frame.to} 100%)`,
         border: `1px solid ${theme.tint(frame.tone, frame.strength)}`,
         borderRadius: 14,
         boxShadow: `0 0 0 1px ${theme.tint(frame.tone, 0.15)}, 0 0 30px ${theme.tint(frame.tone, mode === 'idle' ? 0.06 : 0.16)}, 0 18px 40px rgba(0,0,0,0.55)`,
         padding: 16,
         display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr)',
         gap: 12,
         outline: 'none',
       }}

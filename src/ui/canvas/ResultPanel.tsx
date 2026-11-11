@@ -95,10 +95,10 @@ export function ResultSection({
         </div>
       </div>
 
-      <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
         {delivery.kept && delivery.branch ? (
-          <div data-testid="kept" style={{ display: 'grid', gap: 6 }}>
-            <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>
+          <div data-testid="kept" style={{ display: 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
               {strings.delivery.keptOnBranch(delivery.branch, delivery.commit ?? '')}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -146,7 +146,7 @@ export function ResultSection({
         )}
       </div>
 
-      <div style={{ display: 'grid', gap: 6, paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
+      <div style={{ display: 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
         <div style={{ fontSize: 12, color: theme.dim }}>{strings.followUp.hint}</div>
         {composer}
         <button
