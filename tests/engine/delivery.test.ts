@@ -8,7 +8,7 @@ import { db, migrateDb } from '@/db/client'
 import { approvals, nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
-import { deliverToProject, DeliveryError, deliveryState } from '@/engine/delivery'
+import { deliverToProject, DeliveryError, deliveryState, switchBack, switchToBranch } from '@/engine/delivery'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import { createRunWorktree } from '@/engine/worktree'
 import { POST } from '@/app/api/runs/[runId]/delivery/route'
@@ -238,7 +238,7 @@ test('a run from before readable names gets one when it is kept', async () => {
   git(wt, 'branch', '-m', `factory/${runId.toLowerCase()}`)
   db.update(runs).set({ branch: `factory/${runId.toLowerCase()}` }).where(eq(runs.id, runId)).run()
   const kept = keepOnBranch(runId)
-  expect(kept.branch).toMatch(/^ai\/outline-buttons-in-the-other-team-colour-[a-z0-9]{6}$/)
+  expect(kept.branch).toMatch(/^ai\/outline-buttons-other-team-colour-[a-z0-9]{6}$/)
   expect(git(repo, 'branch', '--list', 'factory/*')).toBe('')
   expect(git(repo, 'log', '-1', '--format=%s', kept.branch!)).toBe('Outline buttons in the other team colour')
 })
@@ -250,4 +250,102 @@ test('applying after keeping reuses the kept commit: one commit, not two', async
   expect(applied.commit).toBe(kept.commit)
   expect(git(repo, 'rev-list', '--count', `${base}..${branch}`)).toBe('1')
   expect(readFileSync(join(repo, 'page.tsx'), 'utf8')).toBe('button: outline\nfooter: same\n')
+})
+
+describe('switching the project to the kept branch', () => {
+  test('puts the project on the kept branch, says so, and switches back to where it was', async () => {
+    const { runId, repo } = await finishedRun()
+    const kept = keepOnBranch(runId)
+    expect(deliveryState(runId).current).toBe('main')
+    const switched = switchToBranch(runId)
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(kept.branch)
+    expect(readFileSync(join(repo, 'page.tsx'), 'utf8')).toBe('button: outline\nfooter: same\n')
+    expect(switched.current).toBe(kept.branch)
+    expect(switched.returnTo).toBe('main')
+    expect((await eventsSince(runId, 0)).some(e => e.type === 'run.switched')).toBe(true)
+    const back = switchBack(runId)
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
+    expect(readFileSync(join(repo, 'page.tsx'), 'utf8')).toBe('button: white\nfooter: same\n')
+    expect(back.current).toBe('main')
+  })
+
+  test('refuses, changing nothing, when the project has unsaved work', async () => {
+    const { runId, repo } = await finishedRun()
+    keepOnBranch(runId)
+    writeFileSync(join(repo, 'page.tsx'), 'my own edit\n')
+    expect(() => switchToBranch(runId)).toThrow(strings.delivery.dirty)
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
+    expect(readFileSync(join(repo, 'page.tsx'), 'utf8')).toBe('my own edit\n')
+  })
+
+  test('refuses before the change is kept on its branch', async () => {
+    const { runId } = await finishedRun()
+    expect(() => switchToBranch(runId)).toThrow(DeliveryError)
+  })
+
+  test('switching back needs an earlier switch', async () => {
+    const { runId } = await finishedRun()
+    keepOnBranch(runId)
+    expect(() => switchBack(runId)).toThrow(DeliveryError)
+  })
+
+  test('the state follows the real checkout, even when the person switched by hand', async () => {
+    const { runId, repo } = await finishedRun()
+    const kept = keepOnBranch(runId)
+    switchToBranch(runId)
+    git(repo, 'checkout', '-q', 'main')
+    expect(deliveryState(runId).current).toBe('main')
+    expect(kept.branch).not.toBe('main')
+  })
+
+  test('the route takes switch and back', async () => {
+    const { runId, repo } = await finishedRun()
+    keepOnBranch(runId)
+    const post = (mode: string) =>
+      POST(
+        new Request(`http://127.0.0.1/api/runs/${runId}/delivery`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', host: '127.0.0.1:4100' },
+          body: JSON.stringify({ mode }),
+        }),
+        { params: Promise.resolve({ runId }) },
+      )
+    expect((await post('switch')).status).toBe(200)
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).not.toBe('main')
+    expect((await post('back')).status).toBe(200)
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
+  })
+})
+
+describe('naming the kept branch', () => {
+  test('the name the person typed is used as it is', async () => {
+    const { runId, repo } = await finishedRun()
+    const kept = keepOnBranch(runId, { name: 'feature/watch-buttons' })
+    expect(kept.branch).toBe('feature/watch-buttons')
+    expect(git(repo, 'log', '-1', '--format=%s', 'feature/watch-buttons')).toBe('Outline buttons in the other team colour')
+  })
+
+  test('an automatic name is replaced by the suggested one', async () => {
+    const { runId, wt } = await finishedRun()
+    const { branchNameFor } = await import('@/engine/worktree')
+    const auto = branchNameFor(runId, 'Outline buttons in the other team colour')
+    git(wt, 'branch', '-m', auto)
+    db.update(runs).set({ branch: auto }).where(eq(runs.id, runId)).run()
+    expect(keepOnBranch(runId, { fallbackName: 'ai/outline-buttons-abc123' }).branch).toBe('ai/outline-buttons-abc123')
+  })
+
+  test('an unusable name is refused and nothing is kept', async () => {
+    const { runId } = await finishedRun()
+    for (const bad of ['has space', '-dash', 'a..b', 'x.lock', 'end/', '$(evil)', 'ü']) {
+      expect(() => keepOnBranch(runId, { name: bad })).toThrow(strings.delivery.badBranchName)
+    }
+    expect(deliveryState(runId).kept).toBe(false)
+  })
+
+  test('a name already taken is refused and nothing is kept', async () => {
+    const { runId, repo } = await finishedRun()
+    git(repo, 'branch', 'taken')
+    expect(() => keepOnBranch(runId, { name: 'taken' })).toThrow(strings.delivery.branchExists('taken'))
+    expect(deliveryState(runId).kept).toBe(false)
+  })
 })

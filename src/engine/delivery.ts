@@ -2,11 +2,12 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { and, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { approvals, events, projects, runs } from '@/db/schema'
 import { appendEventSync } from '@/engine/events'
 import { clip } from '@/engine/redact'
+import { branchFromWords, fallbackWords } from '@/engine/branch-name'
 import { branchNameFor } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
 
@@ -26,10 +27,14 @@ export type Delivery = {
   commit: string | null
   files: string[]
   appliedTo: string | null
+  /** The branch the person's project is on right now, read live; null when it is not a branch (or unreadable). */
+  current: string | null
+  /** Where "Back" would return the project to: the branch it was on before this run switched it. */
+  returnTo: string | null
 }
 
 export class DeliveryError extends Error {
-  constructor(message: string, readonly status: 404 | 409) {
+  constructor(message: string, readonly status: 400 | 404 | 409) {
     super(message)
     this.name = 'DeliveryError'
   }
@@ -45,12 +50,26 @@ function approvedAndFinished(runId: string) {
   return { run, eligible: run.status === 'completed' && !!approved && !!run.worktreePath && !!run.baseCommit }
 }
 
-type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string }
+type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string }
 
-/** The record of an earlier keep or delivery of this run, if there was one. Each happens once. */
-function recordOf(runId: string, type: 'run.kept' | 'run.delivered'): Record_ | null {
-  const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).get()
+/** The latest record of this kind for this run, if there was one. A keep or a delivery happens once; a switch may repeat. */
+function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched'): Record_ | null {
+  const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)).get()
   return row ? (JSON.parse(row.payloadJson) as Record_) : null
+}
+
+function repoOf(projectId: string): string | null {
+  return db.select().from(projects).where(eq(projects.id, projectId)).get()?.repoPath ?? null
+}
+
+/** The branch a checkout is on, or null when it is detached or cannot be read. */
+function currentBranch(repo: string | null): string | null {
+  if (!repo) return null
+  try {
+    return git(repo, ['symbolic-ref', '--quiet', '--short', 'HEAD']) || null
+  } catch {
+    return null
+  }
 }
 const deliveredRecord = (runId: string) => recordOf(runId, 'run.delivered')
 
@@ -67,6 +86,8 @@ export function deliveryState(runId: string): Delivery {
     commit: done?.commit ?? kept?.commit ?? null,
     files: done?.files ?? kept?.files ?? [],
     appliedTo: done?.appliedTo ?? null,
+    current: currentBranch(repoOf(found.run.projectId)),
+    returnTo: recordOf(runId, 'run.switched')?.from ?? null,
   }
 }
 
@@ -89,27 +110,68 @@ export function wasDelivered(runId: string): boolean {
   return deliveredRecord(runId) !== null
 }
 
+/** A branch name a person typed: plain characters only, and one git itself accepts. */
+const OWN_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/
+export function validBranchName(name: string): boolean {
+  if (!OWN_NAME.test(name) || name.includes('..') || name.includes('//') || name.endsWith('/') || name.endsWith('.lock') || name.endsWith('.')) return false
+  try {
+    execFileSync('git', ['check-ref-format', '--branch', name], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The files the agent changed in its copy, committed or not: what a branch name should describe. */
+export function changedFiles(runId: string): string[] {
+  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+  const wt = run?.worktreePath
+  if (!run || !wt) return []
+  try {
+    const from = run.deliveryBase ?? run.baseCommit!
+    const tracked = git(wt, ['diff', '--name-only', from]).split('\n')
+    const untracked = git(wt, ['ls-files', '--others', '--exclude-standard']).split('\n')
+    return [...new Set([...tracked, ...untracked].filter(Boolean))].sort()
+  } catch {
+    return []
+  }
+}
+
+/** The run's request, for naming its branch. */
+export function requestOf(runId: string): string | null {
+  return db.select().from(runs).where(eq(runs.id, runId)).get()?.request ?? null
+}
+
 /**
- * Keeps the approved change on its own branch in the person's repository: one commit, on a branch named after the
- * request. Their checkout and their branches are not touched. Once; a run from before readable names gets one now.
+ * Keeps the approved change on its own branch in the person's repository: one commit, on a branch with a name a person
+ * can read. That name is the one they typed, when they typed one; otherwise the automatic name the run started with
+ * is replaced by `fallbackName`, or by the request's own meaningful words. Their checkout and branches are not
+ * touched. Once.
  */
-export function keepOnBranch(runId: string): Delivery {
+export function keepOnBranch(runId: string, options: { name?: string | null; fallbackName?: string | null } = {}): Delivery {
   const found = approvedAndFinished(runId)
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
   if (recordOf(runId, 'run.kept')) return deliveryState(runId)
   const { run } = found
   const wt = run.worktreePath!
+  const own = options.name?.trim() || null
+  if (own !== null && !validBranchName(own)) throw new DeliveryError(strings.delivery.badBranchName, 400)
+  let branch = run.branch ?? git(wt, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const exists = (name: string) => git(wt, ['branch', '--list', name]) !== ''
+  if (own !== null && own !== branch && exists(own)) throw new DeliveryError(strings.delivery.branchExists(own), 409)
   const commit = keepCommit(run)
   const from = run.deliveryBase ?? run.baseCommit!
   const files = git(wt, ['diff', '--name-only', from, commit]).split('\n').filter(Boolean)
   if (files.length === 0) throw new DeliveryError(strings.delivery.nothing, 409)
-  let branch = run.branch ?? git(wt, ['rev-parse', '--abbrev-ref', 'HEAD'])
-  if (branch.startsWith('factory/')) {
-    const readable = branchNameFor(run.id, run.request)
-    git(wt, ['branch', '-m', readable])
-    db.update(runs).set({ branch: readable }).where(eq(runs.id, run.id)).run()
-    branch = readable
+  // Only a name the app made up is replaced; a branch the person named is theirs.
+  const automatic = branch.startsWith('factory/') || branch === branchNameFor(run.id, run.request)
+  const wanted =
+    own ?? (automatic ? (options.fallbackName ?? branchFromWords(run.id, fallbackWords(run.request) ?? 'change')) : branch)
+  if (wanted !== branch && (own !== null || !exists(wanted))) {
+    git(wt, ['branch', '-m', wanted])
+    db.update(runs).set({ branch: wanted }).where(eq(runs.id, run.id)).run()
+    branch = wanted
   }
   db.transaction(
     tx => {
@@ -124,7 +186,7 @@ export function keepOnBranch(runId: string): Delivery {
  * Applies the approved change, uncommitted, to the person's checkout — on whatever branch they are on — after keeping
  * it on its own branch. Once. Refused, with nothing changed, when their checkout has unsaved work.
  */
-export function deliverToProject(runId: string): Delivery {
+export function deliverToProject(runId: string, options: { name?: string | null; fallbackName?: string | null } = {}): Delivery {
   const found = approvedAndFinished(runId)
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
@@ -137,7 +199,7 @@ export function deliverToProject(runId: string): Delivery {
   if (git(repo, ['status', '--porcelain']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
 
   // 1. Keep it on its own branch first, so the change exists as a commit before it is copied anywhere.
-  const kept = keepOnBranch(runId)
+  const kept = keepOnBranch(runId, options)
   const run = db.select().from(runs).where(eq(runs.id, runId)).get()!
   const wt = run.worktreePath!
   // A follow-up whose parent was never brought over starts from the parent's base, so both changes travel together.
@@ -168,5 +230,61 @@ export function deliverToProject(runId: string): Delivery {
     },
     { behavior: 'immediate' },
   )
+  return deliveryState(runId)
+}
+
+/** Moves the person's checkout to a branch, refusing — with nothing changed — over unsaved work. */
+function checkoutIn(repo: string, branch: string): void {
+  if (git(repo, ['status', '--porcelain', '--untracked-files=no']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
+  try {
+    git(repo, ['checkout', '-q', branch])
+  } catch {
+    // git refuses before touching anything, e.g. when an untracked file of theirs would be overwritten.
+    throw new DeliveryError(strings.delivery.switchFailed(branch), 409)
+  }
+}
+
+/**
+ * Puts the person's project on the run's kept branch, so they see the change in their own folder and dev server.
+ * Remembers the branch it was on, for switchBack. Refused while the change is not kept yet, or over unsaved work.
+ */
+export function switchToBranch(runId: string): Delivery {
+  const found = approvedAndFinished(runId)
+  if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
+  const kept = recordOf(runId, 'run.kept')
+  if (!kept?.branch) throw new DeliveryError(strings.delivery.keepFirst, 409)
+  const repo = repoOf(found.run.projectId)
+  if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
+  const from = currentBranch(repo)
+  if (from === kept.branch) return deliveryState(runId)
+  if (!from) throw new DeliveryError(strings.delivery.notOnBranch, 409)
+  if (git(repo, ['status', '--porcelain', '--untracked-files=no']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
+  // A branch can be checked out in one place only, and the agent's copy still holds it: let go of it there first.
+  // The commit stays where it is; the agent's copy just stops being "on" the branch.
+  const wt = found.run.worktreePath
+  if (wt) {
+    try {
+      git(wt, ['checkout', '-q', '--detach'])
+    } catch {
+      // The agent's copy is gone or already detached: nothing holds the branch.
+    }
+  }
+  checkoutIn(repo, kept.branch)
+  db.transaction(tx => void appendEventSync({ runId, type: 'run.switched', payload: { branch: kept.branch, from } }, tx), { behavior: 'immediate' })
+  return deliveryState(runId)
+}
+
+/** Returns the person's project to the branch it was on before switchToBranch. Refused over unsaved work. */
+export function switchBack(runId: string): Delivery {
+  const found = approvedAndFinished(runId)
+  if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
+  const switched = recordOf(runId, 'run.switched')
+  if (!switched?.from) throw new DeliveryError(strings.delivery.neverSwitched, 409)
+  const repo = repoOf(found.run.projectId)
+  if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
+  if (currentBranch(repo) !== switched.from) {
+    checkoutIn(repo, switched.from)
+    db.transaction(tx => void appendEventSync({ runId, type: 'run.switched_back', payload: { branch: switched.from } }, tx), { behavior: 'immediate' })
+  }
   return deliveryState(runId)
 }

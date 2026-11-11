@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Delivery } from '@/engine/delivery'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
@@ -10,6 +10,8 @@ import { WorkingSpinner } from './BlockCard'
  * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
  * on top of it. Bringing it over writes into the person's folder, so the button says exactly what it will do.
  */
+type Mode = 'branch' | 'apply' | 'switch' | 'back'
+
 export function ResultSection({
   runId,
   note,
@@ -27,8 +29,9 @@ export function ResultSection({
   onFollowUp: (runId: string) => void
 }) {
   const [delivery, setDelivery] = useState<Delivery | null>(null)
-  const [busy, setBusy] = useState<'branch' | 'apply' | 'follow' | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [busy, setBusy] = useState<Mode | 'follow' | null>(null)
+  // The branch name, suggested by the app and the person's to change. null: the suggestion has not arrived yet.
+  const [branchName, setBranchName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -42,14 +45,28 @@ export function ResultSection({
     }
   }, [runId])
 
-  async function bring(mode: 'branch' | 'apply') {
+  // A name is suggested only while there is still a branch to name.
+  const needsName = delivery?.eligible === true && !delivery.kept
+  useEffect(() => {
+    if (!needsName) return
+    let live = true
+    fetch(`/api/runs/${runId}/branch-name`)
+      .then(r => (r.ok ? (r.json() as Promise<{ name?: string }>) : null))
+      .then(d => live && setBranchName(current => current ?? d?.name ?? ''))
+      .catch(() => live && setBranchName(current => current ?? ''))
+    return () => {
+      live = false
+    }
+  }, [runId, needsName])
+
+  async function bring(mode: Mode) {
     setBusy(mode)
     setError(null)
     try {
       const res = await fetch(`/api/runs/${runId}/delivery`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify(mode === 'branch' || mode === 'apply' ? { mode, name: branchName ?? '' } : { mode }),
       })
       const body = (await res.json().catch(() => null)) as (Delivery & { error?: string }) | null
       if (!res.ok || !body) return setError(body?.error ?? strings.run.startFailed)
@@ -101,26 +118,43 @@ export function ResultSection({
             <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
               {strings.delivery.keptOnBranch(delivery.branch, delivery.commit ?? '')}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <code style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '6px 8px', background: '#0b0e14', border: `1px solid ${theme.border}`, borderRadius: 6, color: '#d6dce6' }}>
-                git checkout {delivery.branch}
-              </code>
-              <button
-                type="button"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(`git checkout ${delivery.branch}`).then(() => setCopied(true))
-                }}
-                style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: copied ? theme.passed : 'inherit', cursor: 'pointer', fontSize: 12 }}
-              >
-                {copied ? strings.delivery.copied : strings.delivery.copy}
-              </button>
-            </div>
+            {delivery.current === delivery.branch ? (
+              <>
+                <div data-testid="on-branch" style={{ fontSize: 12.5, color: theme.passed, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
+                  ✓ {strings.delivery.onBranch(delivery.branch)}
+                </div>
+                {delivery.returnTo && (
+                  <button type="button" disabled={busy !== null} onClick={() => void bring('back')} style={secondaryButton(busy)}>
+                    {busy === 'back' ? <WorkingSpinner blockId="back" size={16} /> : '↩'} {strings.delivery.backButton(delivery.returnTo)}
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <button type="button" disabled={busy !== null} onClick={() => void bring('switch')} style={primaryButton(busy)}>
+                  {busy === 'switch' ? <WorkingSpinner blockId="switch" size={16} /> : '⇄'} {strings.delivery.switchButton}
+                </button>
+                <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.switchWhat}</div>
+              </>
+            )}
           </div>
         ) : (
           <>
+            <label style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
+              {strings.delivery.branchName}
+              <input
+                value={branchName ?? ''}
+                placeholder={branchName === null ? strings.delivery.suggesting : ''}
+                disabled={branchName === null || busy !== null}
+                spellCheck={false}
+                onChange={e => setBranchName(e.target.value)}
+                style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
+              />
+              <span style={{ fontSize: 11, lineHeight: 1.4 }}>{strings.delivery.branchNameHint}</span>
+            </label>
             <button
               type="button"
-              disabled={busy !== null}
+              disabled={busy !== null || branchName === null}
               onClick={() => void bring('branch')}
               style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
             >
@@ -174,4 +208,12 @@ export function ResultSection({
       )}
     </>
   )
+}
+
+function primaryButton(busy: unknown): CSSProperties {
+  return { padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }
+}
+
+function secondaryButton(busy: unknown): CSSProperties {
+  return { padding: '8px 12px', borderRadius: 8, border: `1px solid ${theme.tint('passed', 0.6)}`, background: 'transparent', color: '#b9dcc5', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }
 }

@@ -14,6 +14,8 @@ export type RunEventType =
   | 'run.kept'
   // The approved change was applied to the person's checkout, uncommitted.
   | 'run.delivered'
+  | 'run.switched'
+  | 'run.switched_back'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'
   | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'

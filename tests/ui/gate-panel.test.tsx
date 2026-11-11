@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, waitFor, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { CommandCard, type CardMode } from '@/ui/canvas/CommandCard'
 import type { ComposerImage } from '@/ui/canvas/Composer'
@@ -107,25 +107,37 @@ test('there is one box to write in, whatever the moment', () => {
   expect(screen.getByText(strings.card.working)).toBeInTheDocument()
 })
 
-const approved = { eligible: true, kept: false, delivered: false, branch: 'ai/outline-buttons-abc123', commit: null, files: [], appliedTo: null }
+const approved = { eligible: true, kept: false, delivered: false, branch: 'ai/outline-buttons-abc123', commit: null, files: [], appliedTo: null, current: 'main', returnTo: null }
 
-test('done: two ways to bring it over, and keeping it shows the branch and how to look at it', async () => {
+test('done: the branch name is suggested and editable, keeping uses it, and the project can be switched there and back', async () => {
+  let state: Record<string, unknown> = approved
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/branch-name')) return new Response(JSON.stringify({ name: 'ai/watch-videos-outline-abc123' }))
     if (url.endsWith('/delivery') && init?.method === 'POST') {
-      const { mode } = JSON.parse(String(init.body)) as { mode: string }
-      return new Response(JSON.stringify({ ...approved, kept: true, commit: '1234567abc', files: ['src/app/page.tsx'], delivered: mode === 'apply' }))
+      const { mode, name } = JSON.parse(String(init.body)) as { mode: string; name?: string }
+      if (mode === 'branch' || mode === 'apply') state = { ...state, kept: true, branch: name, commit: '1234567abc', files: ['src/app/page.tsx'], delivered: mode === 'apply' }
+      if (mode === 'switch') state = { ...state, current: state.branch, returnTo: 'main' }
+      if (mode === 'back') state = { ...state, current: 'main' }
+      return new Response(JSON.stringify(state))
     }
-    return new Response(JSON.stringify(approved))
+    return new Response(JSON.stringify(state))
   })
   vi.stubGlobal('fetch', fetchMock)
   render(<Card mode="done" />)
-  const keep = await screen.findByRole('button', { name: new RegExp(strings.delivery.keepButton) })
+  const field = await screen.findByLabelText(new RegExp(strings.delivery.branchName))
+  await waitFor(() => expect(field).toHaveValue('ai/watch-videos-outline-abc123'))
+  fireEvent.change(field, { target: { value: 'feature/my-name' } })
   expect(screen.getByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeInTheDocument()
-  fireEvent.click(keep)
-  expect(await screen.findByTestId('kept')).toHaveTextContent('git checkout ai/outline-buttons-abc123')
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.keepButton) }))
+  expect(await screen.findByTestId('kept')).toHaveTextContent('feature/my-name')
   expect(screen.getByTestId('kept')).toHaveTextContent('1234567')
   const sent = fetchMock.mock.calls.find(([, i]) => i?.method === 'POST')!
-  expect(JSON.parse(String(sent[1]!.body))).toEqual({ mode: 'branch' })
+  expect(JSON.parse(String(sent[1]!.body))).toEqual({ mode: 'branch', name: 'feature/my-name' })
   // Applying is still on offer after keeping.
   expect(screen.getByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeInTheDocument()
+  // Switch, then back.
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.switchButton) }))
+  expect(await screen.findByTestId('on-branch')).toHaveTextContent(strings.delivery.onBranch('feature/my-name'))
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.backButton('main')) }))
+  expect(await screen.findByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeInTheDocument()
 })
