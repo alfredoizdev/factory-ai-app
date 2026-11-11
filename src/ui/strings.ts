@@ -369,6 +369,8 @@ export const strings = {
     title: 'Approved',
     ready: 'You approved it. It is ready, but not in your project yet.',
     readyKept: 'You approved it, and it is saved as its own version of your project.',
+    sent: 'You approved it and sent it to GitHub. Follow it below.',
+    finished: 'Done. This change is in main. There is nothing else to do for it.',
     bring: 'Bring it to my project',
     keepButton: 'Save this change',
     keepWhat: 'Saves it as its own version (a branch) in your project. Nothing you have open changes, and nothing is sent anywhere.',

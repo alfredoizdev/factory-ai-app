@@ -209,3 +209,22 @@ test('shipping: a ready pull request can be put on hold and taken off it, and me
   const sent = fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').map(([, i]) => JSON.parse(String(i!.body)).action)
   expect(sent).toEqual(['hold', 'unhold'])
 })
+
+test('done: once the pull request is open the other options go away, and once merged the card says it is finished', async () => {
+  const kept = { ...approved, kept: true, branch: 'ai/x', commit: '1234567abc', pushed: true }
+  let pr: Record<string, unknown> | null = { number: 5, url: 'u', state: 'open', conflicts: false }
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/ship')) return new Response(JSON.stringify({ pr, checks: [], checksDone: true, checksFailed: false, deploy: [], mergedAt: null, onHold: false }))
+    return new Response(JSON.stringify(kept))
+  }))
+  const { unmount } = render(<Card mode="done" />)
+  expect(await screen.findByText(strings.delivery.sent)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: strings.delivery.moreOptions })).toBeNull()
+  expect(screen.getByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeInTheDocument()
+  unmount()
+  pr = { ...pr, state: 'merged' }
+  render(<Card mode="done" />)
+  expect(await screen.findByText(strings.delivery.finished)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: strings.delivery.moreOptions })).toBeNull()
+  expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeNull()
+})

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Delivery } from '@/engine/delivery'
 import type { ShipState } from '@/engine/ship'
 import { strings } from '@/ui/strings'
@@ -39,6 +39,18 @@ export function ResultSection({
   const [branchName, setBranchName] = useState('')
   const [suggesting, setSuggesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // What GitHub says about this change, as the ship section last read it: once it is sent, the other ways of
+  // bringing it over are no longer choices, and once merged, it is finished.
+  const [ship, setShip] = useState<ShipState | null>(null)
+  const shipped = ship?.pr != null
+  const merged = ship?.pr?.state === 'merged'
+  const shipStateSeen = useCallback(
+    (next: ShipState) => {
+      setShip(next)
+      onShipState?.(next)
+    },
+    [onShipState],
+  )
 
   useEffect(() => {
     let live = true
@@ -114,7 +126,7 @@ export function ResultSection({
         </span>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{strings.delivery.title}</div>
-          <div style={{ fontSize: 12.5, color: '#b9dcc5' }}>{delivery.delivered ? strings.delivery.done(delivery.files.length) : delivery.kept ? strings.delivery.readyKept : strings.delivery.ready}</div>
+          <div style={{ fontSize: 12.5, color: '#b9dcc5' }}>{merged ? strings.delivery.finished : shipped ? strings.delivery.sent : delivery.delivered ? strings.delivery.done(delivery.files.length) : delivery.kept ? strings.delivery.readyKept : strings.delivery.ready}</div>
         </div>
       </div>
 
@@ -135,7 +147,8 @@ export function ResultSection({
                   </button>
                 )}
               </>
-            ) : (
+            ) : merged ? null : (
+              // Once merged, the change is in main itself: opening its own version would show nothing new.
               <>
                 <button type="button" disabled={busy !== null} onClick={() => void bring('switch')} style={primaryButton(busy)}>
                   {busy === 'switch' ? <WorkingSpinner blockId="switch" size={16} /> : '⇄'} {strings.delivery.switchButton}
@@ -144,7 +157,7 @@ export function ResultSection({
               </>
             )}
             {/* Shipping is GitHub's pull request, its checks and a merge the person confirms. */}
-            <ShipSection runId={runId} button={primaryButton} onState={onShipState} />
+            <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} />
           </div>
         ) : (
           <>
@@ -186,6 +199,8 @@ export function ResultSection({
         {/* The less common moves, together behind one toggle, each in its own small card. Copying the change into what
             is open is not offered on the kept branch (it is already there); pushing alone only before anything was sent. */}
         {(() => {
+          // Once a pull request is open, the change is on its way through GitHub: the other ways are not choices any more.
+          if (shipped) return null
           const canApply = !delivery.delivered && !(delivery.kept && delivery.current === delivery.branch)
           const canPushOnly = delivery.kept && !delivery.pushed
           if (!canApply && !canPushOnly) return null
