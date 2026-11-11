@@ -213,7 +213,8 @@ export function Composer({
             lineHeight: 1.45,
           }}
         />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* A faint rule between what you write and what you attach. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: `1px solid ${theme.lineSoft}`, paddingTop: 8 }}>
           <button
             type="button"
             disabled={disabled || images.length >= MAX_COMPOSER_IMAGES}
