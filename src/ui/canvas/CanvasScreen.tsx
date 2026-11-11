@@ -2,6 +2,7 @@
 
 import { PastTasks } from './PastTasks'
 import { TasksDrawer } from './TasksDrawer'
+import { ProjectSwitcher } from './ProjectSwitcher'
 import { shipView } from './shipView'
 import type { ShipState } from '@/engine/ship'
 import { useCallback, useRef, useState } from 'react'
@@ -57,7 +58,8 @@ export function CanvasScreen({
   const [run, setRun] = useState<RunInfo | null>(initialRun)
   const [settings, setSettings] = useState<ProjectSettings | null>(initialSettings)
   // The demo is the default every time the page opens: a real agent is always chosen on purpose.
-  const [agent, setAgent] = useState<Agent>(DEMO_PROVIDER_ID)
+  // A project with a folder is worked on by Claude by default; without one only the demo can run.
+  const [agent, setAgent] = useState<Agent>(initialSettings?.repoPath ? CLAUDE_PROVIDER_ID : DEMO_PROVIDER_ID)
   const claudeBlocked = agent === CLAUDE_PROVIDER_ID && !settings?.repoPath
   const [request, setRequest] = useState('')
   const [images, setImages] = useState<ComposerImage[]>([])
@@ -227,6 +229,7 @@ export function CanvasScreen({
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* The controls stay in the top bar, visible with the sidebar closed: which agent, run, stop, and the run's state. */}
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', minHeight: 36, borderBottom: `1px solid ${theme.border}`, background: theme.bg }}>
+        <ProjectSwitcher workflowId={workflowId} style={headerButton} />
         {settings && (
           <select
             aria-label={strings.settings.agentLabel}

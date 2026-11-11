@@ -89,6 +89,13 @@ export function setAutoApproveLowRisk(projectId: string, on: boolean): void {
   db.update(projects).set({ autoApproveLowRisk: on }).where(eq(projects.id, projectId)).run()
 }
 
+export function setProjectName(projectId: string, name: string): void {
+  getProjectSettings(projectId)
+  const value = name.trim()
+  if (value === '' || value.length > 80 || /[\n\r\0]/.test(value)) throw new ProjectSettingsError(strings.projects.badName)
+  db.update(projects).set({ name: value }).where(eq(projects.id, projectId)).run()
+}
+
 export function setTestCommand(projectId: string, command: string | null): void {
   getProjectSettings(projectId)
   const value = command?.trim() ? command.trim() : null

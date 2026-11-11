@@ -1,9 +1,11 @@
-import { strings } from '@/ui/strings'
+import { redirect } from 'next/navigation'
+import { listProjects } from '@/engine/projects'
+import { DEMO_WORKFLOW_ID } from '@/db/seed'
 
+export const dynamic = 'force-dynamic'
+
+// The app opens on the first project, or on the demo when there is none yet; projects are added from the canvas.
 export default function Home() {
-  return (
-    <main className="p-8">
-      <h1 className="text-2xl font-semibold">{strings.app.name}</h1>
-    </main>
-  )
+  const first = listProjects()[0]
+  redirect(`/canvas/${first?.workflowId ?? DEMO_WORKFLOW_ID}`)
 }
