@@ -16,7 +16,9 @@ export function TasksDrawer({ open, onClose, children }: { open: boolean; onClos
   const panel = useRef<HTMLElement>(null)
   useEffect(() => {
     if (!open) return
-    panel.current?.focus()
+    // Without preventScroll the browser scrolls the clipped canvas to bring the still-sliding panel into view, and the
+    // whole background jumps sideways.
+    panel.current?.focus({ preventScroll: true })
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
