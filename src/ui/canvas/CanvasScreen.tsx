@@ -335,7 +335,9 @@ export function CanvasScreen({
         )}
       </header>
       {/* Clipped: the closed drawer waits just off the right edge, and must not make the page scroll. */}
-      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+      {/* clip, not hidden: a hidden box can still be scrolled by the browser (find in page, scrollIntoView), which would
+          slide the whole canvas sideways to show the closed drawer. A clipped one cannot scroll at all. */}
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'clip' }}>
         {/* Top right of the canvas, where the list it opens slides in from. */}
         <button
           type="button"

@@ -45,7 +45,7 @@ export type StreamState = {
   nodes: Record<string, RawNode>
   lastSequence: number
   /** From run.pushed: the approved change was sent to the project's origin, so the Ship stage has really happened. */
-  shipped?: { branch: string }
+  shipped?: { branch: string; pr?: number; merged?: boolean }
 }
 export const emptyStream: StreamState = { nodes: {}, lastSequence: 0 }
 
@@ -61,7 +61,13 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   const payload = (event.payload ?? {}) as Record<string, unknown>
   if (event.type === 'run.pushed') {
     const branch = text(payload.branch)
-    return branch === undefined ? moved : { ...moved, shipped: { branch } }
+    return branch === undefined ? moved : { ...moved, shipped: { ...prev.shipped, branch } }
+  }
+  if (event.type === 'run.pr_opened' && typeof payload.number === 'number') {
+    return { ...moved, shipped: { branch: prev.shipped?.branch ?? '', ...prev.shipped, pr: payload.number } }
+  }
+  if (event.type === 'run.merged') {
+    return { ...moved, shipped: { branch: prev.shipped?.branch ?? '', ...prev.shipped, merged: true } }
   }
   const blockId = text(payload.blockId)
   if (blockId === undefined) return moved
@@ -186,7 +192,12 @@ export function toViews(
   // (it is the app's own record of a push git accepted), never a claim.
   if (shipped) {
     for (const b of blocks.filter(b => b.kind === 'ship')) {
-      out[b.id] = { blockId: b.id, state: 'passed', summary: strings.summary.shippedTo(shipped.branch), summaryIsClaim: false, steps: [] }
+      // Merged: shipped. A pull request still open waits on the person's merge. Only pushed: it went to origin.
+      out[b.id] = shipped.merged
+        ? { blockId: b.id, state: 'passed', summary: strings.summary.mergedVia(shipped.pr ?? null), summaryIsClaim: false, steps: [] }
+        : shipped.pr !== undefined
+          ? { blockId: b.id, state: 'waiting_approval', summary: strings.summary.prOpen(shipped.pr), summaryIsClaim: false, steps: [] }
+          : { blockId: b.id, state: 'passed', summary: strings.summary.shippedTo(shipped.branch), summaryIsClaim: false, steps: [] }
     }
   }
   return out

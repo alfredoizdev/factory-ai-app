@@ -65,7 +65,9 @@ export function TasksDrawer({ open, onClose, children }: { open: boolean; onClos
           borderLeft: `1px solid ${theme.border}`,
           boxShadow: open ? '-18px 0 40px rgba(0,0,0,0.45)' : 'none',
           transform: open ? 'translateX(0)' : 'translateX(100%)',
-          transition: motion ?? 'transform 280ms cubic-bezier(0.2, 0.7, 0.2, 1)',
+          // Closed, it is not just off screen but hidden, once it has slid out: nothing can find or scroll to it.
+          visibility: open ? 'visible' : 'hidden',
+          transition: motion ?? `transform 280ms cubic-bezier(0.2, 0.7, 0.2, 1), visibility 0s linear ${open ? '0s' : '280ms'}`,
           outline: 'none',
         }}
       >

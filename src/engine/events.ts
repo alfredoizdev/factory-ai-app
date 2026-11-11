@@ -18,6 +18,8 @@ export type RunEventType =
   | 'run.switched_back'
   | 'run.pushed'
   | 'run.installed'
+  | 'run.pr_opened'
+  | 'run.merged'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'
   | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'

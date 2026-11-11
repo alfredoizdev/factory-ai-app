@@ -444,3 +444,80 @@ describe('deleting a task', () => {
     expect(existsSync(wt)).toBe(true)
   })
 })
+
+describe('shipping through GitHub', () => {
+  async function shippable() {
+    const r = await finishedRun()
+    const origin = mkdtempSync(join(tmpdir(), 'factory-ship-origin-'))
+    git(origin, 'init', '-q', '--bare')
+    git(r.repo, 'remote', 'add', 'origin', origin)
+    keepOnBranch(r.runId, { name: 'ai/ship-me' })
+    return r
+  }
+  type View = Record<string, unknown>
+  function fakeGh(view: () => View, extra: (args: string[]) => string | undefined = () => undefined) {
+    const calls: string[][] = []
+    const gh = async (args: string[]) => {
+      calls.push(args)
+      const custom = extra(args)
+      if (custom !== undefined) return custom
+      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify(view())
+      if (args[0] === 'api') return JSON.stringify(args[1]!.endsWith('/status') ? { statuses: [{ context: 'Deploy', state: 'success', target_url: 'https://site' }] } : { check_runs: [] })
+      return ''
+    }
+    return { gh, calls }
+  }
+
+  test('opens a pull request once, after pushing, and reads any checks the repository runs', async () => {
+    const { openPullRequest } = await import('@/engine/ship')
+    const { runId } = await shippable()
+    let opened = false
+    const { gh, calls } = fakeGh(
+      () => (opened ? { number: 7, url: 'https://gh/pr/7', state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [{ __typename: 'CheckRun', name: 'CI', status: 'IN_PROGRESS', conclusion: null }], mergeCommit: null, mergedAt: null } : { number: 0, url: '', state: 'CLOSED' }),
+      args => (args[1] === 'create' ? ((opened = true), '') : undefined),
+    )
+    const state = await openPullRequest(runId, gh)
+    expect(state.pr).toMatchObject({ number: 7, state: 'open' })
+    expect(state.checks).toEqual([{ name: 'CI', state: 'pending', url: null }])
+    expect(state.checksDone).toBe(false)
+    expect(deliveryState(runId).pushed).toBe(true)
+    await openPullRequest(runId, gh)
+    expect(calls.filter(c => c[1] === 'create')).toHaveLength(1)
+  })
+
+  test('a repository with no checks has nothing to wait for', async () => {
+    const { openPullRequest } = await import('@/engine/ship')
+    const { runId } = await shippable()
+    const { gh } = fakeGh(() => ({ number: 3, url: 'u', state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [], mergeCommit: null, mergedAt: null }))
+    const state = await openPullRequest(runId, gh)
+    expect(state.checks).toEqual([])
+    expect(state.checksDone).toBe(true)
+  })
+
+  test('merging waits for checks, refuses a failure or a conflict, and squash-merges when allowed', async () => {
+    const { openPullRequest, mergePullRequest, ShipError } = await import('@/engine/ship')
+    const { runId } = await shippable()
+    let view: View = { number: 5, url: 'u', state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [{ __typename: 'StatusContext', context: 'Vercel', state: 'PENDING' }], mergeCommit: null, mergedAt: null }
+    const { gh, calls } = fakeGh(() => view, args => (args[1] === 'merge' ? ((view = { ...view, state: 'MERGED', mergeCommit: { oid: 'abc' }, mergedAt: 'now' }), '') : undefined))
+    await openPullRequest(runId, gh)
+    await expect(mergePullRequest(runId, gh)).rejects.toThrow(strings.ship.checksRunning)
+    view = { ...view, statusCheckRollup: [{ __typename: 'StatusContext', context: 'Vercel', state: 'FAILURE' }] }
+    await expect(mergePullRequest(runId, gh)).rejects.toThrow(strings.ship.checksFailed)
+    view = { ...view, statusCheckRollup: [{ __typename: 'StatusContext', context: 'Vercel', state: 'SUCCESS' }], mergeable: 'CONFLICTING' }
+    await expect(mergePullRequest(runId, gh)).rejects.toBeInstanceOf(ShipError)
+    view = { ...view, mergeable: 'MERGEABLE' }
+    const merged = await mergePullRequest(runId, gh)
+    expect(calls.find(c => c[1] === 'merge')).toEqual(['pr', 'merge', '5', '--squash'])
+    expect(merged.pr!.state).toBe('merged')
+    expect(merged.deploy).toEqual([{ name: 'Deploy', state: 'passed', url: 'https://site' }])
+  })
+
+  test('no gh on the computer is said plainly', async () => {
+    const { openPullRequest } = await import('@/engine/ship')
+    const { runId } = await shippable()
+    const gh = async () => {
+      throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' })
+    }
+    await expect(openPullRequest(runId, gh)).rejects.toThrow(strings.ship.noGh)
+  })
+})

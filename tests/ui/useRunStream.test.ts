@@ -242,3 +242,13 @@ test('a stage skipped because it is not built yet is marked so, and an ordinary 
   expect(views.review!.notBuilt).toBe(true)
   expect(views.tests!.notBuilt).toBeUndefined()
 })
+
+test('the Ship stage follows the pull request: open waits on the person, merged is shipped', async () => {
+  const { toViews } = await import('@/ui/canvas/useRunStream')
+  const ship: Block = { id: 'ship', kind: 'ship', label: 'Ship', enabled: true, config: {}, position: { x: 0, y: 0 } }
+  let s = foldEvent(emptyStream, { sequence: 1, type: 'run.pushed', payload: { branch: 'ai/x' } })
+  s = foldEvent(s, { sequence: 2, type: 'run.pr_opened', payload: { number: 4, url: 'u' } })
+  expect(toViews(s.nodes, [ship], s.shipped).ship).toMatchObject({ state: 'waiting_approval', summary: strings.summary.prOpen(4) })
+  s = foldEvent(s, { sequence: 3, type: 'run.merged', payload: { number: 4 } })
+  expect(toViews(s.nodes, [ship], s.shipped).ship).toMatchObject({ state: 'passed', summary: strings.summary.mergedVia(4) })
+})

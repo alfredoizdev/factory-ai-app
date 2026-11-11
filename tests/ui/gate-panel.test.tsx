@@ -113,6 +113,7 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   let state: Record<string, unknown> = approved
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/branch-name')) return new Response(JSON.stringify({ name: 'ai/watch-videos-outline-abc123' }))
+    if (url.endsWith('/ship')) return new Response(JSON.stringify({ pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null }))
     if (url.endsWith('/delivery') && init?.method === 'POST') {
       const { mode, name } = JSON.parse(String(init.body)) as { mode: string; name?: string }
       if (mode === 'branch' || mode === 'apply') state = { ...state, kept: true, branch: name, commit: '1234567abc', files: ['src/app/page.tsx'], delivered: mode === 'apply' }
@@ -128,13 +129,14 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   const field = await screen.findByLabelText(new RegExp(strings.delivery.branchName))
   await waitFor(() => expect(field).toHaveValue('ai/watch-videos-outline-abc123'))
   fireEvent.change(field, { target: { value: 'feature/my-name' } })
+  fireEvent.click(screen.getByRole('button', { name: strings.delivery.moreOptions }))
   expect(screen.getByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.keepButton) }))
   expect(await screen.findByTestId('kept')).toHaveTextContent('feature/my-name')
   expect(screen.getByTestId('kept')).toHaveTextContent('1234567')
   const sent = fetchMock.mock.calls.find(([, i]) => i?.method === 'POST')!
   expect(JSON.parse(String(sent[1]!.body))).toEqual({ mode: 'branch', name: 'feature/my-name' })
-  // Applying is still on offer after keeping.
+  // Applying is still on offer after keeping, under the same More options, still open.
   expect(screen.getByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeInTheDocument()
   // Switch, then back.
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.switchButton) }))
@@ -142,10 +144,6 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: (n: string) => n.includes(strings.delivery.backButton('main')) }))
   expect(await screen.findByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeInTheDocument()
-  // Push, then the pull-request link.
-  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.pushButton) }))
-  expect(await screen.findByTestId('pushed')).toHaveTextContent(strings.delivery.pushed('feature/my-name'))
-  expect(screen.getByRole('link', { name: new RegExp(strings.delivery.openPullRequest) })).toHaveAttribute('href', 'https://github.com/a/b/pull/new/feature/my-name')
 })
 
 test('a fresh task says it starts from the main branch, and offers the folder\'s branch when it differs', () => {
@@ -160,4 +158,30 @@ test('a fresh task says it starts from the main branch, and offers the folder\'s
   expect(select).toHaveValue('main')
   fireEvent.change(select, { target: { value: 'ai/buttons' } })
   expect(onStartFrom).toHaveBeenCalledWith('ai/buttons')
+})
+
+test('shipping: open the pull request, wait for its checks, and merge only after confirming', async () => {
+  const { ShipSection } = await import('@/ui/canvas/ShipSection')
+  let ship: Record<string, unknown> = { pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null }
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      const { action } = JSON.parse(String(init.body)) as { action: string }
+      ship =
+        action === 'open'
+          ? { ...ship, pr: { number: 9, url: 'https://gh/pr/9', state: 'open', conflicts: false }, checks: [{ name: 'CI', state: 'passed', url: null }], checksDone: true }
+          : { ...ship, pr: { number: 9, url: 'https://gh/pr/9', state: 'merged', conflicts: false }, deploy: [{ name: 'Deploy', state: 'passed', url: 'https://site' }], mergedAt: new Date(0).toISOString() }
+    }
+    return new Response(JSON.stringify(ship))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  render(<ShipSection runId="r1" button={() => ({})} />)
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(strings.ship.shipIt) }))
+  expect(await screen.findByRole('link', { name: new RegExp(strings.ship.pr(9)) })).toHaveAttribute('href', 'https://gh/pr/9')
+  expect(screen.getByText(strings.ship.allPassed, { exact: false })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: strings.ship.merge }))
+  // Nothing is merged until the person confirms.
+  expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.ship.yes) }))
+  expect(await screen.findByText(strings.ship.merged, { exact: false })).toBeInTheDocument()
+  expect(screen.getByText(strings.ship.live, { exact: false })).toBeInTheDocument()
 })

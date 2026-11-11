@@ -5,6 +5,7 @@ import type { Delivery } from '@/engine/delivery'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
+import { ShipSection } from './ShipSection'
 
 /**
  * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
@@ -30,6 +31,7 @@ export function ResultSection({
 }) {
   const [delivery, setDelivery] = useState<Delivery | null>(null)
   const [busy, setBusy] = useState<Mode | 'follow' | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
   // The branch name, suggested by the app and the person's to change. null: the suggestion has not arrived yet.
   const [branchName, setBranchName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -137,23 +139,8 @@ export function ResultSection({
                 <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.switchWhat}</div>
               </>
             )}
-            {delivery.pushed ? (
-              <div data-testid="pushed" style={{ display: 'grid', gap: 4, fontSize: 12.5, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-                <span style={{ color: theme.passed }}>✓ {strings.delivery.pushed(delivery.branch)}</span>
-                {delivery.pullRequestUrl && (
-                  <a href={delivery.pullRequestUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#93c5fd', fontWeight: 700 }}>
-                    {strings.delivery.openPullRequest} ↗
-                  </a>
-                )}
-              </div>
-            ) : (
-              <>
-                <button type="button" disabled={busy !== null} onClick={() => void bring('push')} style={secondaryButton(busy)}>
-                  {busy === 'push' ? <WorkingSpinner blockId="push" size={16} /> : '↑'} {strings.delivery.pushButton}
-                </button>
-                <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.pushWhat}</div>
-              </>
-            )}
+            {/* Shipping is GitHub's pull request, its checks and a merge the person confirms. */}
+            <ShipSection runId={runId} button={primaryButton} />
           </div>
         ) : (
           <>
@@ -180,21 +167,49 @@ export function ResultSection({
             <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.keepWhat}</div>
           </>
         )}
-        {/* Copying the change into whatever is open is a developer's move, so it waits behind More options. On the kept
-            branch it is not offered at all: the change is already there, and applying it again would collide. */}
-        {delivery.kept && delivery.current === delivery.branch ? null : delivery.delivered ? (
-          <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{strings.delivery.done(delivery.files.length)}</div>
-        ) : (
-          <details style={{ fontSize: 12 }}>
-            <summary style={{ cursor: 'pointer', color: theme.dim }}>{strings.delivery.moreOptions}</summary>
-            <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
-              <button type="button" disabled={busy !== null} onClick={() => void bring('apply')} style={secondaryButton(busy)}>
-                {busy === 'apply' ? <WorkingSpinner blockId="apply" size={16} /> : '⤵'} {strings.delivery.applyButton}
+        {delivery.delivered && <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{strings.delivery.done(delivery.files.length)}</div>}
+        {/* The less common moves, together behind one toggle, each in its own small card. Copying the change into what
+            is open is not offered on the kept branch (it is already there); pushing alone only before anything was sent. */}
+        {(() => {
+          const canApply = !delivery.delivered && !(delivery.kept && delivery.current === delivery.branch)
+          const canPushOnly = delivery.kept && !delivery.pushed
+          if (!canApply && !canPushOnly) return null
+          return (
+            <div style={{ display: 'grid', gap: 8 }}>
+              <button
+                type="button"
+                aria-expanded={moreOpen}
+                onClick={() => setMoreOpen(o => !o)}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}
+              >
+                {strings.delivery.moreOptions}
+                <span aria-hidden="true" style={{ transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease-out' }}>
+                  ▾
+                </span>
               </button>
-              <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{strings.delivery.applyWhat}</div>
+              {moreOpen && (
+                <div data-testid="more-options" style={{ display: 'grid', gap: 8 }}>
+                  {canPushOnly && (
+                    <div style={optionCard}>
+                      <button type="button" disabled={busy !== null} onClick={() => void bring('push')} style={secondaryButton(busy)}>
+                        {busy === 'push' ? <WorkingSpinner blockId="push" size={16} /> : '↑'} {strings.delivery.pushOnly}
+                      </button>
+                      <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{strings.delivery.pushOnlyWhat}</div>
+                    </div>
+                  )}
+                  {canApply && (
+                    <div style={optionCard}>
+                      <button type="button" disabled={busy !== null} onClick={() => void bring('apply')} style={secondaryButton(busy)}>
+                        {busy === 'apply' ? <WorkingSpinner blockId="apply" size={16} /> : '⤵'} {strings.delivery.applyButton}
+                      </button>
+                      <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{strings.delivery.applyWhat}</div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          </details>
-        )}
+          )
+        })()}
       </div>
 
       <div style={{ display: 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
@@ -226,6 +241,8 @@ export function ResultSection({
     </>
   )
 }
+
+const optionCard: CSSProperties = { display: 'grid', gap: 6, padding: 10, borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c' }
 
 function primaryButton(busy: unknown): CSSProperties {
   return { padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }
