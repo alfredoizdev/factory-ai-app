@@ -1,0 +1,147 @@
+import { spawn as nodeSpawn } from 'node:child_process'
+import { createInterface } from 'node:readline'
+import type { BlockKind } from '@/domain/graph'
+import { clip, redact } from '@/engine/redact'
+import { runTestCommand as nodeRunTests } from '@/engine/test-runner'
+import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
+import { mapStreamLine } from '@/providers/claude-stream'
+import type { AgentEvent, AgentExecutionInput, AgentProvider, BlockRoute, ExecutionControls } from '@/providers/types'
+import { strings } from '@/ui/strings'
+
+// The real builder. Build is the `claude` CLI, headless, inside the run's worktree; Tests is the project's own test
+// command (no model involved). Every other block either records something plain (Input) or is skipped with a
+// sentence saying which milestone brings it — nothing here pretends to do work it does not do.
+
+const STDERR_TAIL = 600
+
+export type ClaudeDeps = {
+  spawn?: typeof nodeSpawn
+  bin?: string
+  runTests?: typeof nodeRunTests
+}
+
+const SKIPPED: Partial<Record<BlockKind, string>> = {
+  plan: strings.run.notYet.plan,
+  review: strings.run.notYet.review,
+  approve: strings.run.notYet.review,
+  ship: strings.run.notYet.ship,
+}
+
+export function routeFor(kind: BlockKind, context: { testCommand?: string | null }): BlockRoute {
+  const reason = SKIPPED[kind]
+  if (reason) return { mode: 'skip', reason }
+  if (kind === 'tests' && !context.testCommand?.trim()) return { mode: 'skip', reason: strings.run.notYet.noTestCommand }
+  return { mode: 'execute' }
+}
+
+export function claudeArgs(prompt: string): string[] {
+  // The prompt is an argument, never interpolated into a shell. bypassPermissions is the design's unattended builder
+  // (§6): it works inside its worktree without a prompt per command. It is not a sandbox.
+  return ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions']
+}
+
+async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
+  if (!input.workdir) {
+    yield { type: 'error', message: strings.providers.claude.noWorkdir }
+    return
+  }
+  const workdir = input.workdir
+  let child: ReturnType<typeof nodeSpawn>
+  try {
+    child = deps.spawn(deps.bin, claudeArgs(strings.providers.claude.buildPrompt(input.request)), {
+      cwd: workdir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    })
+  } catch {
+    yield { type: 'error', message: strings.providers.claude.notFound }
+    return
+  }
+
+  let stderr = ''
+  child.stderr?.on('data', (c: Buffer) => {
+    stderr = (stderr + c.toString()).slice(-STDERR_TAIL * 4)
+  })
+  const exited = new Promise<{ code: number | null; missing: boolean }>(resolve => {
+    child.once('error', (e: NodeJS.ErrnoException) => resolve({ code: null, missing: e.code === 'ENOENT' }))
+    child.once('close', (code: number | null) => resolve({ code, missing: false }))
+  })
+  const stop = () => child.kill('SIGTERM')
+  if (signal.aborted) stop()
+  else signal.addEventListener('abort', stop, { once: true })
+
+  try {
+    if (child.stdout) {
+      for await (const raw of createInterface({ input: child.stdout })) {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(raw)
+        } catch {
+          continue
+        }
+        for (const ev of mapStreamLine(parsed, workdir)) {
+          yield ev
+          if (ev.type === 'done' || ev.type === 'error') return // exactly one terminal event
+        }
+      }
+    }
+    const { code, missing } = await exited
+    if (signal.aborted) return
+    if (missing) {
+      yield { type: 'error', message: strings.providers.claude.notFound }
+      return
+    }
+    const tail = clip(redact(stderr.trim()).slice(-STDERR_TAIL), STDERR_TAIL)
+    yield { type: 'error', message: [strings.providers.claude.exitedWithoutResult(code), tail].filter(Boolean).join(' ') }
+  } finally {
+    signal.removeEventListener('abort', stop)
+    // A builder still running after the stream ended (or after an abort) must not keep writing into the worktree.
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+  }
+}
+
+async function* runTests(input: AgentExecutionInput, { signal }: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
+  const command = input.testCommand?.trim()
+  if (!input.workdir || !command) {
+    yield { type: 'error', message: strings.providers.claude.noWorkdir }
+    return
+  }
+  yield { type: 'step', text: strings.providers.claude.runningTests(command) }
+  const run = await deps.runTests(command, input.workdir, signal)
+  if (signal.aborted || run.exitCode === null) return
+  yield { type: 'evidence', kind: 'test_run', data: run }
+  const c = run.counts
+  if (run.exitCode === 0) {
+    yield { type: 'done', source: 'system', summary: c ? strings.summary.testsPassed(c.passed, c.total) : strings.summary.passedWithoutCounts }
+  } else {
+    yield {
+      type: 'error',
+      source: 'system',
+      cause: 'tests_failed',
+      message: c ? strings.summary.testsFailed(c.passed, c.failed, c.total) : strings.summary.failedWithoutCounts,
+    }
+  }
+}
+
+export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
+  const full: Required<ClaudeDeps> = { spawn: deps.spawn ?? nodeSpawn, bin: deps.bin ?? 'claude', runTests: deps.runTests ?? nodeRunTests }
+  return {
+    id: CLAUDE_PROVIDER_ID,
+    isDemo: false,
+    route: routeFor,
+    async *execute(input, controls) {
+      if (input.blockKind === 'input') {
+        yield { type: 'step', text: strings.providers.claude.recordingRequest }
+        yield { type: 'done', source: 'system', summary: strings.summary.input.passed }
+        return
+      }
+      if (input.blockKind === 'tests') {
+        yield* runTests(input, controls, full)
+        return
+      }
+      yield* runBuilder(input, controls, full)
+    },
+  }
+}
+
+export const claudeProvider: AgentProvider = createClaudeProvider()

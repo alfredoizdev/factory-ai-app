@@ -190,7 +190,8 @@ async function runAttempt(
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') onStep(ev.text)
         else if (ev.type === 'done') return { kind: 'done', summary: ev.summary }
-        else return { kind: 'error', message: ev.message }
+        else if (ev.type === 'error') return { kind: 'error', message: ev.message }
+        // evidence is recorded from Task 5 of the M3a plan onwards
       }
       return { kind: 'ended' }
     } catch (e) {

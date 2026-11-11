@@ -147,6 +147,13 @@ export const strings = {
   },
   run: {
     skippedDisabled: 'This block is switched off, so it was skipped.',
+    // Blocks the real agent does not do yet. Said plainly on the card instead of being faked.
+    notYet: {
+      plan: 'The editable plan arrives in the next step of this milestone.',
+      review: 'Reviews arrive in milestone 4.',
+      ship: 'Shipping arrives in milestone 6.',
+      noTestCommand: 'No test command is set for this project, so nothing was run.',
+    },
     retrying: 'That attempt failed. Trying once more.',
     timedOut: (seconds: number) => `No result after ${seconds} seconds, so the block was stopped.`,
     noResult: 'The agent stopped without a result.',
@@ -191,6 +198,22 @@ export const strings = {
     workflowName: 'Demo workflow',
   },
   providers: {
+    claude: {
+      buildPrompt: (request: string) =>
+        [
+          request,
+          '',
+          'Work only inside the current directory: it is a separate copy of the repository made for this task.',
+          'Do not commit, push or create branches. Leave the changes in the working tree.',
+          'When you are done, reply with one plain sentence saying what you changed.',
+        ].join('\n'),
+      notFound: 'The claude command was not found on this computer.',
+      noWorkdir: 'This run has no working copy, so the agent was not started.',
+      exitedWithoutResult: (code: number | null) =>
+        code === null ? 'The agent was stopped before it reported a result.' : `The agent exited (code ${code}) without reporting a result.`,
+      recordingRequest: 'Recording the request',
+      runningTests: (command: string) => `Running ${command}`,
+    },
     demo: {
       steps: {
         input: ['Recording the request', 'Checking it is not empty'],
