@@ -168,16 +168,6 @@ export function GateSection({
       {!decided && composer}
 
       {!decided && (
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" disabled={busy || !review || imagesBusy} onClick={() => void decide('approved')} style={button('passed')}>
-            {busy ? strings.gate.deciding : `✓ ${strings.gate.approve}`}
-          </button>
-          <button type="button" disabled={busy || !review || imagesBusy} onClick={() => void decide('rejected')} style={button('failed')}>
-            ✕ {strings.gate.reject}
-          </button>
-        </div>
-      )}
-      {!decided && (
         // Not yes, not no: back to the builder in the same copy, with the note. The note is what it works from.
         <button
           type="button"
@@ -198,6 +188,16 @@ export function GateSection({
         </button>
       )}
       {!decided && reason.trim() === '' && <div style={{ fontSize: 11.5, color: theme.skipped, marginTop: -6 }}>{strings.gate.changesHint}</div>}
+      {!decided && (
+        <div style={{ display: 'flex', gap: 8, paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
+          <button type="button" disabled={busy || !review || imagesBusy} onClick={() => void decide('approved')} style={button('passed')}>
+            {busy ? strings.gate.deciding : `✓ ${strings.gate.approve}`}
+          </button>
+          <button type="button" disabled={busy || !review || imagesBusy} onClick={() => void decide('rejected')} style={button('failed')}>
+            ✕ {strings.gate.reject}
+          </button>
+        </div>
+      )}
       {outcome && (
         <div role={outcome.ok ? 'status' : 'alert'} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: outcome.ok ? theme.passed : theme.failed }}>
           {outcome.ok && !stalled && <WorkingSpinner blockId="gate" size={16} />}
