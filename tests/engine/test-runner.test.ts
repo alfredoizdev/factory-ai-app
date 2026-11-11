@@ -19,6 +19,17 @@ test('reads vitest and jest summaries, and nothing else', () => {
   expect(parseCounts('')).toBeNull()
 })
 
+test('a workspace run prints one summary per package, and every one of them is counted', () => {
+  // pnpm -r run test across four packages: three vitest summaries and one node --test tally.
+  const output = [
+    'apps/desktop test:       Tests  12 passed (12)',
+    'apps/mobile test:       Tests  7 passed | 1 failed (8)',
+    'apps/site test: ℹ tests 3', 'apps/site test: ℹ pass 3', 'apps/site test: ℹ fail 0',
+    'packages/shared test:       Tests  20 passed (20)',
+  ].join('\n')
+  expect(parseCounts(output)).toEqual({ passed: 42, failed: 1, total: 43 })
+})
+
 test('a failing command records its exit code and no invented counts', async () => {
   const run = await runTestCommand('echo nothing to see; exit 3', tmp(), new AbortController().signal)
   expect(run.exitCode).toBe(3)

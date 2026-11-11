@@ -29,24 +29,41 @@ export type TestRun = {
 
 const TAIL_CHARS = 4000
 
+// Each runner prints its own summary, and a workspace run (pnpm -r, npm --workspaces, turbo) prints one per package,
+// often with the package name in front. Every summary found is added up: reading only the first would report one
+// package's numbers as the whole run's. Lines are matched anywhere, so a "pkg test:" prefix does not hide them.
+const VITEST = /Tests\s+((?:\d+\s+(?:passed|failed|skipped|todo)\s*\|?\s*)+)\((\d+)\)/g
+const JEST = /Tests:\s+([^\n]*?)(\d+)\s+total/g
+const NODE_TALLY = (word: string) => new RegExp(`(?:^|\\s)(?:#|ℹ)\\s+${word}\\s+(\\d+)\\s*$`, 'gm')
+
+const part = (text: string, word: string) => Number(text.match(new RegExp(`(\\d+)\\s+${word}`))?.[1] ?? 0)
+
 export function parseCounts(output: string): TestCounts | null {
-  // vitest: "Tests  3 passed | 1 failed (4)" in either order, or "Tests  4 passed (4)".
-  const vitest = output.match(/Tests\s+((?:\d+\s+(?:passed|failed|skipped|todo)\s*\|?\s*)+)\((\d+)\)/)
-  if (vitest) {
-    const part = (word: string) => Number(vitest[1]!.match(new RegExp(`(\\d+)\\s+${word}`))?.[1] ?? 0)
-    return { passed: part('passed'), failed: part('failed'), total: Number(vitest[2]) }
+  const sum = { passed: 0, failed: 0, total: 0 }
+  let found = false
+  for (const m of output.matchAll(VITEST)) {
+    sum.passed += part(m[1]!, 'passed')
+    sum.failed += part(m[1]!, 'failed')
+    sum.total += Number(m[2])
+    found = true
   }
-  // jest: "Tests:       1 failed, 3 passed, 4 total".
-  const jest = output.match(/Tests:\s+([^\n]*?)(\d+)\s+total/)
-  if (jest) {
-    const part = (word: string) => Number(jest[1]!.match(new RegExp(`(\\d+)\\s+${word}`))?.[1] ?? 0)
-    return { passed: part('passed'), failed: part('failed'), total: Number(jest[2]) }
+  for (const m of output.matchAll(JEST)) {
+    sum.passed += part(m[1]!, 'passed')
+    sum.failed += part(m[1]!, 'failed')
+    sum.total += Number(m[2])
+    found = true
   }
-  // node --test: "# tests 4 / # pass 3 / # fail 1" (TAP reporter) or "ℹ tests 4 / ℹ pass 3 / ℹ fail 1" (spec reporter).
-  const tally = (word: string) => output.match(new RegExp(`^(?:#|ℹ)\\s+${word}\\s+(\\d+)\\s*$`, 'm'))?.[1]
+  // node --test: one "tests / pass / fail" tally per run. Only complete tallies count.
+  const tally = (word: string) => [...output.matchAll(NODE_TALLY(word))].map(m => Number(m[1]))
   const [tests, pass, fail] = [tally('tests'), tally('pass'), tally('fail')]
-  if (tests !== undefined && pass !== undefined && fail !== undefined) return { passed: Number(pass), failed: Number(fail), total: Number(tests) }
-  return null
+  if (tests.length > 0 && tests.length === pass.length && tests.length === fail.length) {
+    const add = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
+    sum.passed += add(pass)
+    sum.failed += add(fail)
+    sum.total += add(tests)
+    found = true
+  }
+  return found ? sum : null
 }
 
 /** Runs the project's configured test command. That string is the allow-list: nothing else is ever run here. */
