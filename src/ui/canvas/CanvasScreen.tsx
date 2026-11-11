@@ -287,9 +287,9 @@ export function CanvasScreen({
           highlightedId={highlightedId}
           flushRef={flushRef}
           sidebarTop={agentPanel}
+          sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
       </div>
-      {run && <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} />}
     </div>
   )
 }

@@ -60,3 +60,26 @@ test('Cmd+Enter in the request box starts a run; an empty box does not', async (
     vi.unstubAllGlobals()
   }
 })
+
+test('the run\'s log lives in the sidebar, and the closed rail has a way back to it', () => {
+  // A run on screen opens its live stream; this one never sends anything.
+  vi.stubGlobal('EventSource', class {
+    onopen = null
+    onmessage = null
+    onerror = null
+    close() {}
+  })
+  const run = { runId: 'r1', providerId: 'demo', blocks: defaultGraph().blocks }
+  render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={settings} run={run} />)
+  expect(screen.getByTestId('sidebar')).toContainElement(screen.getByTestId('event-bar'))
+  fireEvent.click(screen.getByRole('button', { name: strings.sidebar.close }))
+  expect(screen.getByTestId('sidebar-rail').querySelector(`[aria-label="${strings.events.barTitle}"]`)).not.toBeNull()
+  vi.unstubAllGlobals()
+})
+
+test('without a run there is no log, and no rail icon for one', () => {
+  page()
+  expect(screen.queryByTestId('event-bar')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: strings.sidebar.close }))
+  expect(screen.getByTestId('sidebar-rail').querySelector(`[aria-label="${strings.events.barTitle}"]`)).toBeNull()
+})

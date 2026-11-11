@@ -70,12 +70,13 @@ export function EventBar({ event, block, onPoint }: { event: Wire; block: Block;
   const colour = theme[visualStateOf(state)]
   const { text, isClaim } = describeEvent(event, block)
   return (
+    // Stacked to fit the sidebar: the block and the point-it-out control on one line, what happened under it.
     <li
       data-testid="event-line"
-      style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '4px 8px', borderLeft: `3px solid ${colour}` }}
+      style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', columnGap: 6, rowGap: 2, padding: '6px 8px', borderLeft: `3px solid ${colour}`, fontSize: 12.5 }}
     >
-      <strong style={{ color: colour, flexShrink: 0 }}>{block.label}</strong>
-      <span style={{ flex: 1, minWidth: 0 }}>
+      <strong style={{ color: colour, fontSize: 11.5 }}>{block.label}</strong>
+      <span style={{ gridColumn: '1 / -1', gridRow: 2, minWidth: 0, color: '#c9d1dc', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
         {isClaim && (
           <span title={strings.canvas.claimTitle} style={{ fontStyle: 'italic', color: theme.waiting }}>
             {strings.canvas.claimMarker}:{' '}
@@ -87,9 +88,10 @@ export function EventBar({ event, block, onPoint }: { event: Wire; block: Block;
         type="button"
         aria-label={strings.events.pointItOutAria(block.label)}
         onClick={() => onPoint(block.id)}
-        style={{ background: 'none', color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+        title={strings.events.pointItOut}
+        style={{ gridRow: 1, gridColumn: 2, background: 'none', color: theme.dim, border: `1px solid ${theme.border}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, padding: '1px 6px' }}
       >
-        {strings.events.pointItOut}
+        ◎ {strings.events.pointItOut}
       </button>
     </li>
   )
@@ -105,9 +107,9 @@ export function EventBarList({ events, blocks, onPoint }: { events: readonly Wir
     return block ? [{ event, block }] : []
   })
   return (
-    <section data-testid="event-bar" aria-label={strings.events.barTitle} style={{ borderTop: `1px solid ${theme.border}`, maxHeight: 180, overflowY: 'auto' }}>
+    <section data-testid="event-bar" aria-label={strings.events.barTitle}>
       {lines.length === 0 ? (
-        <p style={{ margin: 8, color: theme.skipped }}>{strings.events.empty}</p>
+        <p style={{ margin: 0, color: theme.skipped, fontSize: 12.5 }}>{strings.events.empty}</p>
       ) : (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 2 }}>
           {[...lines].reverse().map(({ event, block }) => ( // newest first, so the latest line is never scrolled away

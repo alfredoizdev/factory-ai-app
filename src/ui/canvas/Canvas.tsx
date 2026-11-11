@@ -95,6 +95,8 @@ const SIDEBAR_KEY = 'factory.sidebar.open'
 const RUN_SECTION = 'sidebar-run'
 const PALETTE_SECTION = 'sidebar-palette'
 const SETTINGS_SECTION = 'sidebar-block-settings'
+const LOG_SECTION = 'sidebar-log'
+const LOG_MAX_HEIGHT = 260
 /** The id the run panel gives its request box, so the rail's run icon can put the cursor in it. */
 export const RUN_INPUT_ID = 'run-request'
 
@@ -181,6 +183,7 @@ export function Canvas({
   highlightedId = null,
   flushRef,
   sidebarTop,
+  sidebarLog,
 }: {
   graph: Graph
   nodeRuns?: NodeRunView[]
@@ -197,8 +200,10 @@ export function Canvas({
   highlightedId?: string | null
   /** Filled with a function that saves any pending edit now and says whether the draft is safely on the server. */
   flushRef?: { current: (() => Promise<boolean>) | null }
-  /** The first section of the sidebar: where a run is asked for. Absent: the sidebar holds only the editing tools. */
+  /** The first section of the sidebar: the agent's settings. Absent: the sidebar holds only the editing tools. */
   sidebarTop?: ReactNode
+  /** The run's log, at the foot of the sidebar. Absent: there is no run to log. */
+  sidebarLog?: ReactNode
 }) {
   const [graph, setGraph] = useState(initialGraph)
   const [selectedId, setSelectedId] = useState<string | null>(initialExpandedId)
@@ -469,6 +474,7 @@ export function Canvas({
           <RailButton icon="run" label={strings.sidebar.run} onClick={() => document.getElementById(RUN_INPUT_ID)?.focus()} />
           <RailButton icon="add" label={strings.editing.paletteTitle} onClick={() => openAt(PALETTE_SECTION)} />
           <RailButton icon="settings" label={strings.editing.inspectorTitle} onClick={() => openAt(SETTINGS_SECTION)} />
+          {sidebarLog && <RailButton icon="log" label={strings.events.barTitle} onClick={() => openAt(LOG_SECTION)} />}
         </nav>
       )}
       <aside
@@ -479,11 +485,15 @@ export function Canvas({
           width: SIDEBAR_WIDTH,
           flexShrink: 0,
           padding: 12,
-          display: sidebarOpen ? 'grid' : 'none',
-          alignContent: 'start',
+          // A column, so the log panel can sit at the very bottom however little is above it.
+          display: sidebarOpen ? 'flex' : 'none',
+          flexDirection: 'column',
           gap: 20,
           borderRight: `1px solid ${theme.border}`,
           overflowY: 'auto',
+          // A thin dark scrollbar: the system's light one is the brightest thing on screen otherwise.
+          scrollbarWidth: 'thin',
+          scrollbarColor: `${theme.floorLine} transparent`,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -549,6 +559,34 @@ export function Canvas({
           <p role="alert" style={{ margin: 0, color: theme.failed }}>
             {strings.editing.saveFailed}
           </p>
+        )}
+
+        {sidebarLog && (
+          // Its own enclosed panel: a header with the title, then a short scroll of lines, newest first.
+          <section
+            id={LOG_SECTION}
+            data-testid="sidebar-log"
+            style={{ marginTop: 'auto', flexShrink: 0, background: '#0f141c', border: `1px solid ${theme.border}`, borderRadius: 10, overflow: 'hidden' }}
+          >
+            <h2
+              style={{
+                margin: 0,
+                padding: '8px 10px',
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: theme.dim,
+                background: '#131a24',
+                borderBottom: `1px solid ${theme.border}`,
+              }}
+            >
+              {strings.events.barTitle}
+            </h2>
+            <div style={{ maxHeight: LOG_MAX_HEIGHT, overflowY: 'auto', padding: 6, scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>
+              {sidebarLog}
+            </div>
+          </section>
         )}
       </aside>
 

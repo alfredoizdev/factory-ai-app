@@ -11,6 +11,7 @@ const PATHS = {
       <circle cx="10.5" cy="11.5" r="1.6" />
     </>
   ),
+  log: <path d="M3 4h10M3 8h10M3 12h7" />,
   collapse: <path d="M10 3.5L5.5 8l4.5 4.5" />,
   expand: <path d="M6 3.5L10.5 8 6 12.5" />,
 } satisfies Record<string, ReactNode>
