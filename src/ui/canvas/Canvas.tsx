@@ -210,7 +210,6 @@ export function Canvas({
   flushRef,
   sidebarTop,
   sidebarLog,
-  sidebarTasks,
 }: {
   graph: Graph
   nodeRuns?: NodeRunView[]
@@ -231,8 +230,6 @@ export function Canvas({
   sidebarTop?: ReactNode
   /** The run's log, at the foot of the sidebar. Absent: there is no run to log. */
   sidebarLog?: ReactNode
-  /** The flow's past tasks, under the block settings. */
-  sidebarTasks?: ReactNode
 }) {
   const [graph, setGraph] = useState(initialGraph)
   const [selectedId, setSelectedId] = useState<string | null>(initialExpandedId)
@@ -672,15 +669,6 @@ export function Canvas({
           <p role="alert" style={{ margin: 0, color: theme.failed }}>
             {strings.editing.saveFailed}
           </p>
-        )}
-
-        {sidebarTasks && (
-          <section data-testid="past-tasks" style={{ display: 'grid', gap: 8, minHeight: 0 }}>
-            <h2 style={{ margin: 0, fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: theme.dim }}>
-              {strings.history.title}
-            </h2>
-            <div style={{ maxHeight: 220, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>{sidebarTasks}</div>
-          </section>
         )}
 
         {sidebarLog && (

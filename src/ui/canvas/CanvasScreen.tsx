@@ -1,7 +1,8 @@
 'use client'
 
 import { PastTasks } from './PastTasks'
-import { useRef, useState } from 'react'
+import { TasksDrawer } from './TasksDrawer'
+import { useCallback, useRef, useState } from 'react'
 import type { Block, Graph, ValidationIssue } from '@/domain/graph'
 import type { ProjectSettings } from '@/engine/project-settings'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
@@ -116,6 +117,9 @@ export function CanvasScreen({
   const [startFrom, setStartFrom] = useState<string | null>(null)
   const startOptions = [...new Set([settings?.defaultBranch, settings?.currentBranch].filter((b): b is string => !!b))]
   const chosenStart = startFrom !== null && startOptions.includes(startFrom) ? startFrom : (startOptions[0] ?? null)
+
+  const [tasksOpen, setTasksOpen] = useState(false)
+  const closeTasks = useCallback(() => setTasksOpen(false), [])
 
   async function startRun() {
     setBusy(true)
@@ -251,6 +255,9 @@ export function CanvasScreen({
             ＋ {strings.delivery.newTask}
           </button>
         )}
+        <button type="button" style={headerButton} aria-expanded={tasksOpen} onClick={() => setTasksOpen(o => !o)}>
+          ☰ {strings.history.open}
+        </button>
         {/* The buttons act; what follows describes the run on screen, so it sits apart, at the far end. */}
         <span aria-hidden="true" style={{ flex: 1 }} />
         {run?.providerId === DEMO_PROVIDER_ID && (
@@ -331,6 +338,20 @@ export function CanvasScreen({
         )}
       </header>
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <TasksDrawer open={tasksOpen} onClose={closeTasks}>
+          <PastTasks
+            workflowId={workflowId}
+            currentRunId={run?.runId ?? null}
+            refreshKey={`${run?.runId ?? ''}-${runStatus ?? ''}-${tasksOpen}`}
+            onOpen={id => {
+              setTasksOpen(false)
+              void watchRun(id)
+            }}
+            onDeleted={id => {
+              if (id === run?.runId) newTask()
+            }}
+          />
+        </TasksDrawer>
         <CommandCard
           key={`${run?.runId ?? 'none'}-${mode}`}
           ref={cardRef}
@@ -357,17 +378,6 @@ export function CanvasScreen({
           highlightedId={highlightedId}
           flushRef={flushRef}
           sidebarTop={agentPanel}
-          sidebarTasks={
-            <PastTasks
-              workflowId={workflowId}
-              currentRunId={run?.runId ?? null}
-              refreshKey={`${run?.runId ?? ''}-${runStatus ?? ''}`}
-              onOpen={id => void watchRun(id)}
-              onDeleted={id => {
-                if (id === run?.runId) newTask()
-              }}
-            />
-          }
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
       </div>

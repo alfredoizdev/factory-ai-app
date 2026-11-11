@@ -60,3 +60,32 @@ test('a refused delete says why and keeps the task', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent(strings.history.stillLive)
   expect(screen.getByText('Remove the white circle')).toBeInTheDocument()
 })
+
+test('the Tasks button slides the drawer open; the backdrop, the ✕ and Escape close it', async () => {
+  const { TasksDrawer } = await import('@/ui/canvas/TasksDrawer')
+  const { useState } = await import('react')
+  function Harness() {
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>{strings.history.open}</button>
+        <TasksDrawer open={open} onClose={() => setOpen(false)}>
+          <p>list</p>
+        </TasksDrawer>
+      </>
+    )
+  }
+  render(<Harness />)
+  const drawer = screen.getByTestId('tasks-drawer')
+  expect(drawer).toHaveAttribute('data-open', 'false')
+  fireEvent.click(screen.getByRole('button', { name: strings.history.open }))
+  expect(drawer).toHaveAttribute('data-open', 'true')
+  fireEvent.click(screen.getByTestId('tasks-backdrop'))
+  expect(drawer).toHaveAttribute('data-open', 'false')
+  fireEvent.click(screen.getByRole('button', { name: strings.history.open }))
+  fireEvent.keyDown(window, { key: 'Escape' })
+  expect(drawer).toHaveAttribute('data-open', 'false')
+  fireEvent.click(screen.getByRole('button', { name: strings.history.open }))
+  fireEvent.click(screen.getByRole('button', { name: strings.history.close, hidden: true }))
+  expect(drawer).toHaveAttribute('data-open', 'false')
+})

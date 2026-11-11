@@ -23,6 +23,8 @@ export const strings = {
   },
   history: {
     title: 'Past tasks',
+    open: 'Tasks',
+    close: 'Close past tasks',
     empty: 'No tasks yet. Your first one will show up here.',
     justNow: 'just now',
     minutesAgo: (n: number) => `${n} min ago`,
