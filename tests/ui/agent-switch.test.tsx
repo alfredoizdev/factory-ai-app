@@ -42,3 +42,33 @@ test('without project settings there is no agent switch at all', () => {
   render(<CanvasScreen workflowId="w1" graph={defaultGraph()} />)
   expect(screen.queryByLabelText(strings.settings.agentLabel)).toBeNull()
 })
+
+test('after a save the button itself says so, and an edit makes it a Save button again', async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ projectId: 'p1', repoPath: '/repo', testCommand: 'npm test' }), { status: 200 }))
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    const { findByRole } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
+    fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: strings.settings.save }))
+    const saved = await findByRole('button', { name: strings.settings.savedButton })
+    expect(saved).toHaveAttribute('data-state', 'saved')
+    expect(screen.getByRole('status')).toHaveTextContent(strings.settings.saved)
+    fireEvent.change(screen.getByLabelText(strings.settings.testLabel), { target: { value: 'npm run test:unit' } })
+    expect(screen.getByRole('button', { name: strings.settings.save })).toHaveAttribute('data-state', 'idle')
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a refused save turns the button red and says why', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: strings.settings.notRepo }), { status: 400 })))
+  try {
+    const { findByRole } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
+    fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: strings.settings.save }))
+    expect(await findByRole('alert')).toHaveTextContent(strings.settings.notRepo)
+    expect(screen.getByRole('button', { name: strings.settings.save })).toHaveAttribute('data-state', 'failed')
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})

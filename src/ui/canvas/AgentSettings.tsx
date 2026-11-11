@@ -24,6 +24,18 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
   const [testCommand, setTestCommand] = useState(settings.testCommand ?? '')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null)
+  // What is on the server. The button only says "Saved" while the fields still match it: an edit after a save is
+  // unsaved again, and the button must not keep claiming otherwise.
+  const [stored, setStored] = useState({ repoPath: settings.repoPath ?? '', testCommand: settings.testCommand ?? '' })
+  const unchanged = repoPath.trim() === stored.repoPath && testCommand.trim() === stored.testCommand
+  const state: 'saving' | 'saved' | 'failed' | 'idle' = busy
+    ? 'saving'
+    : message?.ok && unchanged
+      ? 'saved'
+      : message && !message.ok
+        ? 'failed'
+        : 'idle'
+  const tone = state === 'saved' ? theme.passed : state === 'failed' ? theme.failed : theme.border
 
   async function save() {
     setBusy(true)
@@ -38,6 +50,7 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
       if (!res.ok || !body) return setMessage({ text: body?.error ?? strings.settings.saveFailed, ok: false })
       setRepoPath(body.repoPath ?? '')
       setTestCommand(body.testCommand ?? '')
+      setStored({ repoPath: body.repoPath ?? '', testCommand: body.testCommand ?? '' })
       onSaved(body)
       setMessage({ text: strings.settings.saved, ok: true })
     } catch {
@@ -74,14 +87,54 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
       </label>
       <button
         type="button"
+        data-state={state}
         disabled={busy}
         onClick={save}
-        style={{ padding: '6px 14px', background: theme.card, color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer' }}
+        style={{
+          position: 'relative',
+          padding: '6px 14px',
+          background: state === 'saved' ? theme.tint('passed', 0.14) : state === 'failed' ? theme.tint('failed', 0.12) : theme.card,
+          color: state === 'saved' ? theme.passed : state === 'failed' ? theme.failed : 'inherit',
+          border: `1px solid ${tone}`,
+          borderRadius: 6,
+          cursor: busy ? 'wait' : 'pointer',
+          fontWeight: state === 'saved' ? 600 : 400,
+          transition: 'background 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out',
+        }}
       >
-        {strings.settings.save}
+        {state === 'saving' ? strings.settings.saving : state === 'saved' ? strings.settings.savedButton : strings.settings.save}
+        {state === 'saved' && (
+          <span
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              top: -8,
+              right: -8,
+              width: 18,
+              height: 18,
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              background: theme.passed,
+              color: '#07090d',
+              border: `2px solid ${theme.bg}`,
+              fontSize: 10,
+              fontWeight: 800,
+              lineHeight: 1,
+            }}
+          >
+            ✓
+          </span>
+        )}
       </button>
-      {message && (
-        <span role={message.ok ? 'status' : 'alert'} style={{ fontSize: 12.5, color: message.ok ? theme.passed : theme.failed }}>
+      {/* The button carries the success; a sentence is only needed when something went wrong, and says what. */}
+      {message && !message.ok && (
+        <span role="alert" style={{ fontSize: 12.5, color: theme.failed }}>
+          {message.text}
+        </span>
+      )}
+      {message?.ok && unchanged && (
+        <span role="status" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>
           {message.text}
         </span>
       )}

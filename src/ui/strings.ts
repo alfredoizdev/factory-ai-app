@@ -161,6 +161,8 @@ export const strings = {
     testPlaceholder: 'npm test',
     save: 'Save',
     saved: 'Saved.',
+    savedButton: 'Saved',
+    saving: 'Saving…',
     saveFailed: 'The settings could not be saved.',
     notSandboxed: 'Claude works on its own in a separate copy of the repository. It is not sandboxed.',
     needsRepo: 'Set the repository before running Claude.',
