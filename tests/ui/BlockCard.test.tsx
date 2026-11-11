@@ -68,12 +68,22 @@ test('a model claim is visibly marked, a verified line is not', () => {
   expect(screen.queryByText(/AI says/i)).toBeNull()
 })
 
-test('expanded card lists steps; collapsed does not', () => {
-  const view = { state: 'running' as const, summary: 'Working', summaryIsClaim: false, steps: ['Wrote file A'] }
+// A card is tall enough to carry one live line, so a collapsed card says what the block is doing now.
+// The history behind that line is still only on the expanded card.
+test('a collapsed card shows the latest step only; the list behind it needs expanding', () => {
+  const view = { state: 'running' as const, summary: 'Working', summaryIsClaim: false, steps: ['Wrote file A', 'Wrote file B'] }
   const { rerender } = render(<BlockCard block={buildBlock} view={view} />)
+  expect(screen.getByText('Wrote file B')).toBeInTheDocument()
   expect(screen.queryByText('Wrote file A')).toBeNull()
+  expect(screen.queryByRole('list')).toBeNull()
   rerender(<BlockCard expanded block={buildBlock} view={view} />)
   expect(screen.getByText('Wrote file A')).toBeInTheDocument()
+  expect(screen.getByRole('list')).toBeInTheDocument()
+})
+
+test('a card with no steps at all shows no live line', () => {
+  render(<BlockCard block={buildBlock} view={{ state: 'queued', summary: 'Waits', summaryIsClaim: false, steps: [] }} />)
+  expect(screen.getByText('Waits')).toBeInTheDocument()
 })
 
 test('an empty summary still renders a readable result line', () => {

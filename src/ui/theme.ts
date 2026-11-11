@@ -15,6 +15,14 @@ const colours = {
   floorLine: '#2a3548',
   /** The ring that points at a block when an event line says "point it out". */
   pointer: '#e5e7eb',
+  /** A panel's own surface: lit at the top edge, settling into the floor tone below. */
+  cardFace: 'linear-gradient(180deg, #1a2230 0%, #141a24 62%)',
+  /** A divider inside a card, quieter than the card's own outline. */
+  lineSoft: 'rgba(255, 255, 255, 0.055)',
+  /** The headline on a card: brighter than body text, which is the browser default inherit. */
+  ink: '#eef1f6',
+  /** Secondary text that is still meant to be read, unlike `skipped`, which is for things that did not happen. */
+  dim: '#9aa5b6',
 } as const
 
 const glowRgb: Record<VisualState, string> = {
@@ -37,6 +45,10 @@ export const theme = {
   /** CSS box-shadow string for a node in the given visual state. */
   glow(state: VisualState): string {
     const rgb = glowRgb[state]
-    return `0 0 0 1px rgba(${rgb}, 0.6), 0 0 18px rgba(${rgb}, 0.35)`
+    return `0 0 0 1px rgba(${rgb}, 0.6), 0 0 26px rgba(${rgb}, 0.28), 0 14px 28px rgba(0, 0, 0, 0.45)`
+  },
+  /** The state colour at `alpha`, for a wash behind an icon or a strip. */
+  tint(state: VisualState, alpha: number): string {
+    return `rgba(${glowRgb[state]}, ${alpha})`
   },
 }
