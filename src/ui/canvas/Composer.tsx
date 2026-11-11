@@ -44,6 +44,7 @@ export function Composer({
   onImages,
   onSubmit,
   send,
+  minHeight = BOX_MIN,
   disabled = false,
 }: {
   inputId: string
@@ -57,6 +58,8 @@ export function Composer({
   onSubmit?: () => void
   /** A send arrow inside the box, at its bottom right: what pressing it (or Enter) does. */
   send?: ComposerSend
+  /** How tall the box starts. Where it shares the card with a lot else (deciding), it starts shorter. */
+  minHeight?: number
   disabled?: boolean
 }) {
   const [dragging, setDragging] = useState(false)
@@ -68,8 +71,8 @@ export function Composer({
     const el = box.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, BOX_MIN), BOX_MAX)}px`
-  }, [text])
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, minHeight), BOX_MAX)}px`
+  }, [text, minHeight])
 
   // Pasting a screenshot works anywhere on the page, not only with the cursor in the box, unless the person is typing
   // in another field. The box's own paste is handled here too, once.
@@ -253,7 +256,7 @@ export function Composer({
             width: '100%',
             boxSizing: 'border-box',
             resize: 'vertical',
-            minHeight: BOX_MIN,
+            minHeight,
             maxHeight: BOX_MAX,
             padding: 4,
             background: 'transparent',

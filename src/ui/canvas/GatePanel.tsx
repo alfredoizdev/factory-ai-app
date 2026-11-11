@@ -132,7 +132,12 @@ export function GateSection({
       {loadError && <div style={{ fontSize: 12.5, color: theme.failed }}>{strings.gate.loadFailed}</div>}
       {!review && !loadError && <div style={{ fontSize: 12.5, color: theme.dim }}>{strings.gate.loading}</div>}
       {review && (
-        <div style={{ display: 'grid', gap: 6 }}>
+        // What changed, in its own card with its own scroll: opening the change never pushes the box and the buttons
+        // out of the card.
+        <div
+          data-testid="gate-changes"
+          style={{ display: 'grid', gap: 6, maxHeight: showDiff ? 260 : 180, overflowY: 'auto', padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}
+        >
           <div style={{ fontSize: 12.5, color: theme.dim }}>{review.files.length === 0 ? strings.gate.noFiles : strings.gate.filesChanged(review.files.length)}</div>
           {review.files.slice(0, 8).map(f => (
             <div key={f.path} style={{ display: 'flex', gap: 8, fontFamily: MONO, fontSize: 12, color: '#d6dce6' }}>
@@ -150,7 +155,7 @@ export function GateSection({
             </button>
           )}
           {showDiff && (
-            <pre data-testid="gate-diff" style={{ margin: 0, maxHeight: '50vh', overflow: 'auto', background: '#0b0e14', border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12, fontSize: 12.5, lineHeight: 1.5 }}>
+            <pre data-testid="gate-diff" style={{ margin: 0, background: '#0b0e14', border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, fontSize: 12, lineHeight: 1.5 }}>
               {review.diff.split('\n').map((line, i) => (
                 <div key={i} style={{ color: line.startsWith('+') ? '#86efac' : line.startsWith('-') ? '#fca5a5' : line.startsWith('@@') ? '#93c5fd' : '#9aa5b6',
                   // Long lines wrap instead of running off the side; the indent keeps the +/− marker readable.

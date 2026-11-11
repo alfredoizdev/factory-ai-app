@@ -55,6 +55,7 @@ export const CommandCard = forwardRef<
   const withSend = (send?: ComposerSend) => (
     <Composer
       send={send}
+      minHeight={mode === 'waiting' ? 96 : undefined}
       inputId={RUN_INPUT_ID}
       label={label}
       placeholder={placeholder}
