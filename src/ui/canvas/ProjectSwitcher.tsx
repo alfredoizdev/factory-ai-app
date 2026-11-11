@@ -9,6 +9,49 @@ import { WorkingSpinner } from './BlockCard'
 
 const s = strings.projectSwitcher
 
+const sectionTitle: CSSProperties = { fontSize: 10.5, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: theme.dim }
+
+/** A real, bordered button: primary (blue) for the thing to do next, quiet otherwise. */
+function smallButton(primary: boolean): CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '5px 10px',
+    borderRadius: 6,
+    border: `1px solid ${primary ? theme.running : theme.border}`,
+    background: primary ? theme.running : theme.bg,
+    color: primary ? '#fff' : '#d6dce6',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  }
+}
+
+function baseTone(status: string): { border: string; background: string } {
+  if (status === 'ready') return { border: theme.tint('passed', 0.4), background: theme.tint('passed', 0.07) }
+  if (status === 'failed') return { border: theme.tint('failed', 0.45), background: theme.tint('failed', 0.07) }
+  if (status === 'installing') return { border: theme.tint('running', 0.45), background: theme.tint('running', 0.07) }
+  return { border: theme.tint('waiting', 0.4), background: theme.tint('waiting', 0.06) }
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 2.5 13.5 5 6 12.5 3 13l.5-3L11 2.5Z" />
+    </svg>
+  )
+}
+
+function FolderIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, marginTop: 1 }}>
+      <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z" />
+    </svg>
+  )
+}
+
 /** Base status as a small mark: being prepared, ready, failed, or not prepared yet. */
 function BaseMark({ status }: { status: string }) {
   if (status === 'installing') return <WorkingSpinner blockId="base" size={12} />
@@ -75,43 +118,79 @@ export function ProjectSwitcher({ workflowId, style }: { workflowId: string; sty
         <span aria-hidden="true" style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
       </button>
       {open && projects && (
-        <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 40, width: 320, display: 'grid', gap: 2, padding: 6, background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 10, boxShadow: '0 18px 40px rgba(0,0,0,0.5)' }}>
+        <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 40, width: 340, display: 'grid', gap: 2, padding: 8, background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 10, boxShadow: '0 18px 40px rgba(0,0,0,0.5)' }}>
           {current && (
-            <div style={{ display: 'grid', gap: 6, padding: '6px 10px 10px', borderBottom: `1px solid ${theme.border}`, marginBottom: 4, fontSize: 12 }}>
+            <section aria-label={s.thisProject} style={{ display: 'grid', gap: 10, padding: '8px 8px 12px', borderBottom: `1px solid ${theme.border}`, marginBottom: 6 }}>
+              <span style={sectionTitle}>{s.thisProject}</span>
               {renaming !== null ? (
                 <form onSubmit={e => (e.preventDefault(), void rename(renaming))} style={{ display: 'flex', gap: 6 }}>
-                  <input autoFocus aria-label={s.rename} value={renaming} onChange={e => setRenaming(e.target.value)} style={{ flex: 1, padding: '5px 7px', background: theme.bg, color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 6 }} />
-                  <button type="submit" style={{ ...item, width: 'auto', border: `1px solid ${theme.border}` }}>
+                  <input
+                    autoFocus
+                    aria-label={s.rename}
+                    value={renaming}
+                    onChange={e => setRenaming(e.target.value)}
+                    onKeyDown={e => e.key === 'Escape' && (e.stopPropagation(), setRenaming(null))}
+                    style={{ flex: 1, minWidth: 0, padding: '6px 8px', background: theme.bg, color: 'inherit', border: `1px solid ${theme.running}`, borderRadius: 6, fontSize: 13 }}
+                  />
+                  <button type="submit" style={smallButton(true)}>
                     {s.save}
+                  </button>
+                  <button type="button" onClick={() => setRenaming(null)} style={smallButton(false)}>
+                    {s.cancel}
                   </button>
                 </form>
               ) : (
-                <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <strong style={{ fontSize: 13 }}>{current.name}</strong>
-                  <button type="button" onClick={() => setRenaming(current.name)} style={{ background: 'none', border: 'none', color: theme.dim, cursor: 'pointer', fontSize: 12 }}>
-                    {s.rename}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <strong style={{ flex: 1, minWidth: 0, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{current.name}</strong>
+                  <button type="button" onClick={() => setRenaming(current.name)} style={smallButton(false)}>
+                    <PencilIcon /> {s.rename}
                   </button>
-                </span>
+                </div>
               )}
-              <span style={{ color: theme.dim, overflowWrap: 'anywhere', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>{current.repoPath ?? s.noFolder}</span>
-              <span data-testid="base-status" style={{ display: 'flex', alignItems: 'center', gap: 6, color: current.baseStatus === 'failed' ? theme.failed : theme.dim }}>
-                <BaseMark status={current.baseStatus} /> {s.base[current.baseStatus as keyof typeof s.base] ?? s.base.none}
+              <span style={{ display: 'flex', gap: 6, alignItems: 'flex-start', color: theme.dim, fontSize: 11.5 }}>
+                <FolderIcon />
+                <span style={{ overflowWrap: 'anywhere', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{current.repoPath ?? s.noFolder}</span>
               </span>
-              {current.baseStatus === 'failed' && current.baseMessage && <span style={{ color: theme.dim, overflowWrap: 'anywhere' }}>{current.baseMessage}</span>}
-              {current.repoPath && current.baseStatus !== 'installing' && (
-                <button type="button" onClick={() => void prepare()} style={{ ...item, width: 'auto', justifySelf: 'start', border: `1px solid ${theme.border}`, padding: '4px 10px', fontSize: 12 }}>
-                  {current.baseStatus === 'ready' ? s.prepareAgain : s.prepare}
-                </button>
-              )}
-            </div>
+              {/* The dependencies' state, coloured by what it means, with what to do about it right there. */}
+              <div
+                data-testid="base-status"
+                style={{
+                  display: 'grid',
+                  gap: 8,
+                  padding: 10,
+                  borderRadius: 8,
+                  fontSize: 12,
+                  lineHeight: 1.4,
+                  border: `1px solid ${baseTone(current.baseStatus).border}`,
+                  background: baseTone(current.baseStatus).background,
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <BaseMark status={current.baseStatus} />
+                  <span>{s.base[current.baseStatus as keyof typeof s.base] ?? s.base.none}</span>
+                </span>
+                {current.baseStatus === 'failed' && current.baseMessage && <span style={{ color: theme.dim, overflowWrap: 'anywhere' }}>{current.baseMessage}</span>}
+                {current.repoPath && current.baseStatus !== 'installing' && (
+                  <button type="button" onClick={() => void prepare()} style={{ ...smallButton(current.baseStatus !== 'ready'), justifySelf: 'start' }}>
+                    {current.baseStatus === 'ready' ? s.prepareAgain : s.prepare}
+                  </button>
+                )}
+              </div>
+            </section>
           )}
+          <span style={{ ...sectionTitle, padding: '2px 8px 4px' }}>{s.switchTo}</span>
           {projects.map(p => (
             <a key={p.projectId} role="menuitem" href={`/canvas/${p.workflowId}`} aria-current={p.workflowId === workflowId ? 'true' : undefined} style={{ ...item, textDecoration: 'none', background: p.workflowId === workflowId ? theme.tint('running', 0.12) : 'none' }}>
               <BaseMark status={p.baseStatus} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
             </a>
           ))}
-          <button type="button" role="menuitem" onClick={() => (setOpen(false), setAdding(true))} style={{ ...item, color: '#93c5fd', fontWeight: 600, marginTop: 4, borderTop: `1px solid ${theme.border}`, borderRadius: 0, paddingTop: 10 }}>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => (setOpen(false), setAdding(true))}
+            style={{ ...smallButton(false), justifyContent: 'center', margin: '8px 4px 2px', padding: '8px 10px', color: '#bfdbfe', borderColor: theme.tint('running', 0.5), fontSize: 13 }}
+          >
             ＋ {s.add}
           </button>
         </div>
