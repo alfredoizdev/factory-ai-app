@@ -105,6 +105,7 @@ export const strings = {
     failedWithoutCounts: 'Failed. No test counts were recorded.',
   },
   canvas: {
+    notBuilt: 'Not built yet',
     stateLabel: {
       queued: 'Queued',
       running: 'Running',

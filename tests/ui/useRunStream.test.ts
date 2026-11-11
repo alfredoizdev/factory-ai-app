@@ -232,3 +232,13 @@ test('a push lights the Ship stage as passed, measured, naming the branch', asyn
   s = foldEvent(s, { sequence: 3, type: 'node.step', payload: { blockId: 'ship', text: 'x' } })
   expect(s.shipped).toEqual({ branch: 'ai/watch-buttons-x1' })
 })
+
+test('a stage skipped because it is not built yet is marked so, and an ordinary skip is not', async () => {
+  const { toViews } = await import('@/ui/canvas/useRunStream')
+  const mk = (id: string, kind: Block['kind']): Block => ({ id, kind, label: id, enabled: true, config: {}, position: { x: 0, y: 0 } })
+  let s = foldEvent(emptyStream, { sequence: 1, type: 'node.skipped', payload: { blockId: 'review', reason: strings.run.notYet.review } })
+  s = foldEvent(s, { sequence: 2, type: 'node.skipped', payload: { blockId: 'tests', reason: strings.run.notYet.noTestCommand } })
+  const views = toViews(s.nodes, [mk('review', 'review'), mk('tests', 'tests')])
+  expect(views.review!.notBuilt).toBe(true)
+  expect(views.tests!.notBuilt).toBeUndefined()
+})

@@ -70,7 +70,14 @@ function BlockNode({ data }: NodeProps<CardNode>) {
       <div
         style={
           data.cardWidth !== undefined && !reduced
-            ? { width: data.collapsed ? SPINE_WIDTH : data.cardWidth, overflow: 'hidden', borderRadius: 14, transition: 'width 320ms cubic-bezier(0.2, 0.7, 0.2, 1)' }
+            ? {
+                // A margin of room around the card inside the clip, so the corner mark that sits over its edge shows.
+                width: (data.collapsed ? SPINE_WIDTH : data.cardWidth) + 2 * CLIP_ROOM,
+                padding: CLIP_ROOM,
+                margin: -CLIP_ROOM,
+                overflow: 'hidden',
+                transition: 'width 320ms cubic-bezier(0.2, 0.7, 0.2, 1)',
+              }
             : undefined
         }
       >
@@ -102,6 +109,9 @@ function BlockNode({ data }: NodeProps<CardNode>) {
     </div>
   )
 }
+
+/** Room around a card inside its resizing frame: the corner mark overhangs the card by 9px. */
+const CLIP_ROOM = 14
 
 const nodeTypes = { block: BlockNode }
 

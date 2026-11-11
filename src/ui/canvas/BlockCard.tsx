@@ -19,6 +19,8 @@ export type NodeRunView = {
   risk?: { level: 'low' | 'high'; reasons: string[] }
   /** Which round of the run this block is on, from the second on: the person asked for changes. */
   round?: number
+  /** Skipped because this stage is not built yet, not because of anything in this run: drawn as such, not as a skip. */
+  notBuilt?: boolean
 }
 
 export type RunEvidence = {
@@ -38,7 +40,7 @@ export type RunEvidence = {
 
 /** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
 export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'summaryIsClaim' | 'usage'> &
-  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round'>>
+  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round' | 'notBuilt'>>
 
 // The domain and visual vocabularies are separate on purpose.
 const VISUAL: Record<NodeState, VisualState> = {
@@ -120,7 +122,7 @@ export function BlockCard({
 }) {
   const visual = visualStateOf(view.state)
   const accent = theme[visual]
-  const stateLabel = strings.canvas.stateLabel[view.state]
+  const stateLabel = view.notBuilt ? strings.canvas.notBuilt : strings.canvas.stateLabel[view.state]
   const allSteps = view.steps ?? []
   const steps = allSteps.slice(-MAX_STEPS)
   const hiddenSteps = allSteps.length - steps.length
@@ -146,7 +148,8 @@ export function BlockCard({
         flexDirection: 'column',
         background: theme.cardFace,
         // Longhand only: a shorthand rewrite on selection would wipe the left bar that carries the state colour.
-        borderStyle: 'solid',
+        // Dashed for a stage that is not built yet, so it never reads as a step this run skipped.
+        borderStyle: view.notBuilt ? 'dashed' : 'solid',
         borderWidth: 1,
         // Per-side colours, not borderColor: that longhand would also repaint the left side when selection flips.
         borderTopColor: frame,
@@ -158,7 +161,7 @@ export function BlockCard({
         padding: '15px 16px 13px',
         boxShadow: GLOWING.has(visual) ? theme.glow(visual) : 'none',
         fontSize: 13,
-        opacity: block.enabled ? 1 : 0.55,
+        opacity: !block.enabled ? 0.55 : view.notBuilt ? 0.6 : 1,
       }}
     >
       {/* A one-pixel catch-light along the top edge: the card reads as a panel with a lit edge, not a flat box. */}
@@ -506,7 +509,8 @@ const SPINE_GLYPH: Record<NodeState, string> = {
 export function SpineCard({ block, view, selected = false }: { block: Block; view: CardView | null; selected?: boolean }) {
   const visual = view ? visualStateOf(view.state) : 'skipped'
   const accent = theme[visual]
-  const stateLabel = view ? strings.canvas.stateLabel[view.state] : strings.canvas.notInRun
+  const stateLabel = view?.notBuilt ? strings.canvas.notBuilt : view ? strings.canvas.stateLabel[view.state] : strings.canvas.notInRun
+  const unbuilt = view?.notBuilt === true
   return (
     <div
       data-testid={`block-card-${block.id}`}
@@ -521,7 +525,7 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
         gap: 12,
         padding: '14px 0 16px',
         background: 'linear-gradient(180deg, #141a24, #10151d)',
-        borderStyle: 'solid',
+        borderStyle: unbuilt ? 'dashed' : 'solid',
         borderWidth: 1,
         borderTopWidth: 3,
         borderTopColor: accent,
@@ -530,7 +534,7 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
         borderLeftColor: selected ? theme.running : theme.border,
         borderRadius: 12,
         cursor: 'pointer',
-        opacity: block.enabled ? 1 : 0.55,
+        opacity: !block.enabled ? 0.55 : unbuilt ? 0.6 : 1,
       }}
     >
       <TypeMark kind={block.kind} colour={accent} size={26} />
@@ -547,15 +551,15 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
           borderRadius: '50%',
           display: 'grid',
           placeItems: 'center',
-          background: view ? accent : 'transparent',
-          border: view ? 'none' : `1px dashed ${theme.skipped}`,
-          color: view ? '#07090d' : theme.skipped,
+          background: view && !unbuilt ? accent : 'transparent',
+          border: view && !unbuilt ? 'none' : `1px dashed ${theme.skipped}`,
+          color: view && !unbuilt ? '#07090d' : theme.skipped,
           fontSize: 11,
           fontWeight: 800,
           lineHeight: 1,
         }}
       >
-        {view ? SPINE_GLYPH[view.state] : '·'}
+        {view && !unbuilt ? SPINE_GLYPH[view.state] : '·'}
       </span>
     </div>
   )

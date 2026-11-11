@@ -150,3 +150,9 @@ test('a Tests block shows its own command on its card', () => {
   render(<BlockCard block={tests} view={{ state: 'queued', summary: 'Waits', summaryIsClaim: false }} />)
   expect(screen.getByTestId('block-command-tests-1')).toHaveTextContent('pnpm lint')
 })
+
+test('a stage not built yet says so instead of "Skipped"', () => {
+  render(<BlockCard block={buildBlock} view={{ state: 'skipped', summary: 'Later', summaryIsClaim: false, notBuilt: true }} />)
+  expect(screen.getByText(strings.canvas.notBuilt)).toBeInTheDocument()
+  expect(screen.queryByText(strings.canvas.stateLabel.skipped)).toBeNull()
+})

@@ -152,6 +152,10 @@ function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk' | 'r
   }
 }
 
+// A stage the real agent does not have yet is skipped with one of these sentences: that is about the product, not the run.
+const NOT_BUILT: ReadonlySet<string> = new Set([strings.run.notYet.plan, strings.run.notYet.review])
+const notBuilt = (n: RawNode) => n.state === 'skipped' && n.skippedReason !== undefined && NOT_BUILT.has(n.skippedReason)
+
 export function toViews(
   nodes: Record<string, RawNode>,
   blocks: readonly Block[] = [],
@@ -176,7 +180,7 @@ export function toViews(
       // Measured counts outrank any sentence: summarize builds its line from them first.
       counts: n.evidence?.counts ?? undefined,
     }
-    out[blockId] = { blockId, state: n.state, summary: summarize(input), summaryIsClaim: claimUsed(input), steps: n.steps, ...facts(n) }
+    out[blockId] = { blockId, state: n.state, summary: summarize(input), summaryIsClaim: claimUsed(input), steps: n.steps, ...facts(n), ...(notBuilt(n) ? { notBuilt: true } : {}) }
   }
   // Shipping is pushing the approved branch. Once the record says it happened, the Ship stage shows it, measured
   // (it is the app's own record of a push git accepted), never a claim.
