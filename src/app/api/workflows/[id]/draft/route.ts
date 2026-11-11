@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { rejectCrossSite } from '@/engine/same-origin'
-import { saveDraft, WorkflowNotFoundError } from '@/engine/run'
+import { DraftConflictError, saveDraftVersioned, WorkflowNotFoundError } from '@/engine/run'
 import { strings } from '@/ui/strings'
 
 const graphSchema = z.object({
@@ -24,8 +24,11 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
     // An invalid-but-well-formed graph is saved; the issues ride along for the canvas to render inline.
-    return Response.json({ issues: await saveDraft(id, body.data) })
+    // x-draft-base: the version the page last saw. Without it the save is unconditional, as before.
+    const base = req.headers.get('x-draft-base') ?? undefined
+    return Response.json(await saveDraftVersioned(id, body.data, base))
   } catch (e) {
+    if (e instanceof DraftConflictError) return Response.json({ error: strings.editing.staleDraft }, { status: 409 })
     if (e instanceof WorkflowNotFoundError) return Response.json({ error: e.message }, { status: 404 })
     throw e
   }

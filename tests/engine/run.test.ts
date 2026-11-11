@@ -194,3 +194,19 @@ test('cancelling a run that never started cancels the blocks it never reached', 
   const states = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).map(r => r.state)
   expect(states).toEqual(Array(8).fill('cancelled'))
 })
+
+test('a save from a page that loaded an older draft is refused, so it cannot undo a newer edit', async () => {
+  const { saveDraftVersioned, DraftConflictError } = await import('@/engine/run')
+  const id = await newWorkflow()
+  const loaded = db.select().from(workflows).where(eq(workflows.id, id)).get()!.updatedAt
+  // Tab A saves first; its next save builds on what it got back.
+  const a1 = await saveDraftVersioned(id, defaultGraph(), loaded)
+  const a2 = await saveDraftVersioned(id, defaultGraph(), a1.updatedAt)
+  expect(a2.updatedAt > a1.updatedAt).toBe(true)
+  // Tab B, opened before, still holds the first version: refused, and the draft is A's.
+  const stale = { blocks: defaultGraph().blocks.slice(0, 3) }
+  await expect(saveDraftVersioned(id, stale, loaded)).rejects.toBeInstanceOf(DraftConflictError)
+  expect(JSON.parse(db.select().from(workflows).where(eq(workflows.id, id)).get()!.draftJson).blocks).toHaveLength(defaultGraph().blocks.length)
+  // Without a base the save is unconditional, as before.
+  await saveDraft(id, stale)
+})

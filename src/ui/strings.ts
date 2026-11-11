@@ -295,10 +295,12 @@ export const strings = {
     closeSettings: 'Close block settings',
     enabled: 'Enabled',
     remove: 'Remove block',
+    removeNamed: (name: string) => `Remove the ${name} block from the flow`,
     cannotDisable: 'This stage is required, so its only enabled block cannot be turned off.',
     disabledBadge: 'Off',
     disabledLine: 'Turned off. It is skipped and its neighbours connect around it.',
     saveFailed: 'Your latest change could not be saved. It will be retried on your next edit.',
+    staleDraft: 'This flow was changed somewhere else since this page opened, so your edit here was not saved. Reload the page to see the latest.',
     unattributedIssues: 'Problems with the flow',
   },
   settings: {

@@ -98,6 +98,7 @@ export function BlockCard({
   issues = [],
   breadcrumb,
   onCollapse,
+  onRemove,
   collapseLabel = strings.canvas.collapse,
   width,
 }: {
@@ -114,6 +115,8 @@ export function BlockCard({
   /** Labels of the chain leading to this block; shown only while expanded. */
   breadcrumb?: string[]
   onCollapse?: () => void
+  /** Present when this block can be taken out of the flow from its card. */
+  onRemove?: () => void
 }) {
   const visual = visualStateOf(view.state)
   const accent = theme[visual]
@@ -237,6 +240,7 @@ export function BlockCard({
             </span>
           )}
           {!block.enabled && <span style={{ color: theme.skipped, fontSize: 12 }}>{strings.editing.disabledBadge}</span>}
+          {onRemove && <RemoveButton label={block.label} onRemove={onRemove} />}
           {expanded && onCollapse && (
             <button
               type="button"
@@ -397,7 +401,17 @@ export function BlockCard({
  * A block that is in the draft but not in the run being watched. It has no state at all (not even a quiet one):
  * the run never heard of it, so nothing here can come from the run. It stays selectable and removable.
  */
-export function NotInRunCard({ block, selected = false, issues = [] }: { block: Block; selected?: boolean; issues?: string[] }) {
+export function NotInRunCard({
+  block,
+  selected = false,
+  issues = [],
+  onRemove,
+}: {
+  block: Block
+  selected?: boolean
+  issues?: string[]
+  onRemove?: () => void
+}) {
   return (
     <div
       data-testid={`block-card-${block.id}`}
@@ -425,6 +439,7 @@ export function NotInRunCard({ block, selected = false, issues = [] }: { block: 
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
           {!block.enabled && <span style={{ color: theme.skipped, fontSize: 12 }}>{strings.editing.disabledBadge}</span>}
           <span style={{ ...CAPS, fontSize: 10, color: theme.skipped }}>{strings.canvas.notInRun}</span>
+          {onRemove && <RemoveButton label={block.label} onRemove={onRemove} />}
         </span>
       </div>
       <p style={{ margin: 0, color: theme.skipped, fontSize: 14, lineHeight: 1.36 }}>{strings.canvas.notInRunDetail}</p>
@@ -658,5 +673,26 @@ export function RiskStrip({ risk }: { risk: { level: 'low' | 'high'; reasons: st
       </ul>
       {risk.reasons.length > 4 && <div style={{ fontSize: 12, color: theme.dim, marginTop: 4 }}>{strings.canvas.andMore(risk.reasons.length - 4)}</div>}
     </div>
+  )
+}
+
+/** A small bin on the card: takes the block out of the flow. Saved like any other edit, and undone by adding it again. */
+export function RemoveButton({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <button
+      type="button"
+      className="nodrag"
+      aria-label={strings.editing.removeNamed(label)}
+      title={strings.editing.removeNamed(label)}
+      onClick={e => {
+        e.stopPropagation()
+        onRemove()
+      }}
+      style={{ display: 'grid', placeItems: 'center', width: 26, height: 26, padding: 0, background: 'none', border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.dim, cursor: 'pointer' }}
+    >
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5" />
+      </svg>
+    </button>
   )
 }

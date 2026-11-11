@@ -40,12 +40,15 @@ export function CanvasScreen({
   graph,
   run: initialRun = null,
   settings: initialSettings = null,
+  draftUpdatedAt,
 }: {
   workflowId: string
   graph: Graph
   run?: RunInfo | null
   /** The project's repository settings. Absent: the agent switch is not offered and every run is the demo. */
   settings?: ProjectSettings | null
+  /** The draft's version as the page loaded it; saves are refused once someone else has saved a newer one. */
+  draftUpdatedAt?: string
 }) {
   const [run, setRun] = useState<RunInfo | null>(initialRun)
   const [settings, setSettings] = useState<ProjectSettings | null>(initialSettings)
@@ -78,16 +81,33 @@ export function CanvasScreen({
   // The blocks are always passed: without them the hook cannot say what a block did in its own words.
   const { views, events, runStatus, connected } = useRunStream(run?.runId ?? null, run?.blocks)
 
-  // keepalive lets a save started as the page closes still complete.
-  async function save(next: Graph): Promise<ValidationIssue[]> {
-    const res = await fetch(`/api/workflows/${workflowId}/draft`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(next),
-      keepalive: true,
+  // Saves go one at a time, each naming the draft version it builds on, so a page left open from earlier can never
+  // overwrite a newer flow: the server refuses, and the page says to reload. keepalive lets a save started as the
+  // page closes still complete.
+  const draftBase = useRef<string | undefined>(draftUpdatedAt)
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve())
+  const stale = useRef(false)
+  function save(next: Graph): Promise<ValidationIssue[]> {
+    const attempt = saveChain.current.catch(() => undefined).then(async () => {
+      if (stale.current) throw new Error('stale draft')
+      const res = await fetch(`/api/workflows/${workflowId}/draft`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...(draftBase.current ? { 'x-draft-base': draftBase.current } : {}) },
+        body: JSON.stringify(next),
+        keepalive: true,
+      })
+      if (res.status === 409) {
+        stale.current = true
+        setMessage(strings.editing.staleDraft)
+        throw new Error('stale draft')
+      }
+      if (!res.ok) throw new Error(`Saving the draft failed (${res.status})`)
+      const body = (await res.json()) as { issues: ValidationIssue[]; updatedAt?: string }
+      if (body.updatedAt) draftBase.current = body.updatedAt
+      return body.issues
     })
-    if (!res.ok) throw new Error(`Saving the draft failed (${res.status})`)
-    return ((await res.json()) as { issues: ValidationIssue[] }).issues
+    saveChain.current = attempt
+    return attempt
   }
 
   async function startRun() {

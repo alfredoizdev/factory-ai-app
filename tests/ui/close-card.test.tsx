@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { defaultGraph } from '@/domain/graph'
 import { Canvas } from '@/ui/canvas/Canvas'
 import { BlockInspector } from '@/ui/canvas/BlockInspector'
@@ -65,4 +65,17 @@ test('while a run is on screen the model field says changes apply to the next ru
   expect(screen.queryByText(strings.editing.appliesNextRun)).toBeNull()
   rerender(<BlockInspector block={block} onChange={() => {}} runOnScreen />)
   expect(screen.getByText(strings.editing.appliesNextRun)).toBeInTheDocument()
+})
+
+test('a block added during a run is chosen at once and can be removed from its own card', async () => {
+  renderRun()
+  const palette = screen.getByRole('heading', { name: strings.editing.paletteTitle }).parentElement!
+  fireEvent.click(within(palette).getByRole('button', { name: strings.blocks.tests }))
+  // Chosen: its settings are open, and its card carries the bin.
+  expect(screen.queryByText(strings.editing.inspectorEmpty)).toBeNull()
+  const bins = screen.getAllByLabelText(strings.editing.removeNamed(strings.blocks.tests))
+  expect(bins).toHaveLength(1) // the run's own Tests card offers none
+  fireEvent.click(bins[0]!)
+  expect(screen.queryAllByLabelText(strings.editing.removeNamed(strings.blocks.tests))).toHaveLength(0)
+  expect(screen.getByText(strings.editing.inspectorEmpty)).toBeInTheDocument()
 })

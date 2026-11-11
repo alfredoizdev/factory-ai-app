@@ -37,6 +37,8 @@ type CardData = {
   cardWidth?: number
   collapseLabel?: string
   onCollapse?: () => void
+  /** Present on a card that can be taken out of the flow from the card itself. */
+  onRemove?: () => void
 }
 type CardNode = Node<CardData, 'block'>
 
@@ -74,10 +76,11 @@ function BlockNode({ data }: NodeProps<CardNode>) {
           breadcrumb={data.breadcrumb}
           onCollapse={data.onCollapse}
           collapseLabel={data.collapseLabel}
+          onRemove={data.onRemove}
           width={data.cardWidth}
         />
       ) : (
-        <NotInRunCard block={data.block} selected={data.selected} issues={data.issues} />
+        <NotInRunCard block={data.block} selected={data.selected} issues={data.issues} onRemove={data.onRemove} />
       )}
       <Handle type="source" position={Position.Right} isConnectable={false} />
       {/* Bottom handles carry the return cable so it loops beneath the lane. */}
@@ -365,6 +368,13 @@ export function Canvas({
   }, [fisheyeFocus, reducedMotion])
 
   const placementOf = (block: Block) => layout?.get(block.id)
+  const removeFromDraft = (id: string) => {
+    edit(g => removeBlock(g, id))
+    setSelectedId(null)
+    setExpandedId(null)
+    setFocusOverride(current => (current === id ? null : current))
+  }
+
   // Closing undoes a click: nothing selected, nothing held open, and the canvas follows the work again.
   const close = () => {
     setSelectedId(null)
@@ -410,6 +420,9 @@ export function Canvas({
           cardWidth: hasRun ? CARD_WIDTH : undefined,
           collapseLabel: strings.canvas.close,
           onCollapse: hasRun ? unpin : close,
+          // From the card itself: any removable block while editing, and while a run is on screen only the blocks
+          // added since, so a card showing what happened in the run never offers to delete itself.
+          onRemove: canRemove(graph, block) && (!hasRun || !view) ? () => removeFromDraft(block.id) : undefined,
         },
       }
     }),
@@ -529,7 +542,16 @@ export function Canvas({
           <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.paletteTitle}</h2>
           {addable.length === 0 && <p style={{ margin: 0, color: theme.skipped }}>{strings.editing.paletteEmpty}</p>}
           {addable.map(kind => (
-            <button key={kind} type="button" style={panelButton} onClick={() => edit(g => addBlock(g, kind, reservedIds))}>
+            <button key={kind} type="button" style={panelButton} onClick={() => {
+                // The new card is chosen at once, so it is plain which one was just added and its settings are open.
+                const before = new Set(graphRef.current.blocks.map(b => b.id))
+                edit(g => addBlock(g, kind, reservedIds))
+                const added = graphRef.current.blocks.find(b => !before.has(b.id))
+                if (!added) return
+                setSelectedId(added.id)
+                if (hasRun) setFocusOverride(added.id)
+                else setExpandedId(added.id)
+              }}>
               {strings.blocks[kind]}
             </button>
           ))}

@@ -75,13 +75,37 @@ export function hashGraph(graph: Graph): string {
 }
 
 // An invalid draft is still saved (the user is mid-edit); the issues are returned so the canvas can show them.
-export async function saveDraft(workflowId: string, graph: Graph): Promise<ValidationIssue[]> {
+/** The draft changed since the page that is saving loaded it: saving would silently undo someone else's edit. */
+export class DraftConflictError extends Error {
+  constructor() {
+    super('The flow changed since this page loaded it')
+    this.name = 'DraftConflictError'
+  }
+}
+
+/**
+ * Saves the draft. With `base` (the draft's updatedAt the page last saw), the save happens only when the draft is
+ * still that version — so a page left open from earlier cannot overwrite a newer flow. Returns the new version.
+ */
+export async function saveDraft(workflowId: string, graph: Graph, base?: string): Promise<ValidationIssue[]> {
+  return (await saveDraftVersioned(workflowId, graph, base)).issues
+}
+
+export async function saveDraftVersioned(workflowId: string, graph: Graph, base?: string): Promise<{ issues: ValidationIssue[]; updatedAt: string }> {
   requireWorkflow(workflowId)
-  db.update(workflows)
-    .set({ draftJson: JSON.stringify(graph), updatedAt: now() })
-    .where(eq(workflows.id, workflowId))
-    .run()
-  return validateGraph(graph)
+  const updatedAt = db.transaction(
+    tx => {
+      const row = tx.select().from(workflows).where(eq(workflows.id, workflowId)).get()!
+      if (base !== undefined && row.updatedAt !== base) throw new DraftConflictError()
+      // Strictly later than the version replaced, even within the same millisecond, so versions never repeat.
+      let stamp = now()
+      if (stamp <= row.updatedAt) stamp = new Date(Date.parse(row.updatedAt) + 1).toISOString()
+      tx.update(workflows).set({ draftJson: JSON.stringify(graph), updatedAt: stamp }).where(eq(workflows.id, workflowId)).run()
+      return stamp
+    },
+    { behavior: 'immediate' },
+  )
+  return { issues: validateGraph(graph), updatedAt }
 }
 
 export async function publishVersion(workflowId: string): Promise<{ versionId: string; hash: string }> {

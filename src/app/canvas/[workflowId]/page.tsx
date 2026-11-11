@@ -26,5 +26,5 @@ export default async function CanvasPage({ params }: { params: Promise<{ workflo
   const project = db.select().from(projects).where(eq(projects.id, wf.projectId)).get()
   const settings = project ? getProjectSettings(project.id) : { projectId: wf.projectId, repoPath: null, testCommand: null, autoApproveLowRisk: false, currentBranch: null }
 
-  return <CanvasScreen workflowId={workflowId} graph={graph} run={run} settings={settings} />
+  return <CanvasScreen workflowId={workflowId} graph={graph} run={run} settings={settings} draftUpdatedAt={wf.updatedAt} />
 }
