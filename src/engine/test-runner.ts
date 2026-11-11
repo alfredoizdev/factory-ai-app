@@ -38,7 +38,15 @@ const NODE_TALLY = (word: string) => new RegExp(`(?:^|\\s)(?:#|ℹ)\\s+${word}\\
 
 const part = (text: string, word: string) => Number(text.match(new RegExp(`(\\d+)\\s+${word}`))?.[1] ?? 0)
 
-export function parseCounts(output: string): TestCounts | null {
+// Terminal colour and cursor codes. Runners print them even when asked not to, and they sit between the words.
+const ANSI = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI, '')
+}
+
+export function parseCounts(raw: string): TestCounts | null {
+  const output = stripAnsi(raw)
   const sum = { passed: 0, failed: 0, total: 0 }
   let found = false
   for (const m of output.matchAll(VITEST)) {
@@ -72,7 +80,7 @@ export function runTestCommand(command: string, cwd: string, signal: AbortSignal
   return new Promise(resolve => {
     let output = ''
     // Its own process group, so stopping it also stops whatever the command started (a test runner's workers).
-    const child = spawn('sh', ['-c', command], { cwd, detached: true, env: { ...process.env, CI: '1', FORCE_COLOR: '0' } })
+    const child = spawn('sh', ['-c', command], { cwd, detached: true, env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' } })
     const keep = (chunk: Buffer) => {
       output = (output + chunk.toString()).slice(-TAIL_CHARS * 4)
     }
@@ -103,7 +111,7 @@ export function runTestCommand(command: string, cwd: string, signal: AbortSignal
         started: began,
         durationMs: Date.now() - started,
         counts,
-        outputTail: redact(output).slice(-TAIL_CHARS),
+        outputTail: redact(stripAnsi(output)).slice(-TAIL_CHARS),
         changedTestFiles: null,
       })
     }

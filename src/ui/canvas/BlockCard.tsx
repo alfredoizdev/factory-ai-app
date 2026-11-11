@@ -168,6 +168,11 @@ export function BlockCard({
             'linear-gradient(90deg, transparent, rgba(255,255,255,0.09) 20%, rgba(255,255,255,0.09) 80%, transparent)',
         }}
       />
+      {view.state === 'running' && (
+        <span style={{ position: 'absolute', right: 12, top: 14 }}>
+          <WorkingSpinner blockId={block.id} />
+        </span>
+      )}
       {corner && (
         <span
           aria-hidden="true"
@@ -481,6 +486,7 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
       <span style={{ writingMode: 'vertical-rl', fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: '#aeb7c6' }}>
         {block.label}
       </span>
+      {view?.state === 'running' && <WorkingSpinner blockId={block.id} size={18} />}
       <span
         aria-label={strings.canvas.stateAria(stateLabel)}
         style={{
@@ -594,5 +600,26 @@ export function EvidenceStrip({ evidence }: { evidence: RunEvidence }) {
         </span>
       </dl>
     </div>
+  )
+}
+
+/**
+ * A ring that turns while a block is running. Decorative: the state word beside it already says "Running", so it is
+ * hidden from assistive tech. It exists only while the state is running, so it can never outlive the work.
+ */
+export function WorkingSpinner({ blockId, size = 20 }: { blockId: string; size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      data-testid={`spinner-${blockId}`}
+      className="factory-spinner"
+      viewBox="0 0 20 20"
+      width={size}
+      height={size}
+      style={{ display: 'block' }}
+    >
+      <circle cx="10" cy="10" r="8" fill="none" stroke={theme.tint('running', 0.25)} strokeWidth="2.5" />
+      <path d="M10 2a8 8 0 0 1 8 8" fill="none" stroke={theme.running} strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
   )
 }

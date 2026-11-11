@@ -19,6 +19,14 @@ test('reads vitest and jest summaries, and nothing else', () => {
   expect(parseCounts('')).toBeNull()
 })
 
+test('colour codes in the output do not hide the counts', () => {
+  // Exactly what vitest printed in a real run, colour codes and all, despite FORCE_COLOR=0.
+  const output =
+    '\x1b[2m Test Files \x1b[22m \x1b[1m\x1b[32m18 passed\x1b[39m\x1b[22m\x1b[90m (18)\x1b[39m\n' +
+    '\x1b[2m      Tests \x1b[22m \x1b[1m\x1b[32m118 passed\x1b[39m\x1b[22m\x1b[90m (118)\x1b[39m\n'
+  expect(parseCounts(output)).toEqual({ passed: 118, failed: 0, total: 118 })
+})
+
 test('a workspace run prints one summary per package, and every one of them is counted', () => {
   // pnpm -r run test across four packages: three vitest summaries and one node --test tally.
   const output = [

@@ -127,3 +127,20 @@ test('the model written inside the block is shown on its card', () => {
   rerender(<BlockCard block={{ ...buildBlock, config: { model: '  ' } }} view={view} />)
   expect(screen.queryByTestId('block-model-build')).toBeNull()
 })
+
+test('a running block shows a working spinner, and no other state does', () => {
+  const states: NodeState[] = ['queued', 'running', 'waiting_approval', 'passed', 'failed', 'cancelled', 'skipped', 'blocked']
+  for (const state of states) {
+    const { unmount } = render(<BlockCard block={buildBlock} view={{ state, summary: 'x', summaryIsClaim: false }} />)
+    expect(screen.queryByTestId('spinner-build') !== null).toBe(state === 'running')
+    unmount()
+  }
+})
+
+test('a collapsed running block shows the spinner too', async () => {
+  const { SpineCard } = await import('@/ui/canvas/BlockCard')
+  const { rerender } = render(<SpineCard block={buildBlock} view={{ state: 'running', summary: 'x', summaryIsClaim: false }} />)
+  expect(screen.getByTestId('spinner-build')).toBeInTheDocument()
+  rerender(<SpineCard block={buildBlock} view={{ state: 'passed', summary: 'x', summaryIsClaim: false }} />)
+  expect(screen.queryByTestId('spinner-build')).toBeNull()
+})

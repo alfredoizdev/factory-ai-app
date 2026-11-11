@@ -10,3 +10,19 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/* The working indicator on a running block. It turns only while the block's state is running, which comes from a
+   real event; under reduced motion it stays still and still reads as "working". */
+@keyframes factory-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.factory-spinner {
+  animation: factory-spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .factory-spinner {
+    animation: none;
+  }
+}
