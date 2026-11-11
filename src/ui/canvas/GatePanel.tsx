@@ -3,7 +3,11 @@
 import { forwardRef, useEffect, useState } from 'react'
 import type { ChangeUnderReview } from '@/engine/approvals'
 import { strings } from '@/ui/strings'
+import { WorkingSpinner } from './BlockCard'
 import { PreviewButton } from './PreviewButton'
+
+/** How long a decision may wait for the run to move before the panel says it has not. */
+const PICKUP_WAIT_MS = 20_000
 import { theme } from '@/ui/theme'
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
@@ -66,6 +70,14 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
   }
 
   const decided = outcome?.ok === true
+  // Once decided, this panel stays only until the run moves; it closes when the run leaves waiting. If the run does
+  // not move, saying "working on it" would be a guess, so after a while it says plainly that nothing picked it up.
+  const [stalled, setStalled] = useState(false)
+  useEffect(() => {
+    if (!decided) return
+    const timer = setTimeout(() => setStalled(true), PICKUP_WAIT_MS)
+    return () => clearTimeout(timer)
+  }, [decided])
   const button = (tone: 'passed' | 'failed') => ({
     flex: 1,
     padding: '9px 12px',
@@ -206,8 +218,14 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
       )}
       {!decided && reason.trim() === '' && <div style={{ fontSize: 11.5, color: theme.skipped, marginTop: -6 }}>{strings.gate.changesHint}</div>}
       {outcome && (
-        <div role={outcome.ok ? 'status' : 'alert'} style={{ fontSize: 13, fontWeight: 600, color: outcome.ok ? theme.passed : theme.failed }}>
+        <div role={outcome.ok ? 'status' : 'alert'} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: outcome.ok ? theme.passed : theme.failed }}>
+          {outcome.ok && !stalled && <WorkingSpinner blockId="gate" size={16} />}
           {outcome.text}
+        </div>
+      )}
+      {decided && stalled && (
+        <div role="alert" style={{ fontSize: 12.5, color: theme.waiting, lineHeight: 1.4 }}>
+          {strings.gate.notPickedUp}
         </div>
       )}
     </section>

@@ -8,6 +8,7 @@ import { EventBarList } from '@/ui/EventBar'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { AgentSettings } from './AgentSettings'
+import { WorkingSpinner } from './BlockCard'
 import { GatePanel } from './GatePanel'
 import { Canvas, RUN_INPUT_ID } from './Canvas'
 import { useRunStream, type RunStatus } from './useRunStream'
@@ -231,7 +232,12 @@ export function CanvasScreen({
           </button>
         ) : (
           statusText && (
-            <span data-testid="run-status" role="status" style={{ color: runStatus ? theme[statusColour(runStatus)] : theme.skipped, fontSize: 13 }}>
+            <span
+              data-testid="run-status"
+              role="status"
+              style={{ display: 'flex', alignItems: 'center', gap: 7, color: runStatus ? theme[statusColour(runStatus)] : theme.skipped, fontSize: 13 }}
+            >
+              {runStatus === 'running' && <WorkingSpinner blockId="run" size={14} />}
               {statusText}
             </span>
           )

@@ -689,7 +689,10 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         // and ignored, and the gate keeps waiting.
         let decided: { decision: Decision; note: string | null } | null = null
         for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && decided === null; attempt++) {
-          const arrived = await step.waitForEvent(id(`approval-${block.id}-${attempt}`), {
+          // The first wait keeps the id it had before decisions were read from records, so a run parked under that
+          // code still resumes after an update. Changing a step id under a parked run makes it wait for a second event.
+          const waitId = attempt === 0 ? `approval-${block.id}` : `approval-${block.id}-${attempt}`
+          const arrived = await step.waitForEvent(id(waitId), {
             event: APPROVAL_DECIDED,
             timeout: APPROVAL_WAIT,
             match: 'data.runId',

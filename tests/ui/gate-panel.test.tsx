@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { GatePanel } from '@/ui/canvas/GatePanel'
 import { strings } from '@/ui/strings'
 
@@ -50,4 +50,23 @@ test('asking for changes needs a note, then sends it as the decision', async () 
   expect(await screen.findByText(strings.gate.changesSent)).toBeInTheDocument()
   const [, init] = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/decision'))!
   expect(JSON.parse(String(init!.body))).toEqual({ decision: 'changes', reason: 'thicker border', diffHash: 'h1' })
+})
+
+test('after deciding, it waits with a spinner, and says plainly if the run does not pick the decision up', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+      url.endsWith('/review') ? new Response(JSON.stringify(review)) : url.endsWith('/preview') ? new Response(JSON.stringify({ status: 'stopped' })) : new Response('{}')))
+    render(<GatePanel runId="r1" />)
+    await screen.findByText('src/app/page.tsx')
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.gate.approve) }))
+    expect(await screen.findByText(strings.gate.approved)).toBeInTheDocument()
+    expect(screen.getByTestId('spinner-gate')).toBeInTheDocument()
+    expect(screen.queryByText(strings.gate.notPickedUp)).toBeNull()
+    await act(() => vi.advanceTimersByTimeAsync(21_000))
+    expect(screen.getByText(strings.gate.notPickedUp)).toBeInTheDocument()
+    expect(screen.queryByTestId('spinner-gate')).toBeNull()
+  } finally {
+    vi.useRealTimers()
+  }
 })
