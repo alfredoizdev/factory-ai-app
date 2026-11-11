@@ -87,15 +87,6 @@ export function CanvasScreen({
 
   // The blocks are always passed: without them the hook cannot say what a block did in its own words.
   const { views, events, runStatus, connected, loaded } = useRunStream(run?.runId ?? null, run?.blocks)
-  // Once a task's events are all in, a moment more for its cards to settle where they belong, then it is shown whole.
-  const [shownFor, setShownFor] = useState<string | null>(null)
-  useEffect(() => {
-    if (!loaded || !run) return
-    const id = run.runId
-    const t = setTimeout(() => setShownFor(id), 250)
-    return () => clearTimeout(t)
-  }, [loaded, run])
-  const loading = !!run && shownFor !== run.runId
 
   // Saves go one at a time, each naming the draft version it builds on, so a page left open from earlier can never
   // overwrite a newer flow: the server refuses, and the page says to reload. keepalive lets a save started as the
@@ -138,6 +129,31 @@ export function CanvasScreen({
   const runIdNow = run?.runId ?? null
   const setShip = useCallback((state: ShipState) => runIdNow && setShipFor({ runId: runIdNow, state }), [runIdNow])
   const shipBlock = run?.blocks.find(b => b.kind === 'ship')
+
+  // A task is shown whole: once its events are all in and, when it went to GitHub, once GitHub said where it stands
+  // (the Ship card would otherwise change its words a moment later). Then a moment more for its cards to settle.
+  const [shownFor, setShownFor] = useState<string | null>(null)
+  const wentToGitHub = events.some(e => e.type === 'run.pr_opened')
+  const shipKnown = shipFor?.runId === runIdNow
+  useEffect(() => {
+    if (!loaded || !runIdNow || !wentToGitHub || shipKnown) return
+    let live = true
+    fetch(`/api/runs/${runIdNow}/ship`)
+      .then(r => (r.ok ? (r.json() as Promise<ShipState>) : null))
+      .then(state => live && state && setShipFor({ runId: runIdNow, state }))
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [loaded, runIdNow, wentToGitHub, shipKnown])
+  const ready = loaded && (!wentToGitHub || shipKnown)
+  useEffect(() => {
+    if (!loaded || !runIdNow) return
+    // Never stuck: GitHub may be slow or unreachable; the task is shown anyway after a few seconds.
+    const t = setTimeout(() => setShownFor(runIdNow), ready ? 250 : 4000)
+    return () => clearTimeout(t)
+  }, [loaded, ready, runIdNow])
+  const loading = !!run && shownFor !== run.runId
   const shipped = shipFor && shipFor.runId === runIdNow && shipBlock ? shipView(shipBlock.id, shipFor.state) : null
   const shippedViews = shipped && shipBlock ? { ...views, [shipBlock.id]: shipped } : views
   // Once the change reached the person (its risk was measured), the Ship card carries its before and after pictures.
