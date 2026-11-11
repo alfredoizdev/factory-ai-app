@@ -239,6 +239,28 @@ export function BlockCard({
               {block.config.model}
             </span>
           )}
+          {/* A Tests block's own command, so two Tests cards are told apart by what they check. */}
+          {block.kind === 'tests' && typeof block.config.testCommand === 'string' && block.config.testCommand.trim() !== '' && (
+            <span
+              data-testid={`block-command-${block.id}`}
+              title={block.config.testCommand}
+              style={{
+                maxWidth: 150,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                padding: '4px 9px',
+                background: 'rgba(255, 255, 255, 0.045)',
+                border: `1px solid ${theme.lineSoft}`,
+                borderRadius: 999,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: 11,
+                color: theme.dim,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {block.config.testCommand.trim()}
+            </span>
+          )}
           {!block.enabled && <span style={{ color: theme.skipped, fontSize: 12 }}>{strings.editing.disabledBadge}</span>}
           {onRemove && <RemoveButton label={block.label} onRemove={onRemove} />}
           {expanded && onCollapse && (

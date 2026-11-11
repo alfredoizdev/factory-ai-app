@@ -144,3 +144,9 @@ test('a collapsed running block shows the spinner too', async () => {
   rerender(<SpineCard block={buildBlock} view={{ state: 'passed', summary: 'x', summaryIsClaim: false }} />)
   expect(screen.queryByTestId('spinner-build')).toBeNull()
 })
+
+test('a Tests block shows its own command on its card', () => {
+  const tests: Block = { ...buildBlock, id: 'tests-1', kind: 'tests', label: 'Lint', config: { testCommand: 'pnpm lint' } }
+  render(<BlockCard block={tests} view={{ state: 'queued', summary: 'Waits', summaryIsClaim: false }} />)
+  expect(screen.getByTestId('block-command-tests-1')).toHaveTextContent('pnpm lint')
+})

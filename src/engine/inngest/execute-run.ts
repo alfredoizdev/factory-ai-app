@@ -71,6 +71,8 @@ type PlannedBlock = {
   modelBackend?: string
   /** Set once the area is known: the sentence saying which model was chosen and why, shown on the card. */
   routeNote?: string
+  /** A Tests block's own command (lint, build, typecheck…); without one it runs the project's test command. */
+  testCommand?: string
 }
 type Plan = {
   providerId: string
@@ -238,7 +240,7 @@ async function runAttempt(
         blockKind: block.kind,
         request,
         workdir: workspace.workdir ?? undefined,
-        testCommand: workspace.testCommand,
+        testCommand: block.testCommand ?? workspace.testCommand,
         baseCommit: workspace.baseCommit ?? undefined,
         revisionNote: revisionNote ?? undefined,
         previousRequest: workspace.previousRequest ?? undefined,
@@ -483,6 +485,14 @@ async function runProviderNode(
 }
 
 // What the tests of this run measured, read back from its evidence: the gate is judged on records, not on a summary.
+/** A command written on a Tests block: one line, of a sane length, or none at all. */
+function ownCommand(b: { kind: string; config: Record<string, unknown> }): { testCommand?: string } {
+  const v = b.config.testCommand
+  if (b.kind !== 'tests' || typeof v !== 'string') return {}
+  const command = v.trim()
+  return command !== '' && command.length <= 500 && !/[\r\n\0]/.test(command) ? { testCommand: command } : {}
+}
+
 function testFactsOf(runId: string): TestFacts {
   // The latest test run of each block: an earlier round's result says nothing about the change as it is now.
   const latest = new Map<string, { createdAt: string; id: string; data: TestRun }>()
@@ -653,6 +663,7 @@ function loadPlan(runId: string): Plan {
       ...(typeof model === 'string' && model.trim() !== '' ? { model: model.trim() } : {}),
       ...named('modelFrontend'),
       ...named('modelBackend'),
+      ...ownCommand(b),
     }
   })
   const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
@@ -731,7 +742,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   for (let index = from; index < plan.blocks.length; index++) {
     const block = plan.blocks[index]!
     let result: Outcome
-    const route = block.kind === 'human' ? undefined : provider.route?.(block.kind, { testCommand: prepared.testCommand })
+    const route = block.kind === 'human' ? undefined : provider.route?.(block.kind, { testCommand: block.testCommand ?? prepared.testCommand })
     if (!block.enabled) {
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block))
     } else if (route?.mode === 'skip') {

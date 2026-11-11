@@ -32,13 +32,13 @@ export function BlockInspector({
 }) {
   const model = typeof block.config.model === 'string' ? block.config.model : ''
 
-  function setConfig(key: 'model' | 'modelFrontend' | 'modelBackend', value: string) {
+  function setConfig(key: 'model' | 'modelFrontend' | 'modelBackend' | 'testCommand', value: string) {
     // An empty model means "use the default": drop the key rather than store an empty string.
     const { [key]: _old, ...rest } = block.config
     onChange({ ...block, config: value === '' ? rest : { ...rest, [key]: value } })
   }
   const setModel = (value: string) => setConfig('model', value)
-  const configured = (key: 'modelFrontend' | 'modelBackend') => (typeof block.config[key] === 'string' ? (block.config[key] as string) : '')
+  const configured = (key: 'modelFrontend' | 'modelBackend' | 'testCommand') => (typeof block.config[key] === 'string' ? (block.config[key] as string) : '')
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
@@ -46,15 +46,32 @@ export function BlockInspector({
         {strings.editing.name}
         <input style={field} value={block.label} onChange={e => onChange({ ...block, label: e.target.value })} />
       </label>
-      <label>
-        {strings.editing.model}
-        <input
-          style={field}
-          value={model}
-          placeholder={strings.editing.modelPlaceholder}
-          onChange={e => setModel(e.target.value)}
-        />
-      </label>
+      {block.kind === 'tests' ? (
+        // A Tests block runs a command, not a model: what it checks is the command it runs.
+        <>
+          <label>
+            {strings.editing.testCommand}
+            <input
+              style={{ ...field, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12.5 }}
+              value={configured('testCommand')}
+              placeholder={strings.editing.testCommandPlaceholder}
+              spellCheck={false}
+              onChange={e => setConfig('testCommand', e.target.value)}
+            />
+          </label>
+          <p style={{ margin: 0, fontSize: 12, color: theme.skipped }}>{strings.editing.testCommandHint}</p>
+        </>
+      ) : (
+        <label>
+          {strings.editing.model}
+          <input
+            style={field}
+            value={model}
+            placeholder={strings.editing.modelPlaceholder}
+            onChange={e => setModel(e.target.value)}
+          />
+        </label>
+      )}
       {block.kind === 'build' && (
         <>
           <label>

@@ -204,6 +204,15 @@ describe('BlockInspector', () => {
     expect(screen.queryByLabelText('Model for front-end work')).toBeNull()
   })
 
+  test('a Tests block sets its own command instead of a model', () => {
+    const onChange = vi.fn()
+    const tests: Block = { ...block, id: 'tests-1', kind: 'tests', label: 'Lint' }
+    render(<BlockInspector block={tests} onChange={onChange} />)
+    expect(screen.queryByLabelText('Model')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Command'), { target: { value: 'pnpm lint' } })
+    expect(onChange).toHaveBeenLastCalledWith({ ...tests, config: { testCommand: 'pnpm lint' } })
+  })
+
   test('the enabled checkbox toggles enabled', () => {
     const onChange = vi.fn()
     render(<BlockInspector block={block} onChange={onChange} />)

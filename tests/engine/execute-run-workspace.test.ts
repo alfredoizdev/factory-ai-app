@@ -459,3 +459,23 @@ test('without per-area models the request is not read for routing', async () => 
   }
   expect(asked).toBe(false)
 })
+
+test('each Tests block runs its own command, and one without falls back to the project command', async () => {
+  const { workflowVersions } = await import('@/db/schema')
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
+  const run = db.select().from(runs).where(eq(runs.id, runId)).get()!
+  const version = db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)).get()!
+  const graph = JSON.parse(version.graphJson) as { blocks: { id: string; kind: string; label: string; enabled: boolean; config: Record<string, unknown>; position: { x: number; y: number } }[] }
+  graph.blocks.push({ id: 'tests-1', kind: 'tests', label: 'Lint', enabled: true, config: { testCommand: '  npm run lint ' }, position: { x: 0, y: 1 } })
+  db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id)).run()
+  const commands: string[] = []
+  const provider: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute(input) {
+      if (input.blockKind === 'tests') commands.push(String(input.testCommand))
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  await drive(runId, provider)
+  expect(commands).toEqual(['npm test', 'npm run lint'])
+})
