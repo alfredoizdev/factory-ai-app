@@ -10,6 +10,7 @@ import { cancelRun, createRun, failUnstartedRun, publishVersion, saveDraft } fro
 import { createDemoProvider } from '@/providers/demo'
 import type { AgentProvider } from '@/providers/types'
 import { strings } from '@/ui/strings'
+import { recordDecision, type Decision } from '@/engine/approvals'
 
 // These drive the orchestration directly with a stand-in for Inngest's step tools: no dev server is needed.
 
@@ -23,11 +24,18 @@ const fast = createDemoProvider({ stepDelayMs: 1 })
 class Parked extends Error {}
 
 // Like Inngest, results pass through JSON, so a step returning something unserialisable fails here too.
-function fakeStep(decision?: { decision: string } | null): StepApi {
+function fakeStep(decision?: { decision: string } | null, runId?: string): StepApi {
+  let delivered = false
   return {
     run: async (_id, fn) => JSON.parse(JSON.stringify((await fn()) ?? null)),
     waitForEvent: async () => {
-      if (decision) return { data: decision }
+      if (decision && !delivered) {
+        // As the app does it: the decision is recorded first, then the event is sent.
+        if (runId && decision.decision !== 'unrecorded') recordDecision(runId, decision.decision as Decision, { actor: 'test', diffHash: null })
+        delivered = true
+        return { data: decision }
+      }
+      if (decision && delivered) throw new Parked() // nothing further arrives
       if (decision === null) return null // the wait expired with no decision
       throw new Parked()
     },
@@ -37,7 +45,7 @@ function fakeStep(decision?: { decision: string } | null): StepApi {
 async function drive(runId: string, provider: AgentProvider, decision?: { decision: string } | null) {
   const deps: ExecutorDeps = { resolveProvider: () => provider }
   try {
-    await orchestrateRun(runId, fakeStep(decision), deps)
+    await orchestrateRun(runId, fakeStep(decision, runId), deps)
   } catch (e) {
     if (!(e instanceof Parked)) throw e
   }
@@ -429,4 +437,15 @@ test('a run that could not be started leaves none of its blocks queued', async (
   const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
   expect(rows).toHaveLength(8)
   expect(rows.every(n => n.state === 'cancelled')).toBe(true)
+})
+
+// The named test from the design (§9): a missing approval prevents a blocking action.
+test('an approval event with no recorded decision behind it opens nothing, and says so', async () => {
+  const runId = await newRun('add a spinner')
+  await drive(runId, fast, { decision: 'unrecorded' })
+  expect(await runStatus(runId)).toBe('waiting_approval')
+  expect((await getNodeRun(runId, 'human')).state).toBe('waiting_approval')
+  expect((await getNodeRun(runId, 'ship')).state).toBe('queued')
+  const steps = (await eventsSince(runId, 0)).filter(e => e.type === 'node.step').map(e => (e.payload as { text: string }).text)
+  expect(steps).toContain(strings.gate.ignoredEvent)
 })

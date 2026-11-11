@@ -8,6 +8,7 @@ import { canTransition, rollUpRunStatus, type NodeState, type RunStatus } from '
 import { appendEventSync, type DbHandle, type EventType } from '@/engine/events'
 import { APPROVAL_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { clip, redact } from '@/engine/redact'
+import { recordedDecision } from '@/engine/approvals'
 import { assessRisk, type RiskAssessment, type TestFacts } from '@/engine/risk'
 import type { TestRun } from '@/engine/test-runner'
 import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
@@ -505,6 +506,21 @@ function passLowRiskGate(runId: string, block: PlannedBlock): Outcome {
   })
 }
 
+/** How many unrecorded decisions a gate tolerates before it stops listening (the run stays waiting). */
+const MAX_IGNORED_DECISIONS = 20
+
+function readRecordedDecision(runId: string, block: PlannedBlock): 'approved' | 'rejected' | null {
+  const node = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
+  if (!node) return null
+  const decided = recordedDecision(runId, node.id)
+  if (decided === null) {
+    withTx(tx => {
+      appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, text: strings.gate.ignoredEvent } }, tx)
+    })
+  }
+  return decided
+}
+
 // A human block never calls a provider: it records that it is waiting and the function parks.
 function parkHumanNode(runId: string, block: PlannedBlock): Outcome {
   const result = withTx((tx): Outcome => {
@@ -620,14 +636,22 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         result = await step.run(`node-${block.id}`, () => parkHumanNode(runId, block))
       }
       if (result.outcome === 'parked') {
-        const decision = await step.waitForEvent(`approval-${block.id}`, {
-          event: APPROVAL_DECIDED,
-          timeout: APPROVAL_WAIT,
-          match: 'data.runId',
-        })
-        // No decision (the wait expired) leaves the run waiting on the person; it is never a verdict.
-        if (!decision) return
-        const approved = decision.data.decision === 'approved'
+        // The event only says "look": what was decided is read from the approvals table, where the app records the
+        // person's decision before sending it. An event with no record behind it (sent by anything else) is noted
+        // and ignored, and the gate keeps waiting.
+        let decided: 'approved' | 'rejected' | null = null
+        for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && decided === null; attempt++) {
+          const arrived = await step.waitForEvent(`approval-${block.id}-${attempt}`, {
+            event: APPROVAL_DECIDED,
+            timeout: APPROVAL_WAIT,
+            match: 'data.runId',
+          })
+          // No decision (the wait expired) leaves the run waiting on the person; it is never a verdict.
+          if (!arrived) return
+          decided = await step.run(`read-decision-${block.id}-${attempt}`, () => readRecordedDecision(runId, block))
+        }
+        if (decided === null) return
+        const approved = decided === 'approved'
         result = await step.run(`decide-${block.id}`, () => decideHumanNode(runId, block, approved))
       }
     } else {

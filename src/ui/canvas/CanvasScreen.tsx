@@ -8,6 +8,7 @@ import { EventBarList } from '@/ui/EventBar'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { AgentSettings } from './AgentSettings'
+import { GatePanel } from './GatePanel'
 import { Canvas, RUN_INPUT_ID } from './Canvas'
 import { useRunStream, type RunStatus } from './useRunStream'
 
@@ -54,6 +55,7 @@ export function CanvasScreen({
   const [message, setMessage] = useState<string | null>(null)
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
   const flushRef = useRef<(() => Promise<boolean>) | null>(null)
+  const gateRef = useRef<HTMLElement | null>(null)
 
   // The blocks are always passed: without them the hook cannot say what a block did in its own words.
   const { views, events, runStatus, connected } = useRunStream(run?.runId ?? null, run?.blocks)
@@ -198,13 +200,52 @@ export function CanvasScreen({
             {strings.run.demoBadge}
           </span>
         )}
-        {statusText && (
-          <span data-testid="run-status" role="status" style={{ color: runStatus ? theme[statusColour(runStatus)] : theme.skipped, fontSize: 13 }}>
+        {statusText && runStatus === 'waiting_approval' ? (
+          // Waiting on the person: the status itself takes them to the decision.
+          <button
+            type="button"
+            data-testid="run-status"
+            title={strings.gate.goToGate}
+            onClick={() => {
+              const waiting = run?.blocks.find(b => views[b.id]?.state === 'waiting_approval')
+              if (waiting) setHighlightedId(waiting.id)
+              gateRef.current?.focus()
+              gateRef.current?.scrollIntoView?.({ block: 'nearest' })
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              background: theme.tint('waiting', 0.12),
+              color: theme.waiting,
+              border: `1px solid ${theme.tint('waiting', 0.5)}`,
+              borderRadius: 999,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <span aria-hidden="true">⚠</span>
             {statusText}
-          </span>
+          </button>
+        ) : (
+          statusText && (
+            <span data-testid="run-status" role="status" style={{ color: runStatus ? theme[statusColour(runStatus)] : theme.skipped, fontSize: 13 }}>
+              {statusText}
+            </span>
+          )
         )}
       </header>
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        {run && runStatus === 'waiting_approval' && (
+          <GatePanel
+            key={run.runId}
+            ref={gateRef}
+            runId={run.runId}
+            risk={Object.values(views).find(v => v.state === 'waiting_approval')?.risk}
+          />
+        )}
         <Canvas
           graph={graph}
           save={save}

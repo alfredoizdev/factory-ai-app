@@ -41,3 +41,18 @@ export function isLoopbackHost(host: string): boolean {
   const name = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0]!
   return LOOPBACK_NAMES.has(name.toLowerCase())
 }
+
+/**
+ * Stricter than rejectCrossSite, for the human check: the request must come from this app's own page, which a
+ * browser proves with fetch metadata. A request with no browser headers (a script, curl, a local agent) is refused
+ * here even though rejectCrossSite would let it through. Forging the headers is possible for a local process, so this
+ * is a guard against shortcuts, not against a determined one: the design says so (§8, the human gate).
+ */
+export function requireOwnPage(req: Request): Response | null {
+  const refused = rejectCrossSite(req)
+  if (refused) return refused
+  if (req.headers.get('sec-fetch-site') !== 'same-origin') {
+    return Response.json({ error: strings.gate.browserOnly }, { status: 403 })
+  }
+  return null
+}

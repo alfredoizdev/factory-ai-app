@@ -158,3 +158,22 @@ export const usageRecords = sqliteTable(
   },
   t => [index('usage_records_node_run_idx').on(t.nodeRunId)],
 )
+
+// Every decision a person makes at a human check: who, when, which way, why, and on which exact change. The gate
+// acts only on a row here — an approval event with no row behind it opens nothing.
+export const approvals = sqliteTable(
+  'approvals',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+    nodeRunId: text('node_run_id').notNull().references(() => nodeRuns.id, { onDelete: 'cascade' }),
+    decision: text('decision').notNull(),
+    actor: text('actor').notNull(),
+    reason: text('reason'),
+    /** The hash of the change the person was shown. Null for a run that changed no files (the demo). */
+    diffHash: text('diff_hash'),
+    createdAt: text('created_at').notNull(),
+  },
+  t => [index('approvals_run_idx').on(t.runId)],
+)

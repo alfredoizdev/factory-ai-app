@@ -459,6 +459,17 @@ automatic return-to-builder with the finding attached, human gate with audit.
 >    already contains the gate.
 > 4. **Anti-goal #4 in force** — an AI approver cannot clear a human gate.
 >
+> **Landed 2026-11-11, ahead of M4, because the user asked for the approve button.** All four together:
+> (1) the decision route accepts only the app's own page (fetch metadata `same-origin`, loopback Host) —
+> a script or local agent without browser headers is refused; (2) every decision is a row in `approvals`
+> with actor (the account at this computer), reason, timestamp and the hash of the change shown; (3) the
+> named test exists: an approval event with no recorded decision opens nothing, and says so on the card;
+> (4) the executor acts on the recorded row, never on the event, and a decision is refused if the change
+> moved after it was shown. **Known limit, stated plainly:** the builder runs unsandboxed as the same OS
+> user, so a process that deliberately forges browser headers or writes the database could still approve.
+> The builder's process group is stopped before the gate opens, which removes the easy path; closing the
+> hard one needs a sandbox for the builder.
+>
 > This is written down because the plan left it out silently, and "the plan did
 > not ask" is how a product's central guarantee goes missing. The mechanism must
 > not stay ahead of its guard.
