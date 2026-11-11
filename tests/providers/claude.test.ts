@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { claudeArgs, createClaudeProvider, routeFor, STOP_GRACE_MS } from '@/providers/claude'
+import { claudeArgs, createClaudeProvider, MODEL_NAME, routeFor, STOP_GRACE_MS } from '@/providers/claude'
 import type { AgentEvent } from '@/providers/types'
 import type { TestRun } from '@/engine/test-runner'
 import { strings } from '@/ui/strings'
@@ -199,4 +199,29 @@ test('a test command that could not start leaves no evidence, says so, and is no
   const events = await collect(provider.execute({ blockKind: 'tests', request: 'r', workdir: '/wt', testCommand: 'npm test' }, { signal: signal() }))
   expect(events.map(e => e.type)).toEqual(['step', 'error'])
   expect(events.at(-1)).toEqual({ type: 'error', source: 'system', cause: 'tests_failed', message: strings.run.testsDidNotStart('npm test') })
+})
+
+test('the model written on the block is the model the agent runs with', async () => {
+  const child = fakeChild()
+  const spawn = vi.fn(() => child)
+  const pending = collect(createClaudeProvider({ spawn: spawn as never }).execute({ ...build, model: 'opus' }, { signal: signal() }))
+  finish(child, [{ type: 'result', is_error: false, result: 'ok' }])
+  await pending
+  const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
+  expect(args.slice(args.indexOf('--model'), args.indexOf('--model') + 2)).toEqual(['--model', 'opus'])
+})
+
+test('with no model on the block, none is passed and the agent uses its own default', () => {
+  expect(claudeArgs('p')).not.toContain('--model')
+})
+
+test.each(['--dangerously-skip-permissions', '-p', 'opus; rm -rf /', 'has space', ''])('"%s" is not a model name and nothing starts', async bad => {
+  const spawn = vi.fn()
+  const events = await collect(createClaudeProvider({ spawn: spawn as never }).execute({ ...build, model: bad }, { signal: signal() }))
+  expect(spawn).not.toHaveBeenCalled()
+  expect(events).toEqual([{ type: 'error', source: 'system', message: strings.providers.claude.badModel(bad) }])
+})
+
+test.each(['opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'opus[1m]'])('"%s" is accepted as a model name', name => {
+  expect(MODEL_NAME.test(name)).toBe(true)
 })

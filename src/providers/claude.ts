@@ -61,12 +61,16 @@ export function routeFor(kind: BlockKind, context: { testCommand?: string | null
   return { mode: 'execute' }
 }
 
-export function claudeArgs(prompt: string, imageDir?: string): string[] {
+/** A model name as the CLI takes it ("opus", "sonnet", "claude-opus-5-5", "opus[1m]"). Never starts with "-". */
+export const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,63}$/
+
+export function claudeArgs(prompt: string, imageDir?: string, model?: string): string[] {
   // The prompt is an argument, never interpolated into a shell. bypassPermissions is the design's unattended builder
   // (§6): it works inside its worktree without a prompt per command. It is not a sandbox. With images, their folder
   // is added as a directory the agent may read, and nothing else.
   const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions']
-  return imageDir ? [...args, '--add-dir', imageDir] : args
+  const withModel = model ? [...args, '--model', model] : args
+  return imageDir ? [...withModel, '--add-dir', imageDir] : withModel
 }
 
 async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
@@ -75,6 +79,11 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
     return
   }
   const workdir = input.workdir
+  // A model name that is not one could be read as another option; it is refused, plainly, before anything starts.
+  if (input.model !== undefined && !MODEL_NAME.test(input.model)) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.badModel(input.model) }
+    return
+  }
   let child: Child
   try {
     const prompt = input.revisionNote
@@ -84,7 +93,7 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
         : strings.providers.claude.buildPrompt(input.request)
     const images = input.images ?? []
     const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
-    child = deps.spawn(deps.bin, claudeArgs(withImages, images.length > 0 ? dirname(images[0]!) : undefined), {
+    child = deps.spawn(deps.bin, claudeArgs(withImages, images.length > 0 ? dirname(images[0]!) : undefined, input.model), {
       cwd: workdir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,

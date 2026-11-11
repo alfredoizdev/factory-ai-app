@@ -57,7 +57,7 @@ const MAX_LISTED_FILES = 20
 /** A step line is short: it says what the agent is doing, it is not a log. */
 const STEP_MAX = 240
 
-type PlannedBlock = { id: string; kind: BlockKind; enabled: boolean; timeoutMs: number }
+type PlannedBlock = { id: string; kind: BlockKind; enabled: boolean; timeoutMs: number; model?: string }
 type Plan = {
   providerId: string
   request: string
@@ -229,6 +229,7 @@ async function runAttempt(
         revisionNote: revisionNote ?? undefined,
         previousRequest: workspace.previousRequest ?? undefined,
         images: images.length > 0 ? [...images] : undefined,
+        model: block.model,
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
@@ -620,7 +621,15 @@ function loadPlan(runId: string): Plan {
   const ordered = STAGE_ORDER.flatMap(kind => graph.blocks.filter(b => b.kind === kind))
   const blocks = ordered.map(b => {
     const t = (b.config as { timeoutMs?: unknown }).timeoutMs
-    return { id: b.id, kind: b.kind, enabled: b.enabled, timeoutMs: typeof t === 'number' && t > 0 ? t : DEFAULT_TIMEOUT_MS }
+    const model = (b.config as { model?: unknown }).model
+    return {
+      id: b.id,
+      kind: b.kind,
+      enabled: b.enabled,
+      timeoutMs: typeof t === 'number' && t > 0 ? t : DEFAULT_TIMEOUT_MS,
+      // The model written on the block, from the frozen version: what the card shows is what the agent runs with.
+      ...(typeof model === 'string' && model.trim() !== '' ? { model: model.trim() } : {}),
+    }
   })
   const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
   return {

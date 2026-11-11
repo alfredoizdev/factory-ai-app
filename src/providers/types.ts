@@ -32,6 +32,8 @@ export type AgentExecutionInput = {
   previousRequest?: string
   /** Absolute paths of images the person attached for this round, for the agent to look at. */
   images?: string[]
+  /** The model chosen on the block, when one was. Absent: the agent's own default. */
+  model?: string
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

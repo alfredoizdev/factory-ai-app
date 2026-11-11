@@ -384,3 +384,24 @@ test('round 1 is handed the request\'s images; a round of changes gets only the 
   expect(imagesSeen[1]).toHaveLength(1)
   expect(imagesSeen[1]![0]).not.toBe(imagesSeen[0]![0])
 })
+
+test('the model written on the Build block, as frozen in the run, reaches the builder', async () => {
+  const { workflowVersions } = await import('@/db/schema')
+  const runId = await newRun({ repoPath: '/repo' })
+  const run = db.select().from(runs).where(eq(runs.id, runId)).get()!
+  const version = db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)).get()!
+  const graph = JSON.parse(version.graphJson) as { blocks: { kind: string; config: Record<string, unknown> }[] }
+  graph.blocks.find(b => b.kind === 'build')!.config.model = 'opus'
+  db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id)).run()
+  const models: (string | undefined)[] = []
+  const provider: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute(input) {
+      models.push(`${input.blockKind}:${input.model ?? '-'}`)
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  await drive(runId, provider)
+  expect(models).toContain('build:opus')
+  expect(models).toContain('tests:-') // a block with no model set gets none: the agent's default
+})

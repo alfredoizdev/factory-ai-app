@@ -382,6 +382,7 @@ export const strings = {
           'When you are done, reply with one plain sentence saying what you changed.',
         ].join('\n'),
       notFound: 'The claude command was not found on this computer.',
+      badModel: (model: string) => `"${model.slice(0, 40)}" is not a model name, so the agent was not started. Fix it in the block's settings.`,
       noWorkdir: 'This run has no working copy, so the agent was not started.',
       exitedWithoutResult: (code: number | null) =>
         code === null ? 'The agent was stopped before it reported a result.' : `The agent exited (code ${code}) without reporting a result.`,
