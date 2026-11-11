@@ -17,54 +17,66 @@ const TONE: Record<PromptKind, string> = {
   rejectedNote: theme.failed,
 }
 
-/**
- * What was asked on this task, as a row of small cards under its title, oldest first: the request, each change or new
- * plan the person asked for, what a reviewer sent back. A card opens to show its whole text.
- */
-export function PromptCards({ runId, refreshKey }: { runId: string; refreshKey: string | number }) {
-  const [prompts, setPrompts] = useState<Prompt[]>([])
-  const [open, setOpen] = useState<Prompt | null>(null)
+/** The block a prompt belongs to: where in the process it was asked. */
+export const PROMPT_BLOCK: Record<PromptKind, 'input' | 'plan' | 'review' | 'human'> = {
+  request: 'input',
+  followUp: 'input',
+  replan: 'plan',
+  reviewer: 'review',
+  changes: 'human',
+  approvedNote: 'human',
+  rejectedNote: 'human',
+}
 
+/** What was asked on this task, read again whenever `refreshKey` changes. */
+export function usePrompts(runId: string | null, refreshKey: string): Prompt[] {
+  const [state, setState] = useState<{ runId: string; prompts: Prompt[] } | null>(null)
   useEffect(() => {
+    if (!runId) return
     let live = true
     fetch(`/api/runs/${runId}/prompts`)
       .then(r => (r.ok ? (r.json() as Promise<{ prompts: Prompt[] }>) : null))
-      .then(d => live && d && setPrompts(d.prompts))
+      .then(d => live && d && setState({ runId, prompts: d.prompts }))
       .catch(() => undefined)
     return () => {
       live = false
     }
   }, [runId, refreshKey])
+  return state && state.runId === runId ? state.prompts : []
+}
 
+/**
+ * On a card, what was asked at that step, oldest first: each as a small quoted note saying who asked and when, three
+ * lines long; it opens to its whole text.
+ */
+export function AskedStrip({ prompts }: { prompts: readonly Prompt[] }) {
+  const [open, setOpen] = useState<Prompt | null>(null)
   if (prompts.length === 0) return null
   return (
-    <>
-      <ol
-        data-testid="prompt-cards"
-        aria-label={strings.prompts.title}
-        style={{ position: 'absolute', top: 72, left: 24, zIndex: 4, maxWidth: 'calc(100% - 540px)', margin: 0, padding: '2px 2px 6px', listStyle: 'none', display: 'flex', gap: 8, overflowX: 'auto', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}
-      >
-        {prompts.map((p, i) => (
-          <li key={`${p.at}-${i}`} style={{ flex: 'none' }}>
-            <button
-              type="button"
-              onClick={() => setOpen(p)}
-              title={strings.prompts.open}
-              style={{ width: 240, height: 92, textAlign: 'left', display: 'grid', gridTemplateRows: 'auto 1fr', gap: 4, padding: '8px 10px', borderRadius: 10, border: `1px solid ${theme.border}`, borderLeft: `3px solid ${TONE[p.kind]}`, background: 'rgba(17, 22, 31, 0.92)', color: '#d6dce6', cursor: 'pointer', boxShadow: '0 8px 20px rgba(0,0,0,0.3)' }}
-            >
-              <span style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: TONE[p.kind] }}>
-                <span>
-                  {i + 1}. {strings.prompts.kind[p.kind]}
-                </span>
-                <span style={{ fontWeight: 600, letterSpacing: 0, textTransform: 'none', color: theme.dim }}>{whenText(p.at)}</span>
-              </span>
-              <span style={{ fontSize: 12.5, lineHeight: 1.4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>{p.text}</span>
-            </button>
-          </li>
-        ))}
-      </ol>
+    <div
+      data-testid="asked-strip"
+      className="nodrag"
+      onClick={e => e.stopPropagation()}
+      onPointerDown={e => e.stopPropagation()}
+      style={{ display: 'grid', gap: 6, marginTop: 10 }}
+    >
+      {prompts.map((p, i) => (
+        <button
+          key={`${p.at}-${i}`}
+          type="button"
+          onClick={() => setOpen(p)}
+          title={strings.prompts.open}
+          style={{ textAlign: 'left', display: 'grid', gap: 3, padding: '7px 9px', borderRadius: 8, border: `1px solid ${theme.border}`, borderLeft: `3px solid ${TONE[p.kind]}`, background: '#0d1118', color: '#d6dce6', cursor: 'pointer' }}
+        >
+          <span style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 9.5, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: TONE[p.kind] }}>
+            <span>{strings.prompts.kind[p.kind]}</span>
+            <span style={{ fontWeight: 600, letterSpacing: 0, textTransform: 'none', color: theme.dim }}>{whenText(p.at)}</span>
+          </span>
+          <span style={{ fontSize: 12.5, lineHeight: 1.4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>{p.text}</span>
+        </button>
+      ))}
       {open && <PromptModal prompt={open} onClose={() => setOpen(null)} />}
-    </>
+    </div>
   )
 }
 

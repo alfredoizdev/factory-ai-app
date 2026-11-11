@@ -3,7 +3,7 @@
 import { PastTasks } from './PastTasks'
 import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
-import { PromptCards } from './PromptCards'
+import { PROMPT_BLOCK, usePrompts } from './PromptCards'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { SettingsIcon } from './SettingsIcon'
@@ -16,7 +16,7 @@ import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { EventBarList } from '@/ui/EventBar'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
-import { WorkingSpinner } from './BlockCard'
+import { WorkingSpinner, type NodeRunView } from './BlockCard'
 import { CommandCard, type CardMode } from './CommandCard'
 import { imagesBusy, readyImageIds, type ComposerImage } from './Composer'
 import { Canvas, RUN_INPUT_ID } from './Canvas'
@@ -158,6 +158,19 @@ export function CanvasScreen({
     return () => clearTimeout(t)
   }, [loaded, ready, runIdNow])
   const loading = !!run && shownFor !== run.runId
+
+  // What was asked, each on the card of the step it was asked at. Read again when something new is asked or decided.
+  const prompts = usePrompts(runIdNow, `${events.filter(e => e.type === 'node.reopened' || e.type === 'node.plan_decided').length}-${runStatus ?? ''}`)
+  const withAsked = (base: Record<string, NodeRunView>): Record<string, NodeRunView> => {
+    if (!run || prompts.length === 0) return base
+    const out = { ...base }
+    for (const kind of ['input', 'plan', 'review', 'human'] as const) {
+      const block = run.blocks.find(b => b.kind === kind && b.enabled)
+      const asked = prompts.filter(p => PROMPT_BLOCK[p.kind] === kind)
+      if (block && out[block.id] && asked.length > 0) out[block.id] = { ...out[block.id]!, asked }
+    }
+    return out
+  }
   const shipped = shipFor && shipFor.runId === runIdNow && shipBlock ? shipView(shipBlock.id, shipFor.state) : null
   const shippedViews = shipped && shipBlock ? { ...views, [shipBlock.id]: shipped } : views
   // Once the change reached the person (its risk was measured), the Ship card carries its before and after pictures.
@@ -495,7 +508,7 @@ export function CanvasScreen({
         <Canvas
           graph={graph}
           save={save}
-          nodeRuns={Object.values(withShip)}
+          nodeRuns={Object.values(withAsked(withShip))}
           runBlocks={run?.blocks}
           highlightedId={highlightedId}
           flushRef={flushRef}
@@ -504,8 +517,6 @@ export function CanvasScreen({
             run && !loading ? (
               <>
                 <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} />
-                {/* Asked again whenever something new is recorded: a change, a new plan, a decision. */}
-                <PromptCards runId={run.runId} refreshKey={`${events.filter(e => e.type === 'node.reopened' || e.type === 'node.plan_decided').length}-${runStatus ?? ''}`} />
               </>
             ) : undefined
           }
