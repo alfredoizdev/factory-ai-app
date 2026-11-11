@@ -17,6 +17,8 @@ export type NodeRunView = {
   evidence?: RunEvidence
   /** The measured risk of the run's change, on the human check. Absent: not measured (a demo run). */
   risk?: { level: 'low' | 'high'; reasons: string[] }
+  /** Which round of the run this block is on, from the second on: the person asked for changes. */
+  round?: number
 }
 
 export type RunEvidence = {
@@ -36,7 +38,7 @@ export type RunEvidence = {
 
 /** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
 export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'summaryIsClaim' | 'usage'> &
-  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk'>>
+  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round'>>
 
 // The domain and visual vocabularies are separate on purpose.
 const VISUAL: Record<NodeState, VisualState> = {
@@ -264,6 +266,14 @@ export function BlockCard({
         <span aria-label={strings.canvas.stateAria(stateLabel)} style={{ ...CAPS, fontSize: 11, color: accent }}>
           {stateLabel}
         </span>
+        {view.round && (
+          <span
+            data-testid={`round-${block.id}`}
+            style={{ ...CAPS, fontSize: 9.5, color: '#cfe0ff', padding: '2px 7px', borderRadius: 999, border: `1px solid ${theme.tint('running', 0.45)}`, marginLeft: 4 }}
+          >
+            {strings.gate.round(view.round)}
+          </span>
+        )}
       </div>
 
       {isClaim && (

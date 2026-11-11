@@ -4,11 +4,11 @@ import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { claims, evidence, nodeRuns, projects, runs, usageRecords, workflowVersions } from '@/db/schema'
 import { STAGE_ORDER, type BlockKind, type Graph } from '@/domain/graph'
-import { canTransition, rollUpRunStatus, type NodeState, type RunStatus } from '@/domain/states'
+import { canReopen, canTransition, rollUpRunStatus, type NodeState, type RunStatus } from '@/domain/states'
 import { appendEventSync, type DbHandle, type EventType } from '@/engine/events'
 import { APPROVAL_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { clip, redact } from '@/engine/redact'
-import { recordedDecision } from '@/engine/approvals'
+import { MAX_REVISIONS, takeRecordedDecision, type Decision } from '@/engine/approvals'
 import { assessRisk, type RiskAssessment, type TestFacts } from '@/engine/risk'
 import type { TestRun } from '@/engine/test-runner'
 import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
@@ -197,6 +197,7 @@ async function runAttempt(
   request: string,
   runId: string,
   workspace: Workspace,
+  revisionNote: string | null,
   onStep: (text: string) => void,
   onEvidence: (data: TestRun) => void,
 ): Promise<AttemptResult> {
@@ -221,6 +222,7 @@ async function runAttempt(
         workdir: workspace.workdir ?? undefined,
         testCommand: workspace.testCommand,
         baseCommit: workspace.baseCommit ?? undefined,
+        revisionNote: revisionNote ?? undefined,
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
@@ -302,7 +304,14 @@ function recordDoneFacts(tx: DbHandle, node: NodeRow, done: Done): void {
   }
 }
 
-async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, deps: ExecutorDeps, workspace: Workspace): Promise<Outcome> {
+async function runProviderNode(
+  runId: string,
+  plan: Plan,
+  block: PlannedBlock,
+  deps: ExecutorDeps,
+  workspace: Workspace,
+  revisionNote: string | null = null,
+): Promise<Outcome> {
   // Resolved before any row exists, so an unknown provider cannot strand a node.
   const provider = deps.resolveProvider(plan.providerId)
 
@@ -331,6 +340,7 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
       plan.request,
       runId,
       workspace,
+      revisionNote,
       text => {
         withTx(tx => {
           const node = freshNode(opened.id)
@@ -447,9 +457,16 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
 
 // What the tests of this run measured, read back from its evidence: the gate is judged on records, not on a summary.
 function testFactsOf(runId: string): TestFacts {
-  const runsOfTests = db.select().from(evidence).where(eq(evidence.runId, runId)).all()
-    .filter(e => e.kind === 'test_run')
-    .map(e => JSON.parse(e.dataJson) as TestRun)
+  // The latest test run of each block: an earlier round's result says nothing about the change as it is now.
+  const latest = new Map<string, { createdAt: string; id: string; data: TestRun }>()
+  for (const e of db.select().from(evidence).where(eq(evidence.runId, runId)).all()) {
+    if (e.kind !== 'test_run') continue
+    const seen = latest.get(e.nodeRunId)
+    if (!seen || e.createdAt > seen.createdAt || (e.createdAt === seen.createdAt && e.id > seen.id)) {
+      latest.set(e.nodeRunId, { createdAt: e.createdAt, id: e.id, data: JSON.parse(e.dataJson) as TestRun })
+    }
+  }
+  const runsOfTests = [...latest.values()].map(v => v.data)
   return {
     testsRan: runsOfTests.length > 0,
     testsPassed: runsOfTests.length > 0 && runsOfTests.every(t => t.exitCode === 0 && !t.signal),
@@ -506,13 +523,35 @@ function passLowRiskGate(runId: string, block: PlannedBlock): Outcome {
   })
 }
 
+// The person asked for changes: every block from the builder to the human check goes back to queued for the next
+// round, in one transaction, each with a node.reopened event carrying the round and the person's note. Blocks that
+// were skipped stay skipped. The run is running again. Nothing in the worktree is touched: the next round builds on it.
+function reopenForRevision(runId: string, blocks: readonly PlannedBlock[], round: number, note: string | null): boolean {
+  return withTx(tx => {
+    if (runStatusOf(tx, runId) !== 'waiting_approval') return false
+    const clean = note ? clip(redact(note), 500) : null
+    for (const block of blocks) {
+      const node = tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
+      if (!node || !canReopen(node.state as NodeState)) continue
+      tx.update(nodeRuns)
+        .set({ state: 'queued', attempt: 1, summary: null, failureCause: null, startedAt: null, finishedAt: null })
+        .where(eq(nodeRuns.id, node.id))
+        .run()
+      appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean } }, tx)
+    }
+    tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
+    appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
+    return true
+  })
+}
+
 /** How many unrecorded decisions a gate tolerates before it stops listening (the run stays waiting). */
 const MAX_IGNORED_DECISIONS = 20
 
-function readRecordedDecision(runId: string, block: PlannedBlock): 'approved' | 'rejected' | null {
+function readRecordedDecision(runId: string, block: PlannedBlock): { decision: Decision; note: string | null } | null {
   const node = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
   if (!node) return null
-  const decided = recordedDecision(runId, node.id)
+  const decided = takeRecordedDecision(runId, node.id)
   if (decided === null) {
     withTx(tx => {
       appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, text: strings.gate.ignoredEvent } }, tx)
@@ -619,49 +658,74 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   }
   const provider = deps.resolveProvider(plan.providerId)
 
-  for (const block of plan.blocks) {
+  // Rounds: the first walks every block; when the person asks for changes, the next round walks again from the
+  // builder, in the same worktree, with their note. Step ids carry the round so Inngest memoises each round apart
+  // (round 1 keeps the original ids, so a run already in flight replays unchanged).
+  let round = 1
+  let revisionNote: string | null = null
+  let from = 0
+  rounds: while (true) {
+  const id = (name: string) => (round === 1 ? name : `${name}-r${round}`)
+  for (let index = from; index < plan.blocks.length; index++) {
+    const block = plan.blocks[index]!
     let result: Outcome
     const route = block.kind === 'human' ? undefined : provider.route?.(block.kind, { testCommand: prepared.testCommand })
     if (!block.enabled) {
-      result = await step.run(`node-${block.id}`, () => skipNode(runId, block))
+      result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block))
     } else if (route?.mode === 'skip') {
-      result = await step.run(`node-${block.id}`, () => skipNode(runId, block, route.reason))
+      result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block, route.reason))
     } else if (block.kind === 'human') {
       // A run that changed files is measured before the gate, so the card can say what it would be waved through or
       // stopped for. It passes on its own only when the person turned that on and the measurement says low risk.
-      const risk = prepared.workdir && prepared.baseCommit ? await step.run(`assess-${block.id}`, () => assessGate(runId, block, prepared)) : null
+      const risk = prepared.workdir && prepared.baseCommit ? await step.run(id(`assess-${block.id}`), () => assessGate(runId, block, prepared)) : null
       if (risk?.level === 'low' && plan.autoApproveLowRisk) {
-        result = await step.run(`node-${block.id}`, () => passLowRiskGate(runId, block))
+        result = await step.run(id(`node-${block.id}`), () => passLowRiskGate(runId, block))
       } else {
-        result = await step.run(`node-${block.id}`, () => parkHumanNode(runId, block))
+        result = await step.run(id(`node-${block.id}`), () => parkHumanNode(runId, block))
       }
       if (result.outcome === 'parked') {
         // The event only says "look": what was decided is read from the approvals table, where the app records the
         // person's decision before sending it. An event with no record behind it (sent by anything else) is noted
         // and ignored, and the gate keeps waiting.
-        let decided: 'approved' | 'rejected' | null = null
+        let decided: { decision: Decision; note: string | null } | null = null
         for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && decided === null; attempt++) {
-          const arrived = await step.waitForEvent(`approval-${block.id}-${attempt}`, {
+          const arrived = await step.waitForEvent(id(`approval-${block.id}-${attempt}`), {
             event: APPROVAL_DECIDED,
             timeout: APPROVAL_WAIT,
             match: 'data.runId',
           })
           // No decision (the wait expired) leaves the run waiting on the person; it is never a verdict.
           if (!arrived) return
-          decided = await step.run(`read-decision-${block.id}-${attempt}`, () => readRecordedDecision(runId, block))
+          decided = await step.run(id(`read-decision-${block.id}-${attempt}`), () => readRecordedDecision(runId, block))
         }
         if (decided === null) return
-        const approved = decided === 'approved'
-        result = await step.run(`decide-${block.id}`, () => decideHumanNode(runId, block, approved))
+        if (decided.decision === 'changes' && round <= MAX_REVISIONS) {
+          // Back to the builder, in the same worktree, with the note. Everything from the builder to here is redone.
+          const builder = plan.blocks.findIndex(b => b.kind === 'build' && b.enabled)
+          const start = builder === -1 ? index : builder
+          const next = round + 1
+          const note = decided.note
+          const reopened = await step.run(id(`reopen-${block.id}`), () => reopenForRevision(runId, plan.blocks.slice(start, index + 1), next, note))
+          if (!reopened) return // cancelled meanwhile
+          round = next
+          revisionNote = note
+          from = start
+          continue rounds
+        }
+        const approved = decided.decision === 'approved'
+        result = await step.run(id(`decide-${block.id}`), () => decideHumanNode(runId, block, approved))
       }
     } else {
-      result = await step.run(`node-${block.id}`, () => runProviderNode(runId, plan, block, deps, prepared))
+      const note = revisionNote
+      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, note))
     }
     if (result.outcome === 'cancelled') return // run.cancelled and node.cancelled were written by cancelRun
     if (result.outcome === 'failed') {
-      await step.run('fail', () => finishRun(runId, 'failed', { blockId: block.id }))
+      await step.run(id('fail'), () => finishRun(runId, 'failed', { blockId: block.id }))
       return
     }
+  }
+  break
   }
 
   // Everything finished: let the roll-up, not an assumption, decide whether that is success.

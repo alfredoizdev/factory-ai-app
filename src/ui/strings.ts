@@ -160,10 +160,16 @@ export const strings = {
     showChanges: 'Show the changes',
     hideChanges: 'Hide the changes',
     truncated: 'The changes are longer than shown here.',
-    reasonLabel: 'Why (optional)',
-    reasonPlaceholder: 'A note for the record, or what to fix',
+    reasonLabel: 'Your note',
+    reasonPlaceholder: 'What to change (needed to ask for changes), or a note for the record',
     approve: 'Approve',
     reject: 'Turn down',
+    askChanges: 'Ask for changes',
+    changesHint: 'Write what to change, then ask for changes.',
+    changesSent: 'Sent back to the agent with your note. It is working on it.',
+    changesNeedNote: 'Say what to change: the agent has nothing else to go on.',
+    tooManyRounds: (n: number) => `This run has been sent back ${n} times. Approve it or turn it down.`,
+    round: (n: number) => `Round ${n}`,
     deciding: 'Recording your decision…',
     approved: 'Approved. The run continues.',
     rejected: 'Turned down. Nothing goes further.',
@@ -183,7 +189,7 @@ export const strings = {
     stop: 'Stop preview',
     installing: 'Installing the project\'s dependencies…',
     starting: 'Starting the project from the agent\'s copy…',
-    ready: 'Running from the agent\'s copy, on this computer only.',
+    ready: 'Your site, with this change, is live. Only you can see it.',
     failed: 'The preview did not start.',
     noWorktree: 'This run has no working copy to preview.',
     noDevScript: 'This project has no "dev" script in package.json, so there is nothing to start.',
@@ -307,6 +313,7 @@ export const strings = {
     pointItOutAria: (label: string) => `Point it out on the canvas: ${label}`,
     started: 'Started.',
     waiting: 'Stopped and waiting for a person.',
+    reopened: (round: number, note: string | null) => (note ? `Sent back for round ${round}: ${note}` : `Sent back for round ${round}.`),
     assessed: (level: 'low' | 'high', reasons: readonly string[]) =>
       `${level === 'low' ? 'Measured as low risk' : 'Needs you'}: ${reasons.join(' ')}`,
     measured: (counts: string | null, exitCode: number | null) => {
@@ -333,6 +340,16 @@ export const strings = {
       exitedWithoutResult: (code: number | null) =>
         code === null ? 'The agent was stopped before it reported a result.' : `The agent exited (code ${code}) without reporting a result.`,
       recordingRequest: 'Recording the request',
+      revisePrompt: (request: string, note: string) =>
+        [
+          `The request was: ${request}`,
+          '',
+          'You already made changes for it in this directory; they are still here. The person looked at them and asked for this:',
+          note,
+          '',
+          'Adjust the existing changes to do what they asked. Work only inside the current directory.',
+          'Do not commit, push or create branches. When you are done, reply with one plain sentence saying what you changed.',
+        ].join('\n'),
       runningTests: (command: string) => `Running ${command}`,
     },
     demo: {

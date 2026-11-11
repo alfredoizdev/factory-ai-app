@@ -107,3 +107,18 @@ test("the decision route refuses anything but the app's own page: no browser hea
   expect((await post(runId, { host: '10.0.0.118:4100', 'sec-fetch-site': 'same-origin' })).status).toBe(403)
   expect(rows(runId)).toEqual([])
 })
+
+test('asking for changes needs a note, because the agent has nothing else to go on', async () => {
+  const { runId } = await parkedRun(false)
+  await expect(decideGate(runId, { decision: 'changes', reason: '  ', diffHash: NO_CHANGE }, deps)).rejects.toThrow(strings.gate.changesNeedNote)
+  await decideGate(runId, { decision: 'changes', reason: 'thicker border', diffHash: NO_CHANGE }, deps)
+  expect(rows(runId)[0]).toMatchObject({ decision: 'changes', reason: 'thicker border' })
+})
+
+test('a run can be sent back a bounded number of times, then it must be approved or turned down', async () => {
+  const { MAX_REVISIONS } = await import('@/engine/approvals')
+  const { runId } = await parkedRun(false)
+  for (let i = 0; i < MAX_REVISIONS; i++) await decideGate(runId, { decision: 'changes', reason: `round ${i}`, diffHash: NO_CHANGE }, deps)
+  await expect(decideGate(runId, { decision: 'changes', reason: 'again', diffHash: NO_CHANGE }, deps)).rejects.toThrow(strings.gate.tooManyRounds(MAX_REVISIONS))
+  await decideGate(runId, { decision: 'approved', diffHash: NO_CHANGE }, deps) // still decidable the other ways
+})

@@ -52,6 +52,15 @@ const RUN_STATUS_RANK: Record<RunStatus, number> = {
   completed: 5,
 }
 
+// Reopening is not a transition: finished states stay final for every ordinary event, so a stray or replayed start can
+// never resurrect a block. Only an explicit node.reopened — written when a person asks for changes — sends a block
+// that ran back to queued for another round.
+const REOPENABLE: ReadonlySet<NodeState> = new Set<NodeState>(['passed', 'failed', 'waiting_approval'])
+
+export function canReopen(state: NodeState): boolean {
+  return REOPENABLE.has(state)
+}
+
 export function canTransition(from: NodeState, to: NodeState): boolean {
   return TRANSITIONS[from].includes(to)
 }

@@ -30,6 +30,10 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
   if (event.type === 'node.step') return { text: str(payload.text) ?? '', isClaim: false }
   if (event.type === 'node.started') return { text: strings.events.started, isClaim: false }
   if (event.type === 'node.waiting_approval') return { text: strings.events.waiting, isClaim: false }
+  if (event.type === 'node.reopened') {
+    // The note is the person's own words, so it is shown as written: not a claim, not the app's sentence.
+    return { text: strings.events.reopened(typeof payload.round === 'number' ? payload.round : 2, str(payload.note) ?? null), isClaim: false }
+  }
   if (event.type === 'node.assessed') {
     const reasons = Array.isArray(payload.reasons) ? payload.reasons.filter((r): r is string => typeof r === 'string') : []
     return { text: strings.events.assessed(payload.level === 'low' ? 'low' : 'high', reasons), isClaim: false }

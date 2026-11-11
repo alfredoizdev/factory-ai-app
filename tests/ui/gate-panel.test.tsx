@@ -35,3 +35,19 @@ test('when the change moved, it says so and shows what is there now', async () =
   expect(await screen.findByRole('alert')).toHaveTextContent(strings.gate.changedSinceSeen)
   await vi.waitFor(() => expect(reviews).toBe(2))
 })
+
+test('asking for changes needs a note, then sends it as the decision', async () => {
+  const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+    url.endsWith('/review') ? new Response(JSON.stringify(review)) : url.endsWith('/preview') ? new Response(JSON.stringify({ status: 'stopped' })) : new Response('{}'))
+  vi.stubGlobal('fetch', fetchMock)
+  render(<GatePanel runId="r1" />)
+  await screen.findByText('src/app/page.tsx')
+  const ask = screen.getByRole('button', { name: new RegExp(strings.gate.askChanges) })
+  expect(ask).toBeDisabled()
+  fireEvent.change(screen.getByPlaceholderText(strings.gate.reasonPlaceholder), { target: { value: 'thicker border' } })
+  expect(ask).toBeEnabled()
+  fireEvent.click(ask)
+  expect(await screen.findByText(strings.gate.changesSent)).toBeInTheDocument()
+  const [, init] = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/decision'))!
+  expect(JSON.parse(String(init!.body))).toEqual({ decision: 'changes', reason: 'thicker border', diffHash: 'h1' })
+})

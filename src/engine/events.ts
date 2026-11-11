@@ -17,6 +17,8 @@ export type NodeEventType =
   | 'node.evidence'
   // The measured risk of a run's change, recorded on the human check before it opens or stops.
   | 'node.assessed'
+  // A person asked for changes: the block goes back to queued for another round, with their note.
+  | 'node.reopened'
 export type EventType = RunEventType | NodeEventType
 
 // Events carry only nodeRunId, so every node.* payload names its block: the client maps an event to a block without a join.

@@ -174,6 +174,8 @@ export const approvals = sqliteTable(
     /** The hash of the change the person was shown. Null for a run that changed no files (the demo). */
     diffHash: text('diff_hash'),
     createdAt: text('created_at').notNull(),
+    /** When the run acted on this decision. A decision is acted on once; the next round needs a new one. */
+    consumedAt: text('consumed_at'),
   },
   t => [index('approvals_run_idx').on(t.runId)],
 )

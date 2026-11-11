@@ -9,6 +9,7 @@ import { claims, evidence, nodeRuns, projects, runs, usageRecords, workflows } f
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
+import { recordDecision } from '@/engine/approvals'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { TestRun } from '@/engine/test-runner'
 import type { AgentEvent, AgentProvider, BlockRoute } from '@/providers/types'
@@ -44,8 +45,11 @@ async function newRun(settings: { repoPath?: string | null; testCommand?: string
 }
 
 type Script = Partial<Record<string, AgentEvent[]>>
-function filesProvider(script: Script, route?: (kind: string) => BlockRoute): AgentProvider & { calls: { kind: string; workdir?: string; testCommand?: string | null; baseCommit?: string }[] } {
-  const calls: { kind: string; workdir?: string; testCommand?: string | null; baseCommit?: string }[] = []
+function filesProvider(
+  script: Script,
+  route?: (kind: string) => BlockRoute,
+): AgentProvider & { calls: { kind: string; workdir?: string; testCommand?: string | null; baseCommit?: string; revisionNote?: string }[] } {
+  const calls: { kind: string; workdir?: string; testCommand?: string | null; baseCommit?: string; revisionNote?: string }[] = []
   return {
     id: 'files',
     isDemo: false,
@@ -53,7 +57,7 @@ function filesProvider(script: Script, route?: (kind: string) => BlockRoute): Ag
     route: route ? kind => route(kind) : undefined,
     calls,
     async *execute(input) {
-      calls.push({ kind: input.blockKind, workdir: input.workdir, testCommand: input.testCommand, baseCommit: input.baseCommit })
+      calls.push({ kind: input.blockKind, workdir: input.workdir, testCommand: input.testCommand, baseCommit: input.baseCommit, revisionNote: input.revisionNote })
       for (const ev of script[input.blockKind] ?? [{ type: 'done', summary: 'ok', source: 'system' }]) yield ev
     },
   }
@@ -260,4 +264,85 @@ test('a run whose tests changed stops for the person', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
   await drive(runId, withTests({ ...passingTests, changedTestFiles: ['test/a.test.ts'] }), realWorktree({ 'src/app/page.tsx': 'x\n' }))
   expect(node(runId, 'human').state).toBe('waiting_approval')
+})
+
+// ---- asking for changes: the return loop ----------------------------------------------------------------------
+
+/** Hands out the person's decisions in order, recording each the way the app does before the event arrives. */
+function decisionsStep(runId: string, queue: { decision: 'approved' | 'rejected' | 'changes'; note?: string }[]): StepApi {
+  return {
+    run: async (_id, fn) => JSON.parse(JSON.stringify((await fn()) ?? null)),
+    waitForEvent: async () => {
+      const next = queue.shift()
+      if (!next) throw new Parked()
+      recordDecision(runId, next.decision, { actor: 'tester', reason: next.note ?? null, diffHash: null })
+      return { data: { decision: next.decision } }
+    },
+  }
+}
+
+test('asking for changes sends the work back to the builder with the note, re-tests, and stops again for the person', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
+  const provider = withTests()
+  try {
+    await orchestrateRun(runId, decisionsStep(runId, [{ decision: 'changes', note: 'make the border thicker' }]), {
+      resolveProvider: () => provider,
+      createWorktree: realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }),
+    })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  const builds = provider.calls.filter(c => c.kind === 'build')
+  expect(builds).toHaveLength(2)
+  expect(builds[1]!.revisionNote).toBe('make the border thicker')
+  expect(builds[0]!.revisionNote).toBeUndefined()
+  expect(builds[1]!.workdir).toBe(builds[0]!.workdir) // the same worktree: round 2 builds on round 1
+  expect(provider.calls.filter(c => c.kind === 'tests')).toHaveLength(2)
+  const reopened = await payloadOf(runId, 'node.reopened')
+  expect(reopened.map(p => p.blockId)).toEqual(['build', 'tests', 'review', 'approve', 'human'])
+  expect(reopened.every(p => p.round === 2 && p.note === 'make the border thicker')).toBe(true)
+  // Stopped again, for a decision on round 2.
+  expect(node(runId, 'human').state).toBe('waiting_approval')
+  expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.status).toBe('waiting_approval')
+})
+
+test('after a round of changes, an approval finishes the run; the earlier "changes" is not read twice', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
+  const provider = withTests()
+  await orchestrateRun(runId, decisionsStep(runId, [{ decision: 'changes', note: 'thicker' }, { decision: 'approved' }]), {
+    resolveProvider: () => provider,
+    createWorktree: realWorktree({ 'src/app/page.tsx': 'x\n' }),
+  })
+  expect(node(runId, 'human').state).toBe('passed')
+  expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.status).toBe('completed')
+  expect(provider.calls.filter(c => c.kind === 'build')).toHaveLength(2)
+})
+
+test('a failing test in round 1 does not count against round 2 once it passes', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
+  let testRuns = 0
+  const provider: AgentProvider & { calls: unknown[] } = {
+    id: 'files', isDemo: false, needsWorkspace: true, calls: [],
+    async *execute(input) {
+      if (input.blockKind === 'tests') {
+        testRuns++
+        // Round 1 passes but changes a test (so the gate stops); round 2 passes cleanly.
+        const data = testRuns === 1 ? { ...passingTests, changedTestFiles: ['test/a.test.ts'] } : passingTests
+        yield { type: 'evidence', kind: 'test_run', data }
+      }
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  try {
+    await orchestrateRun(runId, decisionsStep(runId, [{ decision: 'changes', note: 'leave the tests alone' }]), {
+      resolveProvider: () => provider,
+      createWorktree: realWorktree({ 'src/app/page.tsx': 'x\n' }),
+    })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  // Round 2 measured low on its own latest test run, and the switch is on, so it passed by itself.
+  const assessed = await payloadOf(runId, 'node.assessed', 'human')
+  expect(assessed.map(a => a.level)).toEqual(['high', 'low'])
+  expect(node(runId, 'human').state).toBe('passed')
 })

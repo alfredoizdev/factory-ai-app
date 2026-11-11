@@ -74,7 +74,10 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
   const workdir = input.workdir
   let child: Child
   try {
-    child = deps.spawn(deps.bin, claudeArgs(strings.providers.claude.buildPrompt(input.request)), {
+    const prompt = input.revisionNote
+      ? strings.providers.claude.revisePrompt(input.request, input.revisionNote)
+      : strings.providers.claude.buildPrompt(input.request)
+    child = deps.spawn(deps.bin, claudeArgs(prompt), {
       cwd: workdir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { join } from 'node:path'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, isNull } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { approvals, nodeRuns, runs } from '@/db/schema'
@@ -15,7 +15,11 @@ import { strings } from '@/ui/strings'
 // The executor acts on the row, never on the event alone, so a forged event opens nothing. A decision is bound to
 // the change the person was shown: if the worktree changed since, it is refused.
 
-export type Decision = 'approved' | 'rejected'
+/** 'changes': not yes, not no — send the work back to the builder, in the same worktree, with the person's note. */
+export type Decision = 'approved' | 'rejected' | 'changes'
+
+/** How many times one run can be sent back for changes before the person has to approve or turn it down. */
+export const MAX_REVISIONS = 5
 
 export class GateError extends Error {
   constructor(message: string, readonly status: 400 | 404 | 409) {
@@ -109,6 +113,12 @@ export async function decideGate(runId: string, input: { decision: Decision; rea
   const run = db.select().from(runs).where(eq(runs.id, runId)).get()
   if (!run) throw new GateError(strings.errors.runNotFound, 404)
   if (run.status !== 'waiting_approval' || !waitingHumanNode(runId)) throw new GateError(strings.gate.notWaiting, 409)
+  if (input.decision === 'changes') {
+    // A request for changes is only as good as its note: the builder has nothing else to go on.
+    if (!input.reason?.trim()) throw new GateError(strings.gate.changesNeedNote, 400)
+    const rounds = db.select().from(approvals).where(and(eq(approvals.runId, runId), eq(approvals.decision, 'changes'))).all().length
+    if (rounds >= MAX_REVISIONS) throw new GateError(strings.gate.tooManyRounds(MAX_REVISIONS), 409)
+  }
   // Bound to what was shown: approving a change nobody looked at is the gate being bypassed by timing.
   const current = changeUnderReview(runId)?.hash ?? NO_CHANGE
   if (input.diffHash !== current) throw new GateError(strings.gate.changedSinceSeen, 409)
@@ -125,13 +135,25 @@ export async function decideGate(runId: string, input: { decision: Decision; rea
   return row
 }
 
-/** The decision recorded for this human check, newest first; null when there is none. What the executor acts on. */
-export function recordedDecision(runId: string, nodeRunId: string): Decision | null {
-  const row = db
-    .select()
-    .from(approvals)
-    .where(and(eq(approvals.runId, runId), eq(approvals.nodeRunId, nodeRunId)))
-    .orderBy(desc(approvals.createdAt), desc(approvals.id))
-    .get()
-  return row?.decision === 'approved' || row?.decision === 'rejected' ? row.decision : null
+const DECISIONS: ReadonlySet<string> = new Set<Decision>(['approved', 'rejected', 'changes'])
+
+/**
+ * The decision recorded for this human check that the run has not acted on yet, newest first, and marks it acted on.
+ * Null when there is none. What the executor acts on — never the event. Each round of a run needs its own decision.
+ */
+export function takeRecordedDecision(runId: string, nodeRunId: string): { decision: Decision; note: string | null } | null {
+  return db.transaction(
+    tx => {
+      const row = tx
+        .select()
+        .from(approvals)
+        .where(and(eq(approvals.runId, runId), eq(approvals.nodeRunId, nodeRunId), isNull(approvals.consumedAt)))
+        .orderBy(desc(approvals.createdAt), desc(approvals.id))
+        .get()
+      if (!row || !DECISIONS.has(row.decision)) return null
+      tx.update(approvals).set({ consumedAt: new Date().toISOString() }).where(eq(approvals.id, row.id)).run()
+      return { decision: row.decision as Decision, note: row.reason }
+    },
+    { behavior: 'immediate' },
+  )
 }

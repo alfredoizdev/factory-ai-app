@@ -38,7 +38,7 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
     }
   }, [runId, reload])
 
-  async function decide(decision: 'approved' | 'rejected') {
+  async function decide(decision: 'approved' | 'rejected' | 'changes') {
     if (!review) return
     setBusy(true)
     setOutcome(null)
@@ -54,7 +54,10 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
         if (res.status === 409) setReload(n => n + 1) // show what is there now
         return
       }
-      setOutcome({ text: decision === 'approved' ? strings.gate.approved : strings.gate.rejected, ok: true })
+      setOutcome({
+        text: decision === 'approved' ? strings.gate.approved : decision === 'rejected' ? strings.gate.rejected : strings.gate.changesSent,
+        ok: true,
+      })
     } catch {
       setOutcome({ text: strings.gate.notDelivered, ok: false })
     } finally {
@@ -181,6 +184,27 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
           </button>
         </div>
       )}
+      {!decided && (
+        // Not yes, not no: back to the builder in the same copy, with the note. The note is what it works from.
+        <button
+          type="button"
+          disabled={busy || !review || reason.trim() === ''}
+          title={reason.trim() === '' ? strings.gate.changesHint : undefined}
+          onClick={() => void decide('changes')}
+          style={{
+            padding: '9px 12px',
+            borderRadius: 8,
+            border: `1px solid ${theme.running}`,
+            background: reason.trim() ? theme.tint('running', 0.16) : 'transparent',
+            color: reason.trim() ? '#cfe0ff' : theme.skipped,
+            fontWeight: 700,
+            cursor: busy || !review || reason.trim() === '' ? 'not-allowed' : 'pointer',
+          }}
+        >
+          ↺ {strings.gate.askChanges}
+        </button>
+      )}
+      {!decided && reason.trim() === '' && <div style={{ fontSize: 11.5, color: theme.skipped, marginTop: -6 }}>{strings.gate.changesHint}</div>}
       {outcome && (
         <div role={outcome.ok ? 'status' : 'alert'} style={{ fontSize: 13, fontWeight: 600, color: outcome.ok ? theme.passed : theme.failed }}>
           {outcome.text}

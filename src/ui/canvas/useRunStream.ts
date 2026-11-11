@@ -34,6 +34,8 @@ type RawNode = {
   failureSource?: string
   /** From node.evidence: what the test runner measured. */
   evidence?: NodeRunView['evidence']
+  /** From node.reopened: which round this block is on, when it is past the first. */
+  round?: number
   /** From node.assessed: the measured risk of the run's change. */
   risk?: NodeRunView['risk']
   /** From node.completed: tokens the provider reported. Undefined: it said nothing; null: it said "unknown". */
@@ -69,6 +71,14 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
     const evidence = evidenceOf(payload)
     if (!node || !evidence) return moved
     return { nodes: { ...prev.nodes, [blockId]: { ...node, evidence } }, lastSequence: event.sequence }
+  }
+
+  // A person asked for changes: the block starts over for the next round. Nothing from the previous round carries
+  // into its view — not its steps, its sentence, its measurement — because none of it describes the work now.
+  if (event.type === 'node.reopened') {
+    if (!node) return moved
+    const round = typeof payload.round === 'number' && payload.round > 1 ? payload.round : undefined
+    return { nodes: { ...prev.nodes, [blockId]: { state: 'queued', steps: [], round } }, lastSequence: event.sequence }
   }
 
   if (event.type === 'node.assessed') {
@@ -124,8 +134,9 @@ function evidenceOf(payload: Record<string, unknown>): RawNode['evidence'] {
 const KINDS: ReadonlySet<string> = new Set<BlockKind>(['input', 'plan', 'build', 'tests', 'review', 'approve', 'human', 'ship'])
 
 // Evidence and usage travel to the card as they were recorded; usage cost is never reported for a real builder.
-function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk'> {
+function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk' | 'round'> {
   return {
+    ...(n.round ? { round: n.round } : {}),
     ...(n.evidence ? { evidence: n.evidence } : {}),
     ...(n.risk ? { risk: n.risk } : {}),
     ...(n.tokens !== undefined ? { usage: { tokens: n.tokens, costCents: null } } : {}),

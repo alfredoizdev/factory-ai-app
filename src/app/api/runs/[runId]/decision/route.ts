@@ -5,7 +5,7 @@ import { requireOwnPage } from '@/engine/same-origin'
 import { strings } from '@/ui/strings'
 
 const bodySchema = z.object({
-  decision: z.enum(['approved', 'rejected']),
+  decision: z.enum(['approved', 'rejected', 'changes']),
   reason: z.string().max(2000).nullable().optional(),
   diffHash: z.string().min(1),
 })

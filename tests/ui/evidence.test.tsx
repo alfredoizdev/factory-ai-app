@@ -174,3 +174,27 @@ test('the event bar reads the assessment in words', async () => {
   const line = describeEvent({ sequence: 1, type: 'node.assessed', payload: { blockId: 'human', level: 'high', reasons: ['It changes package.json (dependencies and configuration).'] } }, human)
   expect(line).toEqual({ text: 'Needs you: It changes package.json (dependencies and configuration).', isClaim: false })
 })
+
+test('a block sent back for another round starts over, says which round, and keeps nothing from the last one', () => {
+  const view = fold([
+    { type: 'node.started', payload: { blockId: 'tests' } },
+    { type: 'node.step', payload: { blockId: 'tests', text: 'old step' } },
+    { type: 'node.evidence', payload: { blockId: 'tests', kind: 'test_run', exitCode: 0, durationMs: 5, counts: { passed: 1, failed: 0, total: 1 }, changedTestFiles: [] } },
+    { type: 'node.completed', payload: { blockId: 'tests', summary: 'x', summarySource: 'system' } },
+    { type: 'node.reopened', payload: { blockId: 'tests', round: 2, note: 'thicker' } },
+  ]).tests!
+  expect(view.state).toBe('queued')
+  expect(view.steps).toEqual([])
+  expect(view.evidence).toBeUndefined()
+  expect(view.round).toBe(2)
+  render(<BlockCard block={tests} view={view} />)
+  expect(screen.getByTestId('round-tests')).toHaveTextContent(strings.gate.round(2))
+})
+
+test('the event bar shows the person\'s note when work is sent back', async () => {
+  const { describeEvent } = await import('@/ui/EventBar')
+  expect(describeEvent({ sequence: 1, type: 'node.reopened', payload: { blockId: 'tests', round: 2, note: 'thicker' } }, tests)).toEqual({
+    text: 'Sent back for round 2: thicker',
+    isClaim: false,
+  })
+})
