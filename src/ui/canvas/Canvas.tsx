@@ -12,7 +12,7 @@ import { strings } from '@/ui/strings'
 import { Depth } from './Depth'
 import { ParticleLayer, type Cable } from './FlowParticles'
 import { useReducedMotion } from './useReducedMotion'
-import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, SpineCard, type NodeRunView } from './BlockCard'
+import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, SPINE_WIDTH, SpineCard, type NodeRunView } from './BlockCard'
 import { autoFocus, fisheyeLayout } from './fisheye'
 import { SidebarIcon, type SidebarIconName } from './SidebarIcons'
 import { usePersistentFlag } from './usePersistentFlag'
@@ -64,6 +64,17 @@ function BlockNode({ data }: NodeProps<CardNode>) {
       }}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} />
+      {/* Under the fisheye a block opens and closes as the work moves along. Its frame grows or shrinks to the new
+          width while the new face fades in, so a card never snaps shut. Off the fisheye, or under reduced motion, it
+          is drawn directly. */}
+      <div
+        style={
+          data.cardWidth !== undefined && !reduced
+            ? { width: data.collapsed ? SPINE_WIDTH : data.cardWidth, overflow: 'hidden', borderRadius: 14, transition: 'width 320ms cubic-bezier(0.2, 0.7, 0.2, 1)' }
+            : undefined
+        }
+      >
+      <div key={data.collapsed ? 'spine' : 'card'} className={data.cardWidth !== undefined && !reduced ? 'factory-fade-in' : undefined}>
       {data.collapsed ? (
         <SpineCard block={data.block} view={data.view} selected={data.selected} />
       ) : data.view ? (
@@ -82,6 +93,8 @@ function BlockNode({ data }: NodeProps<CardNode>) {
       ) : (
         <NotInRunCard block={data.block} selected={data.selected} issues={data.issues} onRemove={data.onRemove} />
       )}
+      </div>
+      </div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
       {/* Bottom handles carry the return cable so it loops beneath the lane. */}
       <Handle id={RETURN_OUT} type="source" position={Position.Bottom} isConnectable={false} />
@@ -683,6 +696,8 @@ export function Canvas({
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          // While the lane lays itself out around the work, cards glide to their new places instead of jumping.
+          className={hasRun && !reducedMotion ? 'factory-glide' : undefined}
           style={{ background: 'transparent', zIndex: 1 }}
           onMove={(_, vp) => parallax(vp)}
           onPaneClick={close}

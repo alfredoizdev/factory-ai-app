@@ -26,3 +26,28 @@ body {
     animation: none;
   }
 }
+
+/* The fisheye moves cards when the work moves on: they glide there, and a card's new face fades in as its frame
+   resizes, so nothing snaps. Only set while a run is on screen (no dragging then) and never under reduced motion. */
+.factory-glide .react-flow__node {
+  transition: transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@keyframes factory-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.factory-fade-in {
+  animation: factory-fade 260ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .factory-glide .react-flow__node {
+    transition: none;
+  }
+  .factory-fade-in {
+    animation: none;
+  }
+}
