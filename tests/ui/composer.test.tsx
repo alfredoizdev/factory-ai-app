@@ -81,3 +81,18 @@ test('an image pasted or dropped anywhere on the page is attached, unless typing
   expect(screen.queryByAltText('no.png')).toBeNull()
   other.remove()
 })
+
+test('Enter sends as in a chat; Shift+Enter is left for a new line', () => {
+  const onSend = vi.fn()
+  function Sending() {
+    const [text, setText] = useState('thicker border')
+    const [images, setImages] = useState<ComposerImage[]>([])
+    return <Composer inputId="c" label="Ask" placeholder="p" text={text} onText={setText} images={images} onImages={setImages} send={{ label: 'Send', onSend, enabled: true }} />
+  }
+  render(<Sending />)
+  const box = screen.getByLabelText('Ask')
+  fireEvent.keyDown(box, { key: 'Enter', shiftKey: true })
+  expect(onSend).not.toHaveBeenCalled()
+  fireEvent.keyDown(box, { key: 'Enter' })
+  expect(onSend).toHaveBeenCalledTimes(1)
+})

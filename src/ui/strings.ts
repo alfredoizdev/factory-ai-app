@@ -327,7 +327,7 @@ export const strings = {
     hideChanges: 'Hide the changes',
     truncated: 'The changes are longer than shown here.',
     reasonLabel: 'Want changes? Write them here',
-    reasonPlaceholder: 'e.g. make the border a bit thicker. Send it with the arrow (⌘↵), or approve below.',
+    reasonPlaceholder: 'e.g. make the border a bit thicker. Press Enter to send it (Shift+Enter for a new line), or approve below.',
     approve: 'Approve',
     reject: 'Turn down',
     askChanges: 'Ask for changes',
@@ -456,7 +456,7 @@ export const strings = {
     close: 'Close the sidebar',
     run: 'Ask the agents',
     runTitle: 'Ask the agents',
-    runShortcut: '⌘↵ to run',
+    runShortcut: 'Enter to run · Shift+Enter for a new line',
   },
   editing: {
     paletteTitle: 'Add a block',

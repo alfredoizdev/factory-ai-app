@@ -80,7 +80,8 @@ export const CommandCard = forwardRef<
         zIndex: 5,
         width: COMMAND_CARD_WIDTH,
         maxWidth: 'calc(100% - 32px)',
-        maxHeight: 'calc(100% - 32px)',
+        // Below the Tasks button at the top right (12px down, about 34px tall), never under it.
+        maxHeight: 'calc(100% - 72px)',
         overflowY: 'auto',
         // Never sideways: a long branch name or path wraps or is cut short instead of widening the card.
         overflowX: 'hidden',
@@ -135,7 +136,7 @@ export const CommandCard = forwardRef<
               cursor: canRun ? 'pointer' : 'not-allowed',
             }}
           >
-            ▶ {strings.run.run} <span style={{ fontWeight: 400, opacity: 0.8, fontSize: 12 }}>⌘↵</span>
+            ▶ {strings.run.run} <span style={{ fontWeight: 400, opacity: 0.8, fontSize: 12 }}>↵</span>
           </button>
         </>
       )}

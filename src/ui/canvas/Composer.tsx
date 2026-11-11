@@ -53,9 +53,9 @@ export function Composer({
   onText: (v: string) => void
   images: ComposerImage[]
   onImages: (update: (prev: ComposerImage[]) => ComposerImage[]) => void
-  /** Cmd/Ctrl+Enter. */
+  /** Enter (Shift+Enter is a new line). */
   onSubmit?: () => void
-  /** A send arrow inside the box, at its bottom right: what pressing it (or Cmd/Ctrl+Enter) does. */
+  /** A send arrow inside the box, at its bottom right: what pressing it (or Enter) does. */
   send?: ComposerSend
   disabled?: boolean
 }) {
@@ -235,13 +235,17 @@ export function Composer({
           rows={8}
           onChange={e => onText(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            // As in a chat: Enter sends, Shift+Enter starts a new line. Not while a word is still being composed (IME).
+            if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) {
               if (send?.enabled) {
                 e.preventDefault()
                 send.onSend()
               } else if (onSubmit) {
                 e.preventDefault()
                 onSubmit()
+              } else if (send) {
+                // Nothing to send yet: Enter does nothing rather than add a stray line.
+                if (text.trim() === '') e.preventDefault()
               }
             }
           }}
@@ -331,11 +335,11 @@ export function imagesIn(data: DataTransfer): File[] {
 
 export type ComposerSend = { label: string; onSend: () => void; enabled: boolean; busy?: boolean }
 
-/** Send: an arrow pointing up. */
+/** Send: a paper plane. */
 function SendIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 1.5 7 9M14.5 1.5 10 14.5 7 9 1.5 6l13-4.5Z" />
     </svg>
   )
 }
