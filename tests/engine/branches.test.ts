@@ -48,3 +48,44 @@ test('a branch resolves to its commit; anything else is null', () => {
   expect(branchCommit(dir, '--upload-pack=evil')).toBeNull()
   expect(branchCommit(dir, 'main^{tree}')).toBeNull()
 })
+
+describe('starting from the newest main', () => {
+  async function withOrigin() {
+    const { freshestStart } = await import('@/engine/branches')
+    const dir = repo()
+    const origin = mkdtempSync(join(tmpdir(), 'factory-origin-'))
+    git(origin, 'init', '-q', '--bare', '-b', 'main')
+    git(dir, 'remote', 'add', 'origin', origin)
+    git(dir, 'push', '-q', 'origin', 'main')
+    return { freshestStart, dir, origin }
+  }
+
+  test('a pull request merged on origin is where the task starts, even when the local main was never pulled', async () => {
+    const { freshestStart, dir, origin } = await withOrigin()
+    const other = mkdtempSync(join(tmpdir(), 'factory-other-'))
+    git(other, 'clone', '-q', origin, '.')
+    git(other, 'config', 'user.email', 'o@example.com')
+    git(other, 'config', 'user.name', 'o')
+    writeFileSync(join(other, 'a.txt'), 'merged\n')
+    git(other, 'commit', '-qam', 'merged PR')
+    git(other, 'push', '-q', 'origin', 'main')
+    const merged = git(other, 'rev-parse', 'HEAD')
+    expect(await freshestStart(dir, 'main')).toEqual({ commit: merged, fromOrigin: true })
+    expect(git(dir, 'rev-parse', 'main')).not.toBe(merged) // their own main is not moved
+  })
+
+  test('local commits origin lacks are kept', async () => {
+    const { freshestStart, dir } = await withOrigin()
+    writeFileSync(join(dir, 'a.txt'), 'mine\n')
+    git(dir, 'commit', '-qam', 'mine')
+    expect(await freshestStart(dir, 'main')).toEqual({ commit: git(dir, 'rev-parse', 'main'), fromOrigin: false })
+  })
+
+  test('no origin, or an unreachable one, uses the local branch', async () => {
+    const { freshestStart } = await import('@/engine/branches')
+    const dir = repo()
+    expect(await freshestStart(dir, 'main')).toEqual({ commit: git(dir, 'rev-parse', 'main'), fromOrigin: false })
+    git(dir, 'remote', 'add', 'origin', '/nowhere/at/all')
+    expect(await freshestStart(dir, 'main')).toEqual({ commit: git(dir, 'rev-parse', 'main'), fromOrigin: false })
+  })
+})

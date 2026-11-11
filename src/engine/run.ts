@@ -1,4 +1,4 @@
-import { branchCommit, defaultBranch } from '@/engine/branches'
+import { branchCommit, defaultBranch, freshestStart } from '@/engine/branches'
 import { createHash } from 'node:crypto'
 import { desc, eq, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
@@ -175,7 +175,9 @@ export async function createRun(input: {
     // Fixed now, as a commit: the agent's copy starts there even if the person switches branches meanwhile.
     const branch = input.startFrom?.trim() || defaultBranch(project.repoPath)
     if (branch) {
-      baseCommit = branchCommit(project.repoPath, branch)
+      // The main branch is brought up to date with origin first, so a task never starts behind what was merged there.
+      // A branch the person picked is used exactly as it is in their folder.
+      baseCommit = input.startFrom?.trim() ? branchCommit(project.repoPath, branch) : ((await freshestStart(project.repoPath, branch))?.commit ?? null)
       if (!baseCommit) throw new StartBranchError(branch)
     }
   }
