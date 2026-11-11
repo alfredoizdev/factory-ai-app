@@ -3,6 +3,7 @@
 import { PastTasks } from './PastTasks'
 import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
+import { PromptCards } from './PromptCards'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { SettingsIcon } from './SettingsIcon'
@@ -499,7 +500,15 @@ export function CanvasScreen({
           highlightedId={highlightedId}
           flushRef={flushRef}
           loading={loading}
-          overlay={run && !loading ? <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} /> : undefined}
+          overlay={
+            run && !loading ? (
+              <>
+                <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} />
+                {/* Asked again whenever something new is recorded: a change, a new plan, a decision. */}
+                <PromptCards runId={run.runId} refreshKey={`${events.filter(e => e.type === 'node.reopened' || e.type === 'node.plan_decided').length}-${runStatus ?? ''}`} />
+              </>
+            ) : undefined
+          }
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
       </div>

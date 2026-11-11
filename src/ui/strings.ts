@@ -453,6 +453,20 @@ export const strings = {
     save: 'Save the name',
     cancel: 'Keep the old name',
   },
+  prompts: {
+    title: 'What was asked',
+    open: 'Read all of it',
+    close: 'Close',
+    kind: {
+      request: 'You asked',
+      followUp: 'You continued',
+      replan: 'New plan asked',
+      changes: 'Changes asked',
+      reviewer: 'Reviewer asked',
+      approvedNote: 'Approved, saying',
+      rejectedNote: 'Turned down, saying',
+    },
+  },
   plan: {
     notWaiting: 'There is no plan waiting for you on this task.',
     needAJob: 'A plan needs at least one job with a name.',
