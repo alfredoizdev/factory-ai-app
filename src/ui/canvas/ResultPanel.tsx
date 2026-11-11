@@ -144,7 +144,9 @@ export function ResultSection({
       ? ship!.onHold
         ? d.nowOnHold
         : d.nowPublish
-      : shipped
+      : ship?.pr?.state === 'closed'
+        ? d.nowClosed
+        : shipped
         ? ship!.checksFailed || ship!.pr!.conflicts
           ? d.nowProblem
           : d.nowChecking

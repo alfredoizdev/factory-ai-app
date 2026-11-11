@@ -7,16 +7,18 @@ import { RUN_INPUT_ID } from './Canvas'
 import { WorkingSpinner } from './BlockCard'
 import { Composer, imagesBusy, readyImageIds, type ComposerImage, type ComposerSend } from './Composer'
 import { GateSection } from './GatePanel'
+import { PlanSection } from './PlanSection'
 import { ResultSection } from './ResultPanel'
 import { COMMAND_CARD_WIDTH } from './layout'
 import { CardSkeleton } from './Skeleton'
 import type { ShipState } from '@/engine/ship'
 
-export type CardMode = 'idle' | 'working' | 'waiting' | 'done'
+export type CardMode = 'idle' | 'working' | 'plan' | 'waiting' | 'done'
 
 const FRAME: Record<CardMode, { tone: 'running' | 'waiting' | 'passed'; from: string; to: string; strength: number }> = {
   idle: { tone: 'running', from: '#141b27', to: '#10151e', strength: 0.35 },
   working: { tone: 'running', from: '#121a29', to: '#0f1520', strength: 0.5 },
+  plan: { tone: 'waiting', from: '#1f1a10', to: '#16130d', strength: 0.55 },
   waiting: { tone: 'waiting', from: '#1f1a10', to: '#16130d', strength: 0.55 },
   done: { tone: 'passed', from: '#0f1f16', to: '#0c1711', strength: 0.5 },
 }
@@ -53,12 +55,12 @@ export const CommandCard = forwardRef<
   }
 >(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false }, ref) {
   const frame = FRAME[mode]
-  const label = mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
-  const placeholder = mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
+  const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
+  const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
   const withSend = (send?: ComposerSend) => (
     <Composer
       send={send}
-      minHeight={mode === 'waiting' || mode === 'done' ? 96 : undefined}
+      minHeight={mode === 'waiting' || mode === 'done' || mode === 'plan' ? 96 : undefined}
       inputId={RUN_INPUT_ID}
       label={label}
       placeholder={placeholder}
@@ -76,7 +78,7 @@ export const CommandCard = forwardRef<
       tabIndex={-1}
       data-testid="command-card"
       data-mode={mode}
-      aria-label={mode === 'waiting' ? strings.gate.title : mode === 'done' ? strings.delivery.title : strings.sidebar.runTitle}
+      aria-label={mode === 'plan' ? strings.plan.title : mode === 'waiting' ? strings.gate.title : mode === 'done' ? strings.delivery.title : strings.sidebar.runTitle}
       style={{
         position: 'absolute',
         right: 16,
@@ -151,6 +153,7 @@ export const CommandCard = forwardRef<
           {strings.card.working}
         </div>
       )}
+      {!loading && mode === 'plan' && runId && <PlanSection runId={runId} note={text} composer={withSend} onSent={onSent} />}
       {!loading && mode === 'waiting' && runId && (
         <GateSection runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} />
       )}

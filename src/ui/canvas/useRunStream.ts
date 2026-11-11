@@ -111,6 +111,13 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   if (node && node.state !== state && !canTransition(node.state, state)) return moved
 
   const updated: RawNode = { ...node, state, steps: node?.steps ?? [] }
+  // A planner's proposal waits for the person with its own words (how many jobs), marked as whose they are.
+  if (event.type === 'node.waiting_approval' && typeof payload.summary === 'string') {
+    updated.reportedSummary = text(payload.summary)
+    updated.claimSource = typeof payload.summarySource === 'string' ? payload.summarySource : undefined
+  }
+  // Asked again: the old proposal's words go with it.
+  if (state === 'queued') updated.reportedSummary = undefined
   if (event.type === 'node.completed') {
     updated.reportedSummary = text(payload.summary)
     // Carry the producer's marker verbatim; summarize/claimUsed decide what it means.

@@ -1,4 +1,5 @@
 import type { BlockKind } from '@/domain/graph'
+import type { Job } from '@/engine/plan'
 import type { Review } from '@/engine/review'
 import type { TestRun } from '@/engine/test-runner'
 
@@ -12,7 +13,8 @@ export type AgentEvent =
   // `usage` carries only what the provider itself reported; a figure it did not report is null, never 0.
   // `fullText`: the provider's whole final answer, for a block that reads structure from it. `review`: a reviewer's
   // verdict and findings, read from that answer — still the model's claim, never a measurement.
-  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review }
+  // `plan`: a planner's jobs, read from its answer — its proposal, which the person checks before anything is built.
+  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[] }
   // Same rule for a failure: 'system' marks a sentence the app composed from facts. `cause` names a failure the
   // executor must not retry (re-running failing tests twice proves nothing new).
   | { type: 'error'; message: string; source?: 'provider' | 'system'; cause?: 'tests_failed' }
@@ -39,6 +41,8 @@ export type AgentExecutionInput = {
   images?: string[]
   /** The model chosen on the block, when one was. Absent: the agent's own default. */
   model?: string
+  /** The plan the person checked: the builder's work list. Absent: no plan (the builder works from the request). */
+  jobs?: Job[]
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

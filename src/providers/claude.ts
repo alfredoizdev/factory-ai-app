@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
+import { parsePlan, workList } from '@/engine/plan'
 import { parseReview, whereOf } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
 import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
@@ -53,7 +54,6 @@ export type ClaudeDeps = {
 
 // Approve is summed up by the executor from the reviews, not run by the agent; Ship happens from the result card.
 const SKIPPED: Partial<Record<BlockKind, string>> = {
-  plan: strings.run.notYet.plan,
   ship: strings.run.notYet.ship,
 }
 
@@ -127,6 +127,45 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
   }
 }
 
+/** The planner: reads the project without changing it and proposes the request as a few jobs. */
+async function* runPlanner(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
+  if (!input.workdir) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
+    return
+  }
+  if (input.model !== undefined && !MODEL_NAME.test(input.model)) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.badModel(input.model) }
+    return
+  }
+  const workdir = input.workdir
+  const before = deps.snapshot(workdir)
+  const prompt = strings.providers.claude.planPrompt(input.request, input.previousRequest, input.revisionNote)
+  const images = input.images ?? []
+  const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
+  const args = reviewerArgs(withImages, input.model)
+  for await (const ev of runClaude(deps, workdir, images.length > 0 ? [...args, '--add-dir', dirname(images[0]!)] : args, controls)) {
+    if (ev.type !== 'done') {
+      yield ev
+      if (ev.type === 'error') return
+      continue
+    }
+    // Planning reads; it never writes. A planner that changed anything did not plan.
+    if (deps.snapshot(workdir) !== before) {
+      yield { type: 'error', source: 'system', message: strings.providers.claude.plannerChangedFiles }
+      return
+    }
+    const jobs = parsePlan(ev.fullText ?? ev.summary)
+    if (!jobs) {
+      yield { type: 'done', source: 'system', summary: strings.plan.unreadable, usage: ev.usage }
+      return
+    }
+    for (const [i, j] of jobs.entries()) yield { type: 'step', text: strings.plan.jobStep(i + 1, j.title) }
+    // The jobs are the planner's proposal, so the summary is marked as the provider's words.
+    yield { type: 'done', source: 'provider', summary: strings.plan.proposed(jobs.length), usage: ev.usage, plan: jobs }
+    return
+  }
+}
+
 async function* runBuilder(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
   if (!input.workdir) {
     yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
@@ -145,8 +184,10 @@ async function* runBuilder(input: AgentExecutionInput, controls: ExecutionContro
     : input.previousRequest
       ? strings.providers.claude.followUpPrompt(input.previousRequest, input.request)
       : strings.providers.claude.buildPrompt(input.request)
+  // The plan the person checked, on the first round: the builder works through it. Later rounds carry their own note.
+  const planned = input.jobs && input.jobs.length > 0 && !input.revisionNote ? `${prompt}\n\n${strings.providers.claude.workListNote(workList(input.jobs))}` : prompt
   const images = input.images ?? []
-  const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
+  const withImages = images.length > 0 ? `${planned}\n\n${strings.providers.claude.imagesNote(images)}` : planned
   yield* runClaude(deps, workdir, claudeArgs(withImages, images.length > 0 ? dirname(images[0]!) : undefined, input.model), controls)
 }
 
@@ -265,6 +306,10 @@ export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
       }
       if (input.blockKind === 'tests') {
         yield* runTests(input, controls, full)
+        return
+      }
+      if (input.blockKind === 'plan') {
+        yield* runPlanner(input, controls, full)
         return
       }
       if (input.blockKind === 'review') {

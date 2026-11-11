@@ -248,8 +248,12 @@ export function CanvasScreen({
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   // One card follows the run: ask, watch, decide, continue.
+  // The run waits on the person at its plan, or at the human check: the card shows the one it waits at.
+  const planWaiting = !!run && run.blocks.some(b => b.kind === 'plan' && views[b.id]?.state === 'waiting_approval')
   const mode: CardMode =
-    run && runStatus === 'waiting_approval'
+    run && runStatus === 'waiting_approval' && planWaiting
+      ? 'plan'
+      : run && runStatus === 'waiting_approval'
       ? 'waiting'
       : run && (runStatus === 'running' || runStatus === 'queued')
         ? 'working'

@@ -34,6 +34,11 @@ export type NodeEventType =
   | 'node.reviewed'
   // A person asked for changes: the block goes back to queued for another round, with their note.
   | 'node.reopened'
+  // The plan: the planner proposed one and the run waits on the person (plan_proposed); the jobs as they stand, by
+  // the planner or as the person edited them (planned); and the person's word: build it, or plan again (plan_decided).
+  | 'node.plan_proposed'
+  | 'node.planned'
+  | 'node.plan_decided'
 export type EventType = RunEventType | NodeEventType
 
 // Events carry only nodeRunId, so every node.* payload names its block: the client maps an event to a block without a join.

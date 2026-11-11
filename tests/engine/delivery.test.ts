@@ -542,6 +542,25 @@ describe('shipping through GitHub', () => {
     expect(onHoldInList()).toBe(false)
   })
 
+  test('a branch sent before the app opened pull requests finds the one GitHub has, and shows it as merged', async () => {
+    const { shipState } = await import('@/engine/ship')
+    const { pushBranch } = await import('@/engine/delivery')
+    const { runId } = await shippable()
+    // Nothing sent yet: nothing is looked up.
+    const { gh, calls } = fakeGh(
+      () => ({ number: 3, url: 'https://gh/pr/3', state: 'MERGED', mergeable: 'UNKNOWN', statusCheckRollup: [], mergeCommit: { oid: 'abc' }, mergedAt: 'then' }),
+      args => (args[1] === 'list' ? JSON.stringify([{ number: 3, url: 'https://gh/pr/3', baseRefName: 'main' }]) : undefined),
+    )
+    expect((await shipState(runId, gh)).pr).toBeNull()
+    expect(calls.some(c => c[1] === 'list')).toBe(false)
+    await pushBranch(runId)
+    const state = await shipState(runId, gh)
+    expect(state.pr).toMatchObject({ number: 3, state: 'merged' })
+    // Recorded once: later reads use the record.
+    await shipState(runId, gh)
+    expect(calls.filter(c => c[1] === 'list')).toHaveLength(1)
+  })
+
   test('no gh on the computer is said plainly', async () => {
     const { openPullRequest } = await import('@/engine/ship')
     const { runId } = await shippable()

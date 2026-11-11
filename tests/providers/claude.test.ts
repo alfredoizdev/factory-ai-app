@@ -176,7 +176,7 @@ test('the input block records the request without calling any agent', async () =
 })
 
 test('blocks the real agent does not do yet are skipped with a reason, never faked', () => {
-  expect(routeFor('plan', {})).toEqual({ mode: 'skip', reason: strings.run.notYet.plan })
+  expect(routeFor('plan', {})).toEqual({ mode: 'execute' })
   // Review is run by the agent now; Approve is summed up by the executor.
   expect(routeFor('review', {})).toEqual({ mode: 'execute' })
   expect(routeFor('ship', {})).toEqual({ mode: 'skip', reason: strings.run.notYet.ship })

@@ -1,5 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { defaultReviewerModel, reviewRevisionNote, type Review } from '@/engine/review'
+import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
 import { and, desc, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 import { ulid } from 'ulid'
@@ -8,7 +9,7 @@ import { claims, events, evidence, nodeRuns, projects, runs, usageRecords, workf
 import { STAGE_ORDER, type BlockKind, type Graph } from '@/domain/graph'
 import { canReopen, canTransition, rollUpRunStatus, type NodeState, type RunStatus } from '@/domain/states'
 import { appendEventSync, type DbHandle, type EventType } from '@/engine/events'
-import { APPROVAL_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
+import { APPROVAL_DECIDED, PLAN_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { clip, redact } from '@/engine/redact'
 import { MAX_REVISIONS, takeRecordedDecision, type Decision } from '@/engine/approvals'
 import { imagePathsFor } from '@/engine/attachments'
@@ -105,6 +106,8 @@ type Workspace = {
   previousRequest?: string | null
   /** Who asked for this round's changes, when it is a later round. */
   revisionFrom?: 'person' | 'reviewer'
+  /** The plan the person checked, for the builder. */
+  jobs?: Job[]
 }
 type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
 
@@ -220,7 +223,7 @@ function outcomeOf(state: string): Outcome['outcome'] | null {
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review }
+type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[] }
 type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
@@ -266,12 +269,13 @@ async function runAttempt(
         previousRequest: workspace.previousRequest ?? undefined,
         images: images.length > 0 ? [...images] : undefined,
         model: block.model,
+        ...(block.kind === 'build' && workspace.jobs ? { jobs: workspace.jobs } : {}),
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') onStep(ev.text)
         else if (ev.type === 'evidence') onEvidence(ev.data)
-        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}) }
+        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}) }
         else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
       }
       return { kind: 'ended' }
@@ -410,6 +414,25 @@ async function runProviderNode(
     )
 
     if (result.kind === 'cancelled') return { outcome: 'cancelled' }
+
+    if (result.kind === 'done' && block.kind === 'plan' && result.plan) {
+      // A proposed plan is not a finished block: it waits for the person, who checks it before anything is built.
+      const jobs = result.plan
+      const parked = withTx(tx => {
+        const node = freshNode(opened.id)
+        if (node.state !== 'running') return false
+        recordDoneFacts(tx, node, result)
+        appendEventSync({ runId, nodeRunId: node.id, type: 'node.planned', payload: { blockId: block.id, jobs, by: 'planner' } }, tx)
+        appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_proposed', payload: { blockId: block.id, summary: result.summary, count: jobs.length } }, tx)
+        if (runStatusOf(tx, runId) === 'running') {
+          tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId)).run()
+          appendEventSync({ runId, type: 'run.waiting_approval', payload: { blockId: block.id } }, tx)
+        }
+        tx.update(nodeRuns).set({ summary: result.summary }).where(eq(nodeRuns.id, node.id)).run()
+        return transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval', payload: { summary: result.summary, summarySource: result.source } })
+      })
+      return parked ? { outcome: 'parked' } : { outcome: 'cancelled' }
+    }
 
     if (result.kind === 'done') {
       const done = withTx(tx => {
@@ -750,6 +773,26 @@ function decideHumanNode(runId: string, block: PlannedBlock, approved: boolean):
   return { outcome: ok ? (approved ? 'passed' : 'failed') : 'cancelled' }
 }
 
+// The person said build it: the plan block passes with the jobs they checked, and the run goes on.
+function confirmPlanNode(runId: string, block: PlannedBlock): { outcome: Outcome['outcome']; jobs?: Job[] } {
+  const jobs = currentPlan(runId)?.jobs
+  const node = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
+  if (!node || !jobs) return { outcome: 'cancelled' }
+  const summary = strings.plan.confirmed(jobs.length)
+  const ok = withTx(tx => {
+    const moved = transitionNode(tx, freshNode(node.id), 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary })
+    if (moved && runStatusOf(tx, runId) === 'waiting_approval') {
+      tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
+      appendEventSync({ runId, type: 'run.started', payload: { resumed: true } }, tx)
+    }
+    return moved
+  })
+  return ok ? { outcome: 'passed', jobs } : { outcome: 'cancelled' }
+}
+
+/** How many times the person may ask for a new plan on one task. */
+const MAX_REPLANS = 5
+
 // ---- the orchestration ---------------------------------------------------------------------------------------------
 
 function loadPlan(runId: string): Plan {
@@ -839,6 +882,12 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     const model = b.model ?? defaultReviewerModel(builderModel)
     plan.blocks[i] = { ...b, model, routeNote: strings.review.model(model, builderModel ?? strings.routing.defaultModel) }
   }
+  // The planner reads and proposes; without a model of its own it uses Sonnet.
+  for (const [i, b] of plan.blocks.entries()) {
+    if (b.kind !== 'plan') continue
+    const model = b.model ?? 'sonnet'
+    plan.blocks[i] = { ...b, model, routeNote: strings.plan.model(model) }
+  }
   const started = await step.run('start', () => startRun(runId))
   if (!started) return // cancelled (or already finished) before it began
 
@@ -847,7 +896,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     await step.run('fail', () => finishRun(runId, 'failed', { cause: 'workspace_failed', message: workspace.failed }))
     return
   }
-  const prepared: Workspace = { ...workspace, previousRequest: plan.previousRequest }
+  let prepared: Workspace = { ...workspace, previousRequest: plan.previousRequest }
   const provider = deps.resolveProvider(plan.providerId)
 
   // Rounds: the first walks every block; when the person asks for changes, the next round walks again from the
@@ -871,6 +920,37 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block))
     } else if (route?.mode === 'skip') {
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block, route.reason))
+    } else if (block.kind === 'plan' && provider.needsWorkspace) {
+      // The planner proposes; the person checks, edits, and says build it — or asks for another plan with a note.
+      let note: string | null = null
+      let images = revisionImages
+      result = { outcome: 'cancelled' }
+      for (let k = 0; k <= MAX_REPLANS; k++) {
+        const pid = (name: string) => id(k === 0 ? name : `${name}-plan${k}`)
+        const n = note
+        const imgs = images
+        result = await step.run(pid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, n, imgs))
+        if (result.outcome !== 'parked') break // passed without a readable plan (Build works from the request), failed or cancelled
+        let decided: PlanDecision | null = null
+        for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && decided === null; attempt++) {
+          const arrived = await step.waitForEvent(pid(`plan-decided-${block.id}-${attempt}`), { event: PLAN_DECIDED, timeout: APPROVAL_WAIT, match: 'data.runId' })
+          if (!arrived) return // the wait expired: the run stays waiting on the person
+          decided = await step.run(pid(`read-plan-${block.id}-${attempt}`), () => planDecision(runId))
+        }
+        if (decided === null) return
+        if (decided.action === 'build') {
+          const confirmed = await step.run(pid(`confirm-${block.id}`), () => confirmPlanNode(runId, block))
+          result = { outcome: confirmed.outcome }
+          if (confirmed.jobs) prepared = { ...prepared, jobs: confirmed.jobs }
+          break
+        }
+        if (k === MAX_REPLANS) return // asked again more times than allowed: it stays waiting on the person
+        const again = decided.note
+        const reopened = await step.run(pid(`replan-${block.id}`), () => reopenForRevision(runId, [block], k + 2, again))
+        if (!reopened) return
+        note = again
+        images = []
+      }
     } else if (block.kind === 'approve' && provider.needsWorkspace) {
       // The real agent's Approve is a summary of what the reviewers said, never a yes: that stays the person's.
       const rounds = reviewRounds

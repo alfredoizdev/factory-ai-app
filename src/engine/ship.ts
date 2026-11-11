@@ -123,9 +123,30 @@ export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promis
   return shipState(runId, gh)
 }
 
+/**
+ * A branch sent to GitHub before the app opened pull requests itself may have one, opened from GitHub's own page.
+ * If GitHub has a pull request for the branch, it is recorded as this run's, so the card shows where it really stands
+ * (often: already merged). Nothing is created; without one, or without gh, nothing changes.
+ */
+async function adoptPullRequest(runId: string, gh: Gh): Promise<Record<string, unknown> | null> {
+  const state = deliveryState(runId)
+  if (!state.kept || !state.pushed || !state.branch) return null
+  const { repo, branch } = repoOf(runId)
+  let found: { number: number; url: string; baseRefName?: string }[]
+  try {
+    found = JSON.parse(await gh(['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,url,baseRefName', '--limit', '1'], repo))
+  } catch {
+    return null
+  }
+  const pr = found[0]
+  if (!pr || typeof pr.number !== 'number') return null
+  db.transaction(tx => void appendEventSync({ runId, type: 'run.pr_opened', payload: { number: pr.number, url: pr.url, base: pr.baseRefName ?? null, adopted: true } }, tx), { behavior: 'immediate' })
+  return recordOf(runId, 'run.pr_opened')
+}
+
 /** Where the pull request stands: its checks while open, what reported on the merged commit once merged. */
 export async function shipState(runId: string, gh: Gh = defaultGh): Promise<ShipState> {
-  const opened = recordOf(runId, 'run.pr_opened')
+  const opened = recordOf(runId, 'run.pr_opened') ?? (await adoptPullRequest(runId, gh))
   const empty: ShipState = { pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null, onHold: false }
   if (!opened) return empty
   const { repo } = repoOf(runId)

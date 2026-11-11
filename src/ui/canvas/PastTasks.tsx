@@ -110,9 +110,11 @@ export function PastTasks({
               aria-label={strings.history.delete(r.request)}
               title={strings.history.delete(r.request)}
               onClick={() => setConfirming(c => (c === r.runId ? null : r.runId))}
-              style={{ position: 'absolute', right: 6, top: 30, width: 22, height: 22, display: 'grid', placeItems: 'center', padding: 0, background: 'none', border: 'none', color: confirming === r.runId ? theme.failed : theme.skipped, cursor: 'pointer', zIndex: 1 }}
+              className="factory-delete"
+              // Centred on the task's own row; with the confirmation open below, it stays beside the task.
+              style={{ position: 'absolute', right: 6, top: confirming === r.runId ? 12 : '50%', transform: confirming === r.runId ? undefined : 'translateY(-50%)', width: 30, height: 30, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 8, background: confirming === r.runId ? theme.tint('failed', 0.18) : 'transparent', border: `1px solid ${confirming === r.runId ? theme.tint('failed', 0.5) : 'transparent'}`, color: theme.failed, cursor: 'pointer', zIndex: 1 }}
             >
-              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5" />
               </svg>
             </button>
@@ -126,7 +128,7 @@ export function PastTasks({
                 textAlign: 'left',
                 display: 'grid',
                 gap: 3,
-                padding: '7px 30px 7px 9px',
+                padding: '7px 40px 7px 9px',
                 background: 'transparent',
                 border: 'none',
                 borderRadius: 8,
