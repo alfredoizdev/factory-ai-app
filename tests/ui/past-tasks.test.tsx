@@ -89,3 +89,18 @@ test('the Tasks button slides the drawer open; the backdrop, the ✕ and Escape 
   fireEvent.click(screen.getByRole('button', { name: strings.history.close, hidden: true }))
   expect(drawer).toHaveAttribute('data-open', 'false')
 })
+
+test('with no task open the canvas says so and offers the past tasks', async () => {
+  const { CanvasScreen } = await import('@/ui/canvas/CanvasScreen')
+  const { defaultGraph } = await import('@/domain/graph')
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ runs }))))
+  render(<CanvasScreen workflowId="w1" graph={defaultGraph()} />)
+  expect(screen.getByTestId('no-task')).toHaveTextContent(strings.history.noTaskTitle)
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.history.openPast) }))
+  expect(screen.getByTestId('tasks-drawer')).toHaveAttribute('data-open', 'true')
+})

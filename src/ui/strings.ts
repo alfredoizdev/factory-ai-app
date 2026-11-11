@@ -78,6 +78,9 @@ export const strings = {
   },
   history: {
     title: 'Past tasks',
+    noTaskTitle: 'No task open',
+    noTaskText: 'Write what you want the agents to do in the card at the bottom right, or open one of your past tasks. The flow below is what your next task will go through.',
+    openPast: 'Open past tasks',
     open: 'Tasks',
     close: 'Close past tasks',
     empty: 'No tasks yet. Your first one will show up here.',
@@ -90,6 +93,7 @@ export const strings = {
     delete: (request: string) => `Delete the task: ${request}`,
     confirm: 'Delete this task? Its history and the agent\'s working copy are removed. The saved version (branch) stays in your project.',
     yes: 'Delete',
+    deleting: 'Deleting…',
     no: 'Keep',
     couldNotDelete: 'The task could not be deleted.',
   },

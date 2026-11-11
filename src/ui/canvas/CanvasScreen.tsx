@@ -356,6 +356,37 @@ export function CanvasScreen({
         >
           ☰ {strings.history.open}
         </button>
+        {run === null && (
+          // No task is open (a new one not started yet, or the open one was deleted): say so, and where to go next.
+          // The flow below stays visible: it is what the next task will run through.
+          <div
+            data-testid="no-task"
+            role="region"
+            aria-label={strings.history.noTaskTitle}
+            style={{
+              position: 'absolute',
+              top: 64,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 4,
+              width: 'min(440px, calc(100% - 32px))',
+              display: 'grid',
+              gap: 8,
+              padding: '16px 18px',
+              background: theme.card,
+              border: `1px solid ${theme.border}`,
+              borderRadius: 12,
+              boxShadow: '0 12px 30px rgba(0,0,0,0.4)',
+              textAlign: 'center',
+            }}
+          >
+            <strong style={{ fontSize: 15 }}>{strings.history.noTaskTitle}</strong>
+            <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.history.noTaskText}</span>
+            <button type="button" onClick={() => setTasksOpen(true)} style={{ ...headerButton, justifySelf: 'center', fontWeight: 600 }}>
+              ☰ {strings.history.openPast}
+            </button>
+          </div>
+        )}
         <TasksDrawer open={tasksOpen} onClose={closeTasks}>
           <PastTasks
             workflowId={workflowId}
@@ -366,7 +397,11 @@ export function CanvasScreen({
               void watchRun(id)
             }}
             onDeleted={id => {
-              if (id === run?.runId) newTask()
+              // The open task is gone: leave it, and close the list so the "No task open" screen is seen.
+              if (id === run?.runId) {
+                newTask()
+                setTasksOpen(false)
+              }
             }}
           />
         </TasksDrawer>
