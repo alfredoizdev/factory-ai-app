@@ -20,7 +20,7 @@ export default async function CanvasPage({ params }: { params: Promise<{ workflo
   const version = latest ? db.select().from(workflowVersions).where(eq(workflowVersions.id, latest.versionId)).get() : undefined
   const run: RunInfo | null =
     latest && version
-      ? { runId: latest.id, providerId: latest.providerId, blocks: (JSON.parse(version.graphJson) as Graph).blocks }
+      ? { runId: latest.id, providerId: latest.providerId, title: latest.title ?? undefined, blocks: (JSON.parse(version.graphJson) as Graph).blocks }
       : null
 
   const project = db.select().from(projects).where(eq(projects.id, wf.projectId)).get()

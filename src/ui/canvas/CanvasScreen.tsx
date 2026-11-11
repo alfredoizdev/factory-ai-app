@@ -517,7 +517,7 @@ export function CanvasScreen({
           overlay={
             run && !loading ? (
               <>
-                <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} />
+                <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} />
               </>
             ) : undefined
           }
