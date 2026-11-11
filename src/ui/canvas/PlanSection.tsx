@@ -74,7 +74,7 @@ export function PlanSection({ runId, note, composer, onSent }: { runId: string; 
           <ListIcon />
         </span>
         <div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{strings.plan.title}</div>
+          <div className="factory-display" style={{ fontSize: 17, fontWeight: 700 }}>{strings.plan.title}</div>
           <div style={{ fontSize: 12.5, color: '#d9c9a3' }}>{strings.plan.waiting}</div>
         </div>
       </div>

@@ -11,7 +11,7 @@ const field = {
   color: 'inherit',
   border: `1px solid ${theme.border}`,
   borderRadius: 6,
-  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace',
   fontSize: 12.5,
 }
 

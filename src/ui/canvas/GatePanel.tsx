@@ -14,7 +14,7 @@ import { Bone } from './Skeleton'
 const PICKUP_WAIT_MS = 20_000
 import { theme } from '@/ui/theme'
 
-const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+const MONO = 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace'
 
 type Review = Pick<ChangeUnderReview, 'hash' | 'files' | 'diff' | 'truncated'>
 
@@ -122,7 +122,7 @@ export function GateSection({
           !
         </span>
         <div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{strings.gate.title}</div>
+          <div className="factory-display" style={{ fontSize: 17, fontWeight: 700 }}>{strings.gate.title}</div>
           <div style={{ fontSize: 12.5, color: '#d9c9a3' }}>{strings.gate.waiting}</div>
         </div>
       </div>

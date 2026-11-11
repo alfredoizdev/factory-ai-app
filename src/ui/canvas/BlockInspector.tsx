@@ -52,7 +52,7 @@ export function BlockInspector({
           <label>
             {strings.editing.testCommand}
             <input
-              style={{ ...field, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12.5 }}
+              style={{ ...field, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12.5 }}
               value={configured('testCommand')}
               placeholder={strings.editing.testCommandPlaceholder}
               spellCheck={false}

@@ -164,7 +164,7 @@ export function ProjectSwitcher({ workflowId, style, onOpenSettings }: { workflo
               )}
               <span style={{ display: 'flex', gap: 6, alignItems: 'flex-start', color: theme.dim, fontSize: 11.5 }}>
                 <FolderIcon />
-                <span style={{ overflowWrap: 'anywhere', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{current.repoPath ?? s.noFolder}</span>
+                <span style={{ overflowWrap: 'anywhere', fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace' }}>{current.repoPath ?? s.noFolder}</span>
               </span>
               {/* The dependencies' state, coloured by what it means, with what to do about it right there. */}
               <div

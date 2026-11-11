@@ -108,7 +108,7 @@ export const CommandCard = forwardRef<
       {loading && <CardSkeleton />}
       {!loading && mode === 'idle' && (
         <>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{strings.sidebar.runTitle}</div>
+          <div className="factory-display" style={{ fontSize: 17, fontWeight: 700 }}>{strings.sidebar.runTitle}</div>
           {startOptions.length === 1 && (
             <div data-testid="starts-from" style={{ fontSize: 12, color: theme.dim, marginTop: -6, overflowWrap: 'anywhere' }}>
               {strings.delivery.startsFrom(startOptions[0]!)}

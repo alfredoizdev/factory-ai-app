@@ -39,6 +39,7 @@ export function TaskTitle({ runId, initial, onRenamed }: { runId: string; initia
       {editing ? (
         <input
           ref={input}
+          className="factory-display"
           aria-label={strings.title.rename}
           value={draft}
           maxLength={60}
@@ -53,16 +54,17 @@ export function TaskTitle({ runId, initial, onRenamed }: { runId: string; initia
               setEditing(false)
             }
           }}
-          style={{ font: 'inherit', fontSize: 32, fontWeight: 800, letterSpacing: '-0.015em', color: '#e6e9ef', background: '#0b0e14', border: `1px solid ${theme.running}`, borderRadius: 8, padding: '2px 8px', minWidth: 320 }}
+          style={{ font: 'inherit', fontSize: 32, fontWeight: 700, letterSpacing: '0', color: '#e6e9ef', background: '#0b0e14', border: `1px solid ${theme.running}`, borderRadius: 8, padding: '2px 8px', minWidth: 320 }}
         />
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <h1
+            className="factory-display"
             onClick={() => {
               setDraft(title)
               setEditing(true)
             }}
-            style={{ margin: 0, fontSize: 32, fontWeight: title ? 800 : 600, letterSpacing: '-0.015em', color: title ? '#e6e9ef' : theme.skipped, fontStyle: title ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
+            style={{ margin: 0, fontSize: 32, fontWeight: title ? 700 : 500, letterSpacing: '0', color: title ? '#e6e9ef' : theme.skipped, fontStyle: title ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
             title={title || strings.title.add}
           >
             {title || strings.title.add}

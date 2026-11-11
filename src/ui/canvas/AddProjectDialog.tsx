@@ -129,7 +129,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
         <div style={{ display: 'grid', gap: 6 }}>
           <span style={{ fontSize: 12.5, color: theme.dim }}>{s.folderHint}</span>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input aria-label={s.folder} value={path} onChange={e => setPath(e.target.value)} placeholder="/Users/you/projects/my-app" spellCheck={false} style={{ ...field, flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }} />
+            <input aria-label={s.folder} value={path} onChange={e => setPath(e.target.value)} placeholder="/Users/you/projects/my-app" spellCheck={false} style={{ ...field, flex: 1, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }} />
             <button type="button" disabled={busy !== null} onClick={() => void pick()} style={button(false)}>
               {busy === 'pick' ? <WorkingSpinner blockId="pick" size={14} /> : null} {s.choose}
             </button>
@@ -155,7 +155,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
             </div>
             <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>
               {s.testCommand}
-              <input value={testCommand} onChange={e => setTestCommand(e.target.value)} placeholder={s.noTests} spellCheck={false} style={{ ...field, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }} />
+              <input value={testCommand} onChange={e => setTestCommand(e.target.value)} placeholder={s.noTests} spellCheck={false} style={{ ...field, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }} />
             </label>
             {EXTRA.some(c => analysis.commands[c]) && (
               <div style={{ display: 'grid', gap: 6 }}>

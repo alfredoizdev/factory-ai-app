@@ -85,7 +85,7 @@ export const SPINE_WIDTH = 80
 /** The step list is what the agent is doing now, not a log: only the latest few are shown. */
 const MAX_STEPS = 6
 
-const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+const MONO = 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace'
 
 function formatCost(costCents: number): string {
   return `$${(costCents / 100).toFixed(2)}`
@@ -231,7 +231,7 @@ export function BlockCard({
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <TypeMark kind={block.kind} colour={accent} />
-        <strong style={{ fontSize: 19, fontWeight: 620, letterSpacing: '-0.015em', lineHeight: 1.1 }}>
+        <strong className="factory-display" style={{ fontSize: 20, fontWeight: 700, letterSpacing: '0', lineHeight: 1.1 }}>
           {block.label}
         </strong>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -266,7 +266,7 @@ export function BlockCard({
                 background: 'rgba(255, 255, 255, 0.045)',
                 border: `1px solid ${theme.lineSoft}`,
                 borderRadius: 999,
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace',
                 fontSize: 11,
                 color: theme.dim,
                 whiteSpace: 'nowrap',
@@ -475,7 +475,7 @@ export function NotInRunCard({
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <TypeMark kind={block.kind} colour={theme.skipped} />
-        <strong style={{ fontSize: 19, fontWeight: 620, letterSpacing: '-0.015em', color: '#8b95a8' }}>
+        <strong className="factory-display" style={{ fontSize: 20, fontWeight: 700, letterSpacing: '0', color: '#8b95a8' }}>
           {block.label}
         </strong>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -554,7 +554,7 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
       }}
     >
       <TypeMark kind={block.kind} colour={accent} size={26} />
-      <span style={{ writingMode: 'vertical-rl', fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: '#aeb7c6' }}>
+      <span className="factory-display" style={{ writingMode: 'vertical-rl', fontSize: 14, fontWeight: 600, letterSpacing: '0.04em', color: '#aeb7c6' }}>
         {block.label}
       </span>
       {view?.state === 'running' && <WorkingSpinner blockId={block.id} size={18} />}

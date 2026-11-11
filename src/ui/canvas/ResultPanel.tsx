@@ -177,7 +177,7 @@ export function ResultSection({
                   disabled={busy !== null || suggesting}
                   spellCheck={false}
                   onChange={e => setBranchName(e.target.value)}
-                  style={{ flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
+                  style={{ flex: 1, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
                 />
                 <button
                   type="button"
@@ -245,9 +245,9 @@ export function ResultSection({
                 {kept && (
                   <dl data-testid="kept-facts" style={{ ...optionCard, margin: 0, gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: 12, rowGap: 6, fontSize: 12 }}>
                     <dt style={{ color: theme.dim }}>{d.branchLabel}</dt>
-                    <dd style={{ margin: 0, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6', overflowWrap: 'anywhere' }}>{delivery.branch}</dd>
+                    <dd style={{ margin: 0, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6', overflowWrap: 'anywhere' }}>{delivery.branch}</dd>
                     <dt style={{ color: theme.dim }}>{d.commitLabel}</dt>
-                    <dd style={{ margin: 0, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6' }}>{(delivery.commit ?? '').slice(0, 7)}</dd>
+                    <dd style={{ margin: 0, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6' }}>{(delivery.commit ?? '').slice(0, 7)}</dd>
                   </dl>
                 )}
                 {canPushOnly && (
