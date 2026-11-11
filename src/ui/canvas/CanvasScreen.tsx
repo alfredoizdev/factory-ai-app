@@ -402,7 +402,6 @@ export function CanvasScreen({
       {/* clip, not hidden: a hidden box can still be scrolled by the browser (find in page, scrollIntoView), which would
           slide the whole canvas sideways to show the closed drawer. A clipped one cannot scroll at all. */}
       <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'clip' }}>
-        {run && !loading && <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} />}
         {/* Top right of the canvas, where the list it opens slides in from. */}
         <button
           type="button"
@@ -500,6 +499,7 @@ export function CanvasScreen({
           highlightedId={highlightedId}
           flushRef={flushRef}
           loading={loading}
+          overlay={run && !loading ? <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} /> : undefined}
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
       </div>

@@ -221,7 +221,10 @@ export function Canvas({
   sidebarTop,
   sidebarLog,
   loading = false,
+  overlay,
 }: {
+  /** Drawn over the flow, inside its own area (never under the sidebar): the open task's title. */
+  overlay?: ReactNode
   /** A task is still loading: placeholders stand where its cards will be, and the cards appear once it is whole. */
   loading?: boolean
   graph: Graph
@@ -737,6 +740,7 @@ export function Canvas({
 
       <div ref={pane} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
         <Depth floorRef={floorRef} />
+        {overlay}
         {loading && <LaneSkeleton count={runBlocks?.length ?? graph.blocks.length} />}
         <ReactFlow
           nodes={nodes}

@@ -3,7 +3,6 @@ import { z } from 'zod'
 import { claimAttachments, MAX_IMAGES } from '@/engine/attachments'
 import { inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { createRun, failUnstartedRun, listRuns, NothingPublishedError, RepoNotSetError, StartBranchError, WorkflowNotFoundError } from '@/engine/run'
-import { improveTitle } from '@/engine/title'
 import { strings } from '@/ui/strings'
 
 const bodySchema = z.object({
@@ -22,8 +21,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
     const created = await createRun({ workflowId: id, request: body.data.request, providerId: body.data.provider, startFrom: body.data.startFrom, title: body.data.title })
-    // Without a name from the person, a better one than the request's first words is asked for, in the background.
-    if (!body.data.title?.trim() && body.data.provider === 'claude') void improveTitle(created.runId, body.data.request).catch(() => undefined)
     claimAttachments(body.data.attachments ?? [], created.runId)
     try {
       await inngest.send({ name: RUN_REQUESTED, data: { runId: created.runId } })

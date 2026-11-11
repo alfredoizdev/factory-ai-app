@@ -9,7 +9,7 @@ import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
 import { isOnHold } from '@/engine/ship'
-import { cleanTitle, fallbackTitle, titleOf } from '@/engine/title'
+import { cleanTitle, titleOf } from '@/engine/title'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
 
@@ -167,7 +167,7 @@ export async function createRun(input: {
   providerId?: RunProviderId
   /** The branch a real run starts from. Absent: the project's main branch, whatever branch the folder is on. */
   startFrom?: string
-  /** The person's name for the task. Absent: a cut of the request, which a suggestion may improve later. */
+  /** The person's name for the task. Absent: none, until they give one. */
   title?: string
 }): Promise<{ runId: string; versionId: string }> {
   const wf = requireWorkflow(input.workflowId)
@@ -212,7 +212,7 @@ export async function createRun(input: {
           versionId: version.id,
           status: 'queued',
           request: input.request,
-          title: (input.title && cleanTitle(input.title)) || fallbackTitle(input.request),
+          title: input.title ? cleanTitle(input.title) : null,
           titleByPerson: !!(input.title && cleanTitle(input.title)),
           providerId,
           baseCommit,
@@ -289,8 +289,8 @@ export type RunSummary = {
   branch: string | null
   providerId: string
   parentRunId: string | null
-  /** What the task is called: the person's name for it, or one made from its request. */
-  title: string
+  /** What the person called the task; null until they name it. */
+  title: string | null
   /** Its pull request is ready and the person put it on hold. */
   onHold: boolean
 }

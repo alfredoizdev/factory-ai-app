@@ -448,7 +448,7 @@ export const strings = {
     label: 'Name this task',
     optional: '(optional)',
     placeholder: 'e.g. Thicker crest border',
-    hint: 'Left empty, the app names it from what you ask.',
+    add: 'Add a title to this task…',
     rename: 'Rename this task',
     save: 'Save the name',
     cancel: 'Keep the old name',
