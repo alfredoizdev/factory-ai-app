@@ -259,3 +259,17 @@ describe('where a fresh task starts', () => {
     expect(db.select().from(runs).all().length).toBe(before)
   })
 })
+
+test('past tasks are listed newest first, with what was asked and how each ended', async () => {
+  const { listRuns } = await import('@/engine/run')
+  const workflowId = await newWorkflow()
+  await saveDraft(workflowId, defaultGraph())
+  await publishVersion(workflowId)
+  const first = await createRun({ workflowId, request: 'First task' })
+  const second = await createRun({ workflowId, request: 'Second task' })
+  db.update(runs).set({ status: 'completed', branch: 'ai/second-x1' }).where(eq(runs.id, second.runId)).run()
+  const list = listRuns(workflowId)
+  expect(list.map(r => r.runId)).toEqual([second.runId, first.runId])
+  expect(list[0]).toMatchObject({ request: 'Second task', status: 'completed', branch: 'ai/second-x1', providerId: DEMO_PROVIDER_ID })
+  expect(typeof list[0]!.createdAt).toBe('string')
+})

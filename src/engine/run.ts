@@ -267,3 +267,32 @@ export async function failUnstartedRun(runId: string): Promise<void> {
     { behavior: 'immediate' },
   )
 }
+
+export type RunSummary = {
+  runId: string
+  request: string
+  status: string
+  createdAt: string
+  branch: string | null
+  providerId: string
+  parentRunId: string | null
+}
+
+/** A workflow's past tasks, newest first: what was asked, when, how it ended, and the branch it was kept on. */
+export function listRuns(workflowId: string, limit = 50): RunSummary[] {
+  return db
+    .select({
+      runId: runs.id,
+      request: runs.request,
+      status: runs.status,
+      createdAt: runs.createdAt,
+      branch: runs.branch,
+      providerId: runs.providerId,
+      parentRunId: runs.parentRunId,
+    })
+    .from(runs)
+    .where(eq(runs.workflowId, workflowId))
+    .orderBy(desc(sql`rowid`))
+    .limit(limit)
+    .all()
+}

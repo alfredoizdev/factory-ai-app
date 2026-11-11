@@ -2,7 +2,7 @@ import { rejectCrossSite } from '@/engine/same-origin'
 import { z } from 'zod'
 import { claimAttachments, MAX_IMAGES } from '@/engine/attachments'
 import { inngest, RUN_REQUESTED } from '@/engine/inngest/client'
-import { createRun, failUnstartedRun, NothingPublishedError, RepoNotSetError, StartBranchError, WorkflowNotFoundError } from '@/engine/run'
+import { createRun, failUnstartedRun, listRuns, NothingPublishedError, RepoNotSetError, StartBranchError, WorkflowNotFoundError } from '@/engine/run'
 import { strings } from '@/ui/strings'
 
 const bodySchema = z.object({
@@ -36,4 +36,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (e instanceof StartBranchError) return Response.json({ error: e.message }, { status: 409 })
     throw e
   }
+}
+
+// The past tasks of this flow, for the sidebar's list. Reading only.
+export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params
+  return Response.json({ runs: listRuns(id) })
 }

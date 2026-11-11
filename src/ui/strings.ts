@@ -21,6 +21,15 @@ export const strings = {
     duplicateSingleton: (label: string) => `Only one ${label} block is allowed.`,
     disabledRequired: (label: string) => `The ${label} block is required and cannot be disabled.`,
   },
+  history: {
+    title: 'Past tasks',
+    empty: 'No tasks yet. Your first one will show up here.',
+    justNow: 'just now',
+    minutesAgo: (n: number) => `${n} min ago`,
+    hoursAgo: (n: number) => `${n} h ago`,
+    yesterday: 'yesterday',
+    demo: 'demo',
+  },
   routing: {
     area: { frontend: 'front end', backend: 'back end', both: 'front and back end' },
     unknown: 'not clear',

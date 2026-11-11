@@ -1,5 +1,6 @@
 'use client'
 
+import { PastTasks } from './PastTasks'
 import { useRef, useState } from 'react'
 import type { Block, Graph, ValidationIssue } from '@/domain/graph'
 import type { ProjectSettings } from '@/engine/project-settings'
@@ -356,6 +357,14 @@ export function CanvasScreen({
           highlightedId={highlightedId}
           flushRef={flushRef}
           sidebarTop={agentPanel}
+          sidebarTasks={
+            <PastTasks
+              workflowId={workflowId}
+              currentRunId={run?.runId ?? null}
+              refreshKey={`${run?.runId ?? ''}-${runStatus ?? ''}`}
+              onOpen={id => void watchRun(id)}
+            />
+          }
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
       </div>

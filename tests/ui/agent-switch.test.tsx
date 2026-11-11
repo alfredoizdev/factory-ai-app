@@ -4,6 +4,15 @@ import { defaultGraph } from '@/domain/graph'
 import { CanvasScreen } from '@/ui/canvas/CanvasScreen'
 import { strings } from '@/ui/strings'
 
+// The past-tasks list reads the flow's runs when the page opens; it is answered here, so a test's own mock sees only
+// the requests it is about.
+function stubFetch(mock: (url: string, init?: RequestInit) => Promise<Response>) {
+  vi.stubGlobal('fetch', (url: string, init?: RequestInit) =>
+    String(url).endsWith('/runs') && !init?.method ? Promise.resolve(new Response('{"runs":[]}')) : mock(url, init),
+  )
+}
+
+
 beforeAll(() => {
   globalThis.ResizeObserver ??= class {
     observe() {}
@@ -45,7 +54,7 @@ test('without project settings there is no agent switch at all', () => {
 
 test('after a save the button itself says so, and an edit makes it a Save button again', async () => {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify({ projectId: 'p1', repoPath: '/repo', testCommand: 'npm test' }), { status: 200 }))
-  vi.stubGlobal('fetch', fetchMock)
+  stubFetch(fetchMock)
   try {
     const { findByRole } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
@@ -79,7 +88,7 @@ test('choosing a folder fills the path and its test command, then saves them', a
     const sent = JSON.parse(String(init?.body)) as { repoPath: string; testCommand: string }
     return new Response(JSON.stringify({ projectId: 'p1', ...sent }))
   })
-  vi.stubGlobal('fetch', fetchMock)
+  stubFetch(fetchMock)
   try {
     const { findByRole } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
@@ -96,7 +105,7 @@ test('choosing a folder fills the path and its test command, then saves them', a
 
 test('closing the folder window changes nothing', async () => {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify({ cancelled: true })))
-  vi.stubGlobal('fetch', fetchMock)
+  stubFetch(fetchMock)
   try {
     render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
@@ -112,7 +121,7 @@ test('closing the folder window changes nothing', async () => {
 test('the low-risk switch starts off and saves the moment it is turned on', async () => {
   const fetchMock = vi.fn(async (_u: string, init?: RequestInit) =>
     new Response(JSON.stringify({ ...withRepo, ...(JSON.parse(String(init?.body)) as object) })))
-  vi.stubGlobal('fetch', fetchMock)
+  stubFetch(fetchMock)
   try {
     render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })

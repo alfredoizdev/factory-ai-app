@@ -4,6 +4,15 @@ import { defaultGraph } from '@/domain/graph'
 import { CanvasScreen } from '@/ui/canvas/CanvasScreen'
 import { strings } from '@/ui/strings'
 
+// The past-tasks list reads the flow's runs when the page opens; it is answered here, so a test's own mock sees only
+// the requests it is about.
+function stubFetch(mock: (url: string, init?: RequestInit) => Promise<Response>) {
+  vi.stubGlobal('fetch', (url: string, init?: RequestInit) =>
+    String(url).endsWith('/runs') && !init?.method ? Promise.resolve(new Response('{"runs":[]}')) : mock(url, init),
+  )
+}
+
+
 beforeAll(() => {
   globalThis.ResizeObserver ??= class {
     observe() {}
@@ -47,7 +56,7 @@ test('the run icon puts the cursor in the request box, which lives on the canvas
 
 test('Cmd+Enter in the request box starts a run; an empty box does not', async () => {
   const fetchMock = vi.fn(async () => new Response('{}', { status: 500 }))
-  vi.stubGlobal('fetch', fetchMock)
+  stubFetch(fetchMock)
   try {
     page()
     const box = screen.getByLabelText(strings.run.requestLabel)
