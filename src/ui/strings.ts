@@ -29,6 +29,12 @@ export const strings = {
     hoursAgo: (n: number) => `${n} h ago`,
     yesterday: 'yesterday',
     demo: 'demo',
+    stillLive: 'This task is still working or waiting for your decision. Cancel it or decide first.',
+    delete: (request: string) => `Delete the task: ${request}`,
+    confirm: 'Delete this task? Its history and the agent\'s working copy are removed. The saved version (branch) stays in your project.',
+    yes: 'Delete',
+    no: 'Keep',
+    couldNotDelete: 'The task could not be deleted.',
   },
   routing: {
     area: { frontend: 'front end', backend: 'back end', both: 'front and back end' },

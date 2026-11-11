@@ -414,3 +414,33 @@ test('a suggested commit message is used, with the provenance line kept', async 
   expect(body).toContain('approved by a person')
   expect(body).toContain('Asked for: Outline buttons in the other team colour')
 })
+
+describe('deleting a task', () => {
+  test('removes its record and its working copy, and keeps the saved branch in the project', async () => {
+    const { deleteRun } = await import('@/engine/run-delete')
+    const { runId, repo, wt } = await finishedRun()
+    const kept = keepOnBranch(runId, { name: 'ai/keep-me' })
+    deleteRun(runId, { worktreeRoot: join(wt, '..') })
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()).toBeUndefined()
+    expect(await eventsSince(runId, 0)).toHaveLength(0)
+    expect(existsSync(wt)).toBe(false)
+    expect(git(repo, 'rev-parse', 'ai/keep-me')).toBe(kept.commit)
+  })
+
+  test('a task still working or waiting for a decision cannot be deleted', async () => {
+    const { deleteRun, RunDeleteError } = await import('@/engine/run-delete')
+    const { runId } = await finishedRun()
+    for (const status of ['running', 'queued', 'waiting_approval'] as const) {
+      db.update(runs).set({ status }).where(eq(runs.id, runId)).run()
+      expect(() => deleteRun(runId)).toThrow(RunDeleteError)
+    }
+    expect(db.select().from(runs).where(eq(runs.id, runId)).get()).toBeDefined()
+  })
+
+  test('a working copy outside the app\'s own folder is never removed', async () => {
+    const { deleteRun } = await import('@/engine/run-delete')
+    const { runId, wt } = await finishedRun()
+    deleteRun(runId, { worktreeRoot: '/somewhere/else' })
+    expect(existsSync(wt)).toBe(true)
+  })
+})

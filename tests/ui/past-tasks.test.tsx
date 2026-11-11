@@ -35,3 +35,28 @@ test('times read as people say them', () => {
   expect(whenText('2026-11-11T09:00:00Z', now)).toBe(strings.history.hoursAgo(3))
   expect(whenText('2026-11-10T09:00:00Z', now)).toBe(strings.history.yesterday)
 })
+
+test('deleting asks first, on the spot, and removes the task only on yes', async () => {
+  const fetchMock = vi.fn(async (_u: string, init?: RequestInit) =>
+    init?.method === 'DELETE' ? new Response(null, { status: 204 }) : new Response(JSON.stringify({ runs })))
+  vi.stubGlobal('fetch', fetchMock)
+  const onDeleted = vi.fn()
+  render(<PastTasks workflowId="w1" currentRunId="r2" refreshKey="x" onOpen={() => {}} onDeleted={onDeleted} />)
+  fireEvent.click(await screen.findByLabelText(strings.history.delete('Outline the buttons')))
+  fireEvent.click(screen.getByRole('button', { name: strings.history.no }))
+  expect(fetchMock.mock.calls.some(([, i]) => i?.method === 'DELETE')).toBe(false)
+  fireEvent.click(screen.getByLabelText(strings.history.delete('Outline the buttons')))
+  fireEvent.click(screen.getByRole('button', { name: strings.history.yes }))
+  await vi.waitFor(() => expect(onDeleted).toHaveBeenCalledWith('r1'))
+  expect(screen.queryByText('Outline the buttons')).toBeNull()
+})
+
+test('a refused delete says why and keeps the task', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) =>
+    init?.method === 'DELETE' ? new Response(JSON.stringify({ error: strings.history.stillLive }), { status: 409 }) : new Response(JSON.stringify({ runs }))))
+  render(<PastTasks workflowId="w1" currentRunId={null} refreshKey="x" onOpen={() => {}} />)
+  fireEvent.click(await screen.findByLabelText(strings.history.delete('Remove the white circle')))
+  fireEvent.click(screen.getByRole('button', { name: strings.history.yes }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(strings.history.stillLive)
+  expect(screen.getByText('Remove the white circle')).toBeInTheDocument()
+})

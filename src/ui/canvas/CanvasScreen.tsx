@@ -363,6 +363,9 @@ export function CanvasScreen({
               currentRunId={run?.runId ?? null}
               refreshKey={`${run?.runId ?? ''}-${runStatus ?? ''}`}
               onOpen={id => void watchRun(id)}
+              onDeleted={id => {
+                if (id === run?.runId) newTask()
+              }}
             />
           }
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
