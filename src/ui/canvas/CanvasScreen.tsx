@@ -144,40 +144,7 @@ export function CanvasScreen({
           lineHeight: 1.45,
         }}
       />
-      {settings && (
-        <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>
-          {strings.settings.agentLabel}
-          <select
-            aria-label={strings.settings.agentLabel}
-            value={agent}
-            onChange={e => setAgent(e.target.value as Agent)}
-            disabled={live}
-            style={{ ...headerButton, width: '100%', padding: '7px 10px', textAlign: 'left' }}
-          >
-            <option value={DEMO_PROVIDER_ID}>{strings.settings.agentDemo}</option>
-            <option value={CLAUDE_PROVIDER_ID}>{strings.settings.agentClaude}</option>
-          </select>
-        </label>
-      )}
       {settings && agent === CLAUDE_PROVIDER_ID && <AgentSettings settings={settings} onSaved={setSettings} />}
-      <button
-        type="button"
-        disabled={!canRun}
-        title={claudeBlocked ? strings.settings.needsRepo : undefined}
-        onClick={startRun}
-        style={{
-          ...headerButton,
-          width: '100%',
-          padding: '9px 14px',
-          fontWeight: 600,
-          background: canRun ? theme.running : theme.card,
-          borderColor: canRun ? theme.running : theme.border,
-          color: canRun ? '#fff' : theme.skipped,
-          cursor: canRun ? 'pointer' : 'not-allowed',
-        }}
-      >
-        {busy ? strings.run.starting : strings.run.run}
-      </button>
       <span style={{ fontSize: 11.5, color: theme.skipped, textAlign: 'center' }}>{strings.sidebar.runShortcut}</span>
       {claudeBlocked && <span style={{ fontSize: 12.5, color: theme.waiting }}>{strings.settings.needsRepo}</span>}
       {message && (
@@ -190,8 +157,39 @@ export function CanvasScreen({
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* A thin bar for what must stay visible with the sidebar closed: the run's state, and the way to stop it. */}
+      {/* The controls stay in the top bar, visible with the sidebar closed: which agent, run, stop, and the run's state. */}
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', minHeight: 36, borderBottom: `1px solid ${theme.border}`, background: theme.bg }}>
+        {settings && (
+          <select
+            aria-label={strings.settings.agentLabel}
+            value={agent}
+            onChange={e => setAgent(e.target.value as Agent)}
+            disabled={live}
+            style={{ ...headerButton, padding: '6px 10px' }}
+          >
+            <option value={DEMO_PROVIDER_ID}>{strings.settings.agentDemo}</option>
+            <option value={CLAUDE_PROVIDER_ID}>{strings.settings.agentClaude}</option>
+          </select>
+        )}
+        <button
+          type="button"
+          disabled={!canRun}
+          title={claudeBlocked ? strings.settings.needsRepo : request.trim() === '' ? strings.run.writeFirst : undefined}
+          onClick={startRun}
+          style={{
+            ...headerButton,
+            fontWeight: 600,
+            background: canRun ? theme.running : theme.card,
+            borderColor: canRun ? theme.running : theme.border,
+            color: canRun ? '#fff' : theme.skipped,
+            cursor: canRun ? 'pointer' : 'not-allowed',
+          }}
+        >
+          {busy ? strings.run.starting : strings.run.run}
+        </button>
+        <button type="button" style={headerButton} disabled={!live} onClick={cancel}>
+          {strings.run.cancel}
+        </button>
         {run?.providerId === DEMO_PROVIDER_ID && (
           <span
             title={strings.run.demoTitle}
@@ -205,9 +203,6 @@ export function CanvasScreen({
             {statusText}
           </span>
         )}
-        <button type="button" style={{ ...headerButton, marginLeft: 'auto' }} disabled={!live} onClick={cancel}>
-          {strings.run.cancel}
-        </button>
       </header>
       <div style={{ flex: 1, minHeight: 0 }}>
         <Canvas

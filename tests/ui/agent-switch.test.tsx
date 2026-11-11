@@ -72,3 +72,39 @@ test('a refused save turns the button red and says why', async () => {
     vi.unstubAllGlobals()
   }
 })
+
+test('choosing a folder fills the path and its test command, then saves them', async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/system/choose-folder') return new Response(JSON.stringify({ path: '/Users/me/Desktop/comets-web', testCommand: 'pnpm test' }))
+    const sent = JSON.parse(String(init?.body)) as { repoPath: string; testCommand: string }
+    return new Response(JSON.stringify({ projectId: 'p1', ...sent }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    const { findByRole } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
+    fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.settings.choose) }))
+    expect(await findByRole('button', { name: strings.settings.savedButton })).toBeInTheDocument()
+    expect(screen.getByLabelText(strings.settings.repoLabel)).toHaveValue('/Users/me/Desktop/comets-web')
+    expect(screen.getByLabelText(strings.settings.testLabel)).toHaveValue('pnpm test')
+    const put = fetchMock.mock.calls.find(([u]) => String(u).startsWith('/api/projects/'))!
+    expect(JSON.parse(String(put[1]!.body))).toEqual({ repoPath: '/Users/me/Desktop/comets-web', testCommand: 'pnpm test' })
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('closing the folder window changes nothing', async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ cancelled: true })))
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
+    fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.settings.choose) }))
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: new RegExp(strings.settings.choose) })).toBeEnabled())
+    expect(screen.getByLabelText(strings.settings.repoLabel)).toHaveValue('/repo')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})

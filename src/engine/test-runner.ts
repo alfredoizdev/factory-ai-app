@@ -151,7 +151,13 @@ export function detectTestCommand(repoPath: string): string | null {
   try {
     const pkg = JSON.parse(readFileSync(file, 'utf8')) as { scripts?: { test?: unknown } }
     const test = pkg.scripts?.test
-    return typeof test === 'string' && test.trim() !== '' && !NPM_PLACEHOLDER.test(test) ? 'npm test' : null
+    if (typeof test !== 'string' || test.trim() === '' || NPM_PLACEHOLDER.test(test)) return null
+    // Run the script the way the project installs: a pnpm project's tests expect pnpm's node_modules layout.
+    const has = (f: string) => existsSync(join(repoPath, f))
+    if (has('pnpm-lock.yaml')) return 'pnpm test'
+    if (has('yarn.lock')) return 'yarn test'
+    if (has('bun.lockb') || has('bun.lock')) return 'bun run test'
+    return 'npm test'
   } catch {
     return null
   }

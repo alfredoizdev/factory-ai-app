@@ -37,14 +37,16 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
         : 'idle'
   const tone = state === 'saved' ? theme.passed : state === 'failed' ? theme.failed : theme.border
 
-  async function save() {
+  const [choosing, setChoosing] = useState(false)
+
+  async function save(values: { repoPath: string; testCommand: string } = { repoPath, testCommand }) {
     setBusy(true)
     setMessage(null)
     try {
       const res = await fetch(`/api/projects/${settings.projectId}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ repoPath: repoPath.trim() || undefined, testCommand: testCommand.trim() || null }),
+        body: JSON.stringify({ repoPath: values.repoPath.trim() || undefined, testCommand: values.testCommand.trim() || null }),
       })
       const body = (await res.json().catch(() => null)) as (ProjectSettings & { error?: string }) | null
       if (!res.ok || !body) return setMessage({ text: body?.error ?? strings.settings.saveFailed, ok: false })
@@ -57,6 +59,26 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
       setMessage({ text: strings.settings.saveFailed, ok: false })
     } finally {
       setBusy(false)
+    }
+  }
+
+  // The Mac's own folder window: pick the project, and its path and test command fill in and save in one go.
+  async function chooseFolder() {
+    setChoosing(true)
+    setMessage(null)
+    try {
+      const res = await fetch('/api/system/choose-folder', { method: 'POST' })
+      const body = (await res.json().catch(() => null)) as { path?: string; testCommand?: string | null; cancelled?: boolean; error?: string } | null
+      if (!res.ok || !body) return setMessage({ text: body?.error ?? strings.settings.pickerFailed, ok: false })
+      if (body.cancelled || !body.path) return
+      const next = { repoPath: body.path, testCommand: body.testCommand ?? testCommand }
+      setRepoPath(next.repoPath)
+      setTestCommand(next.testCommand)
+      await save(next)
+    } catch {
+      setMessage({ text: strings.settings.pickerFailed, ok: false })
+    } finally {
+      setChoosing(false)
     }
   }
 
@@ -73,6 +95,28 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
           style={{ ...field, width: '100%', boxSizing: 'border-box' }}
         />
       </label>
+      <button
+        type="button"
+        onClick={chooseFolder}
+        disabled={choosing || busy}
+        style={{
+          padding: '7px 12px',
+          background: theme.card,
+          color: 'inherit',
+          border: `1px dashed ${theme.border}`,
+          borderRadius: 6,
+          cursor: choosing ? 'wait' : 'pointer',
+          textAlign: 'left',
+          fontSize: 13,
+        }}
+      >
+        📁 {strings.settings.choose}
+      </button>
+      {choosing && (
+        <span role="status" style={{ fontSize: 12, color: theme.dim, lineHeight: 1.4 }}>
+          {strings.settings.choosing} {strings.settings.choosingHint}
+        </span>
+      )}
       <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>
         {strings.settings.testLabel}
         <input
@@ -88,7 +132,7 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
         type="button"
         data-state={state}
         disabled={busy}
-        onClick={save}
+        onClick={() => void save()}
         style={{
           position: 'relative',
           padding: '6px 14px',

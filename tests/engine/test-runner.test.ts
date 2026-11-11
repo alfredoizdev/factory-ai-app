@@ -85,6 +85,13 @@ test('the test command is detected from package.json, never from npm\'s placehol
   expect(detectTestCommand(placeholder)).toBeNull()
 
   expect(detectTestCommand(tmp())).toBeNull()
+  // The package manager is read from the lockfile, so the command matches how the project installs.
+  for (const [lock, command] of [['pnpm-lock.yaml', 'pnpm test'], ['yarn.lock', 'yarn test'], ['bun.lockb', 'bun run test'], ['bun.lock', 'bun run test'], ['package-lock.json', 'npm test']]) {
+    const dir = tmp()
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' } }))
+    writeFileSync(join(dir, lock!), '')
+    expect(detectTestCommand(dir)).toBe(command)
+  }
   const broken = tmp()
   writeFileSync(join(broken, 'package.json'), '{ not json')
   expect(detectTestCommand(broken)).toBeNull()
