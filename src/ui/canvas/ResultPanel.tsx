@@ -125,7 +125,7 @@ export function ResultSection({
                 </div>
                 {delivery.returnTo && (
                   <button type="button" disabled={busy !== null} onClick={() => void bring('back')} style={secondaryButton(busy)}>
-                    {busy === 'back' ? <WorkingSpinner blockId="back" size={16} /> : '↩'} {strings.delivery.backButton(delivery.returnTo)}
+                    {busy === 'back' ? <WorkingSpinner blockId="back" size={16} /> : '←'} {strings.delivery.backButton(delivery.returnTo)}
                   </button>
                 )}
               </>
@@ -163,7 +163,8 @@ export function ResultSection({
             <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.keepWhat}</div>
           </>
         )}
-        {delivery.delivered ? (
+        {/* On the kept branch the change is already there: applying it again would only collide with itself. */}
+        {delivery.kept && delivery.current === delivery.branch ? null : delivery.delivered ? (
           <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{strings.delivery.done(delivery.files.length)}</div>
         ) : (
           <>

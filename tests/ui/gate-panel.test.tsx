@@ -138,6 +138,7 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   // Switch, then back.
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.switchButton) }))
   expect(await screen.findByTestId('on-branch')).toHaveTextContent(strings.delivery.onBranch('feature/my-name'))
+  expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.backButton('main')) }))
   expect(await screen.findByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeInTheDocument()
 })
