@@ -219,3 +219,16 @@ test('switching to a new run never shows the previous run on any render', () => 
   expect(renders.length).toBeGreaterThan(0)
   for (const r of renders) expect(r.states).toEqual([]) // including the very first render, before any effect ran
 })
+
+test('a push lights the Ship stage as passed, measured, naming the branch', async () => {
+  const { toViews } = await import('@/ui/canvas/useRunStream')
+  const ship: Block = { id: 'ship', kind: 'ship', label: 'Ship', enabled: true, config: {}, position: { x: 0, y: 0 } }
+  let s = foldEvent(emptyStream, { sequence: 1, type: 'node.skipped', payload: { blockId: 'ship', reason: 'later' } })
+  expect(toViews(s.nodes, [ship], s.shipped).ship!.state).toBe('skipped')
+  s = foldEvent(s, { sequence: 2, type: 'run.pushed', payload: { branch: 'ai/watch-buttons-x1', pullRequestUrl: null } })
+  const view = toViews(s.nodes, [ship], s.shipped).ship!
+  expect(view).toMatchObject({ state: 'passed', summary: strings.summary.shippedTo('ai/watch-buttons-x1'), summaryIsClaim: false })
+  // A later event does not forget it.
+  s = foldEvent(s, { sequence: 3, type: 'node.step', payload: { blockId: 'ship', text: 'x' } })
+  expect(s.shipped).toEqual({ branch: 'ai/watch-buttons-x1' })
+})

@@ -41,7 +41,12 @@ type RawNode = {
   /** From node.completed: tokens the provider reported. Undefined: it said nothing; null: it said "unknown". */
   tokens?: number | null
 }
-export type StreamState = { nodes: Record<string, RawNode>; lastSequence: number }
+export type StreamState = {
+  nodes: Record<string, RawNode>
+  lastSequence: number
+  /** From run.pushed: the approved change was sent to the project's origin, so the Ship stage has really happened. */
+  shipped?: { branch: string }
+}
 export const emptyStream: StreamState = { nodes: {}, lastSequence: 0 }
 
 export type Wire = Pick<EventRow, 'sequence' | 'type' | 'payload'>
@@ -51,9 +56,13 @@ const text = (v: unknown): string | undefined => (typeof v === 'string' && v.tri
 // Pure. Anything it does not recognise only advances the cursor, so an event type added later cannot corrupt a view.
 export function foldEvent(prev: StreamState, event: Wire): StreamState {
   if (event.sequence <= prev.lastSequence) return prev // already applied: a replay overlap is not a second step
-  const moved: StreamState = { nodes: prev.nodes, lastSequence: event.sequence }
+  const moved: StreamState = { ...prev, lastSequence: event.sequence }
 
   const payload = (event.payload ?? {}) as Record<string, unknown>
+  if (event.type === 'run.pushed') {
+    const branch = text(payload.branch)
+    return branch === undefined ? moved : { ...moved, shipped: { branch } }
+  }
   const blockId = text(payload.blockId)
   if (blockId === undefined) return moved
   const node = prev.nodes[blockId]
@@ -63,14 +72,14 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   if (event.type === 'node.step') {
     const step = text(payload.text)
     if (!node || step === undefined) return moved
-    return { nodes: { ...prev.nodes, [blockId]: { ...node, steps: [...node.steps, step] } }, lastSequence: event.sequence }
+    return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, steps: [...node.steps, step] } }, lastSequence: event.sequence }
   }
 
   // node.evidence carries no state either: it attaches what a process measured to a block already seen.
   if (event.type === 'node.evidence') {
     const evidence = evidenceOf(payload)
     if (!node || !evidence) return moved
-    return { nodes: { ...prev.nodes, [blockId]: { ...node, evidence } }, lastSequence: event.sequence }
+    return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, evidence } }, lastSequence: event.sequence }
   }
 
   // A person asked for changes: the block starts over for the next round. Nothing from the previous round carries
@@ -78,14 +87,14 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   if (event.type === 'node.reopened') {
     if (!node) return moved
     const round = typeof payload.round === 'number' && payload.round > 1 ? payload.round : undefined
-    return { nodes: { ...prev.nodes, [blockId]: { state: 'queued', steps: [], round } }, lastSequence: event.sequence }
+    return { ...prev, nodes: { ...prev.nodes, [blockId]: { state: 'queued', steps: [], round } }, lastSequence: event.sequence }
   }
 
   if (event.type === 'node.assessed') {
     const level = payload.level === 'low' || payload.level === 'high' ? payload.level : undefined
     const reasons = Array.isArray(payload.reasons) ? payload.reasons.filter((r): r is string => typeof r === 'string') : []
     if (!node || !level) return moved
-    return { nodes: { ...prev.nodes, [blockId]: { ...node, risk: { level, reasons } } }, lastSequence: event.sequence }
+    return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, risk: { level, reasons } } }, lastSequence: event.sequence }
   }
 
   const state = NODE_EVENT_STATE[event.type]
@@ -109,7 +118,7 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
     updated.failureSource = typeof payload.messageSource === 'string' ? payload.messageSource : undefined
   }
   if (event.type === 'node.skipped') updated.skippedReason = text(payload.reason)
-  return { nodes: { ...prev.nodes, [blockId]: updated }, lastSequence: event.sequence }
+  return { ...prev, nodes: { ...prev.nodes, [blockId]: updated }, lastSequence: event.sequence }
 }
 
 const count = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null)
@@ -143,7 +152,11 @@ function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk' | 'r
   }
 }
 
-export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[] = []): Record<string, NodeRunView> {
+export function toViews(
+  nodes: Record<string, RawNode>,
+  blocks: readonly Block[] = [],
+  shipped?: StreamState['shipped'],
+): Record<string, NodeRunView> {
   const out: Record<string, NodeRunView> = {}
   for (const [blockId, n] of Object.entries(nodes)) {
     const kind = blocks.find(b => b.id === blockId)?.kind
@@ -164,6 +177,13 @@ export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[]
       counts: n.evidence?.counts ?? undefined,
     }
     out[blockId] = { blockId, state: n.state, summary: summarize(input), summaryIsClaim: claimUsed(input), steps: n.steps, ...facts(n) }
+  }
+  // Shipping is pushing the approved branch. Once the record says it happened, the Ship stage shows it, measured
+  // (it is the app's own record of a push git accepted), never a claim.
+  if (shipped) {
+    for (const b of blocks.filter(b => b.kind === 'ship')) {
+      out[b.id] = { blockId: b.id, state: 'passed', summary: strings.summary.shippedTo(shipped.branch), summaryIsClaim: false, steps: [] }
+    }
   }
   return out
 }
@@ -273,6 +293,6 @@ export function useRunStream(
     }
   }, [runId])
 
-  const views = useMemo(() => toViews(stream.nodes, blocks), [stream.nodes, blocks])
+  const views = useMemo(() => toViews(stream.nodes, blocks, stream.shipped), [stream.nodes, blocks, stream.shipped])
   return { views, lastSequence: stream.lastSequence, connected, events: log.events, runStatus: log.runStatus }
 }

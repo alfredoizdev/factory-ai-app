@@ -22,6 +22,7 @@ export const strings = {
     disabledRequired: (label: string) => `The ${label} block is required and cannot be disabled.`,
   },
   summary: {
+    shippedTo: (branch: string) => `Pushed ${branch} to origin.`,
     generic: {
       queued: 'Waiting to start.',
       running: 'Working on it.',
@@ -335,7 +336,7 @@ export const strings = {
     notYet: {
       plan: 'The editable plan arrives in the next step of this milestone.',
       review: 'Reviews arrive in milestone 4.',
-      ship: 'Shipping arrives in milestone 6.',
+      ship: 'Ships when you push the approved branch from the card.',
       noTestCommand: 'No test command is set for this project, so nothing was run.',
     },
     retrying: 'That attempt failed. Trying once more.',
