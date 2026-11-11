@@ -180,21 +180,20 @@ export function ResultSection({
             <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.keepWhat}</div>
           </>
         )}
-        {/* On the kept branch the change is already there: applying it again would only collide with itself. */}
+        {/* Copying the change into whatever is open is a developer's move, so it waits behind More options. On the kept
+            branch it is not offered at all: the change is already there, and applying it again would collide. */}
         {delivery.kept && delivery.current === delivery.branch ? null : delivery.delivered ? (
           <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{strings.delivery.done(delivery.files.length)}</div>
         ) : (
-          <>
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => void bring('apply')}
-              style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${theme.tint('passed', 0.6)}`, background: 'transparent', color: '#b9dcc5', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-            >
-              {busy === 'apply' ? <WorkingSpinner blockId="apply" size={16} /> : '⤵'} {strings.delivery.applyButton}
-            </button>
-            <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.applyWhat}</div>
-          </>
+          <details style={{ fontSize: 12 }}>
+            <summary style={{ cursor: 'pointer', color: theme.dim }}>{strings.delivery.moreOptions}</summary>
+            <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+              <button type="button" disabled={busy !== null} onClick={() => void bring('apply')} style={secondaryButton(busy)}>
+                {busy === 'apply' ? <WorkingSpinner blockId="apply" size={16} /> : '⤵'} {strings.delivery.applyButton}
+              </button>
+              <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{strings.delivery.applyWhat}</div>
+            </div>
+          </details>
         )}
       </div>
 

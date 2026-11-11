@@ -140,7 +140,7 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.switchButton) }))
   expect(await screen.findByTestId('on-branch')).toHaveTextContent(strings.delivery.onBranch('feature/my-name'))
   expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.backButton('main')) }))
+  fireEvent.click(screen.getByRole('button', { name: (n: string) => n.includes(strings.delivery.backButton('main')) }))
   expect(await screen.findByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeInTheDocument()
   // Push, then the pull-request link.
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.pushButton) }))
