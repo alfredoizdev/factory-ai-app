@@ -67,8 +67,11 @@ export function checkOf(c: Rollup): Check {
 
 function recordOf(runId: string, type: 'run.pr_opened' | 'run.merged' | 'run.on_hold'): Record<string, unknown> | null {
   const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)).get()
-  return row ? (JSON.parse(row.payloadJson) as Record<string, unknown>) : null
+  return row ? { ...(JSON.parse(row.payloadJson) as Record<string, unknown>), at: row.createdAt } : null
 }
+
+/** Right after a pull request opens, GitHub may not have listed its checks yet: no checks then is not "none". */
+export const CHECKS_GRACE_MS = 60_000
 
 function repoOf(runId: string): { repo: string; branch: string } {
   const run = db.select().from(runs).where(eq(runs.id, runId)).get()
@@ -133,6 +136,7 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
     throw ghFailure(e)
   }
   const checks = (view.statusCheckRollup ?? []).map(checkOf)
+  const justOpened = Date.now() - Date.parse(String(opened.at)) < CHECKS_GRACE_MS
   const state = view.state === 'MERGED' ? 'merged' : view.state === 'CLOSED' ? 'closed' : 'open'
   let deploy: Check[] = []
   if (state === 'merged' && view.mergeCommit?.oid) {
@@ -150,7 +154,7 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
   return {
     pr: { number: view.number, url: view.url, state, conflicts: view.mergeable === 'CONFLICTING' },
     checks,
-    checksDone: checks.every(c => c.state !== 'pending'),
+    checksDone: checks.every(c => c.state !== 'pending') && (checks.length > 0 || state !== 'open' || !justOpened),
     checksFailed: checks.some(c => c.state === 'failed'),
     deploy,
     mergedAt: view.mergedAt ?? null,

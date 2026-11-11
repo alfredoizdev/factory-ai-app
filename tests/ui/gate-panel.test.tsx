@@ -138,7 +138,7 @@ test('done: one main button per step; the name is shown with a suggestion in it,
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.keepButton) }))
   expect(await screen.findByTestId('kept')).toBeInTheDocument()
   expect(screen.getByTestId('next-step')).toHaveTextContent(strings.delivery.nowSend)
-  expect(screen.getByTestId('more-options')).toHaveTextContent('feature/my-name')
+  expect(screen.getByTestId('kept-facts')).toHaveTextContent('feature/my-name')
   const sent = fetchMock.mock.calls.find(([, i]) => i?.method === 'POST')!
   expect(JSON.parse(String(sent[1]!.body))).toEqual({ mode: 'branch', name: 'feature/my-name' })
   // Switch, then back.

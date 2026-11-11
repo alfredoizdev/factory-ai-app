@@ -383,6 +383,8 @@ export const strings = {
     nowPublish: 'Everything passed. Publish it when you are ready, or put it on hold.',
     nowOnHold: 'On hold. Everything is ready; publish it whenever you want.',
     changeName: 'Change the name',
+    branchLabel: 'Branch',
+    commitLabel: 'Commit',
     bring: 'Bring it to my project',
     keepButton: 'Save this change',
     keepWhat: 'Saves it as its own version (a branch) in your project. Nothing you have open changes, and nothing is sent anywhere.',

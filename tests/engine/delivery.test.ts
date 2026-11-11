@@ -2,10 +2,10 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
-import { approvals, nodeRuns, projects, runs, workflows } from '@/db/schema'
+import { approvals, events, nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
 import { deliverToProject, DeliveryError, deliveryState, githubPullUrl, pushBranch, switchBack, switchToBranch } from '@/engine/delivery'
@@ -455,6 +455,10 @@ describe('shipping through GitHub', () => {
     return r
   }
   type View = Record<string, unknown>
+  // As if the pull request was opened a while ago: GitHub has had time to list its checks.
+  function aged(runId: string) {
+    db.update(events).set({ createdAt: '2000-01-01T00:00:00.000Z' }).where(and(eq(events.runId, runId), eq(events.type, 'run.pr_opened'))).run()
+  }
   function fakeGh(view: () => View, extra: (args: string[]) => string | undefined = () => undefined) {
     const calls: string[][] = []
     const gh = async (args: string[]) => {
@@ -489,7 +493,11 @@ describe('shipping through GitHub', () => {
     const { openPullRequest } = await import('@/engine/ship')
     const { runId } = await shippable()
     const { gh } = fakeGh(() => ({ number: 3, url: 'u', state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [], mergeCommit: null, mergedAt: null }))
-    const state = await openPullRequest(runId, gh)
+    const { shipState } = await import('@/engine/ship')
+    // Right after opening, no checks yet is not taken as none.
+    expect((await openPullRequest(runId, gh)).checksDone).toBe(false)
+    aged(runId)
+    const state = await shipState(runId, gh)
     expect(state.checks).toEqual([])
     expect(state.checksDone).toBe(true)
   })
@@ -522,6 +530,7 @@ describe('shipping through GitHub', () => {
     // Nothing to hold before there is a pull request.
     await expect(setHold(r.runId, true, gh)).rejects.toBeInstanceOf(ShipError)
     expect((await openPullRequest(r.runId, gh)).onHold).toBe(false)
+    aged(r.runId)
     expect(onHoldInList()).toBe(false)
     expect((await setHold(r.runId, true, gh)).onHold).toBe(true)
     expect(onHoldInList()).toBe(true)

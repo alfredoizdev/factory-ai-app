@@ -236,9 +236,12 @@ export function ResultSection({
             {moreOpen && (
               <div data-testid="more-options" style={{ display: 'grid', gap: 8 }}>
                 {kept && (
-                  <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.4, overflowWrap: 'anywhere', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                    {d.keptOnBranch(delivery.branch!, delivery.commit ?? '')}
-                  </div>
+                  <dl data-testid="kept-facts" style={{ ...optionCard, margin: 0, gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: 12, rowGap: 6, fontSize: 12 }}>
+                    <dt style={{ color: theme.dim }}>{d.branchLabel}</dt>
+                    <dd style={{ margin: 0, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6', overflowWrap: 'anywhere' }}>{delivery.branch}</dd>
+                    <dt style={{ color: theme.dim }}>{d.commitLabel}</dt>
+                    <dd style={{ margin: 0, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6' }}>{(delivery.commit ?? '').slice(0, 7)}</dd>
+                  </dl>
                 )}
                 {canPushOnly && (
                   <div style={optionCard}>
