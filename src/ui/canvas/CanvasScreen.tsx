@@ -8,7 +8,7 @@ import { EventBarList } from '@/ui/EventBar'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { AgentSettings } from './AgentSettings'
-import { Canvas } from './Canvas'
+import { Canvas, RUN_INPUT_ID } from './Canvas'
 import { useRunStream, type RunStatus } from './useRunStream'
 
 /** The run being watched. `blocks` are the frozen version it executes, not the draft. */
@@ -109,40 +109,89 @@ export function CanvasScreen({
   const live = runStatus !== null && LIVE.has(runStatus)
   const statusText = run === null ? null : runStatus !== null ? strings.run.status[runStatus] : connected ? null : strings.run.connecting
 
-  return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', borderBottom: `1px solid ${theme.border}`, background: theme.bg }}>
-        <input
-          aria-label={strings.run.requestLabel}
-          placeholder={strings.run.requestPlaceholder}
-          value={request}
-          onChange={e => setRequest(e.target.value)}
-          style={{ flex: 1, maxWidth: 480, padding: '6px 10px', background: theme.card, color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 6 }}
-        />
-        {settings && (
+  const canRun = !busy && !live && request.trim() !== '' && !claudeBlocked
+
+  // Where a run is asked for. It lives at the top of the sidebar, with room to write a real request.
+  const runPanel = (
+    <>
+      <h2 style={{ margin: 0, fontSize: 14 }}>{strings.sidebar.runTitle}</h2>
+      <textarea
+        id={RUN_INPUT_ID}
+        aria-label={strings.run.requestLabel}
+        placeholder={strings.run.requestPlaceholder}
+        value={request}
+        rows={6}
+        onChange={e => setRequest(e.target.value)}
+        onKeyDown={e => {
+          // Cmd+Enter (Ctrl+Enter elsewhere) runs, so a long request does not need the mouse.
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canRun) {
+            e.preventDefault()
+            void startRun()
+          }
+        }}
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          resize: 'vertical',
+          minHeight: 110,
+          padding: '10px 12px',
+          background: theme.card,
+          color: 'inherit',
+          border: `1px solid ${theme.border}`,
+          borderRadius: 8,
+          font: 'inherit',
+          fontSize: 14,
+          lineHeight: 1.45,
+        }}
+      />
+      {settings && (
+        <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>
+          {strings.settings.agentLabel}
           <select
             aria-label={strings.settings.agentLabel}
             value={agent}
             onChange={e => setAgent(e.target.value as Agent)}
             disabled={live}
-            style={{ ...headerButton, padding: '6px 10px' }}
+            style={{ ...headerButton, width: '100%', padding: '7px 10px', textAlign: 'left' }}
           >
             <option value={DEMO_PROVIDER_ID}>{strings.settings.agentDemo}</option>
             <option value={CLAUDE_PROVIDER_ID}>{strings.settings.agentClaude}</option>
           </select>
-        )}
-        <button
-          type="button"
-          style={headerButton}
-          disabled={busy || live || request.trim() === '' || claudeBlocked}
-          title={claudeBlocked ? strings.settings.needsRepo : undefined}
-          onClick={startRun}
-        >
-          {busy ? strings.run.starting : strings.run.run}
-        </button>
-        <button type="button" style={headerButton} disabled={!live} onClick={cancel}>
-          {strings.run.cancel}
-        </button>
+        </label>
+      )}
+      {settings && agent === CLAUDE_PROVIDER_ID && <AgentSettings settings={settings} onSaved={setSettings} />}
+      <button
+        type="button"
+        disabled={!canRun}
+        title={claudeBlocked ? strings.settings.needsRepo : undefined}
+        onClick={startRun}
+        style={{
+          ...headerButton,
+          width: '100%',
+          padding: '9px 14px',
+          fontWeight: 600,
+          background: canRun ? theme.running : theme.card,
+          borderColor: canRun ? theme.running : theme.border,
+          color: canRun ? '#fff' : theme.skipped,
+          cursor: canRun ? 'pointer' : 'not-allowed',
+        }}
+      >
+        {busy ? strings.run.starting : strings.run.run}
+      </button>
+      <span style={{ fontSize: 11.5, color: theme.skipped, textAlign: 'center' }}>{strings.sidebar.runShortcut}</span>
+      {claudeBlocked && <span style={{ fontSize: 12.5, color: theme.waiting }}>{strings.settings.needsRepo}</span>}
+      {message && (
+        <span role="alert" style={{ color: theme.failed, fontSize: 13 }}>
+          {message}
+        </span>
+      )}
+    </>
+  )
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* A thin bar for what must stay visible with the sidebar closed: the run's state, and the way to stop it. */}
+      <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', minHeight: 36, borderBottom: `1px solid ${theme.border}`, background: theme.bg }}>
         {run?.providerId === DEMO_PROVIDER_ID && (
           <span
             title={strings.run.demoTitle}
@@ -156,13 +205,10 @@ export function CanvasScreen({
             {statusText}
           </span>
         )}
-        {message && (
-          <span role="alert" style={{ color: theme.failed, fontSize: 13 }}>
-            {message}
-          </span>
-        )}
+        <button type="button" style={{ ...headerButton, marginLeft: 'auto' }} disabled={!live} onClick={cancel}>
+          {strings.run.cancel}
+        </button>
       </header>
-      {settings && agent === CLAUDE_PROVIDER_ID && <AgentSettings settings={settings} onSaved={setSettings} />}
       <div style={{ flex: 1, minHeight: 0 }}>
         <Canvas
           graph={graph}
@@ -171,6 +217,7 @@ export function CanvasScreen({
           runBlocks={run?.blocks}
           highlightedId={highlightedId}
           flushRef={flushRef}
+          sidebarTop={runPanel}
         />
       </div>
       {run && <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} />}

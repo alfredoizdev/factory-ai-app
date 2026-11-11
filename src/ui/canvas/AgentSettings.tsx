@@ -61,30 +61,29 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
   }
 
   return (
-    <section
-      data-testid="agent-settings"
-      style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: `1px solid ${theme.border}`, background: theme.bg }}
-    >
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: theme.dim }}>
+    <section data-testid="agent-settings" style={{ display: 'grid', gap: 8 }}>
+      <span style={{ fontSize: 12, color: theme.waiting, lineHeight: 1.4 }}>{strings.settings.notSandboxed}</span>
+      <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>
         {strings.settings.repoLabel}
         <input
           aria-label={strings.settings.repoLabel}
           value={repoPath}
           placeholder={strings.settings.repoPlaceholder}
           onChange={e => setRepoPath(e.target.value)}
-          style={{ ...field, width: 340 }}
+          style={{ ...field, width: '100%', boxSizing: 'border-box' }}
         />
       </label>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: theme.dim }}>
+      <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>
         {strings.settings.testLabel}
         <input
           aria-label={strings.settings.testLabel}
           value={testCommand}
           placeholder={strings.settings.testPlaceholder}
           onChange={e => setTestCommand(e.target.value)}
-          style={{ ...field, width: 160 }}
+          style={{ ...field, width: '100%', boxSizing: 'border-box' }}
         />
       </label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
       <button
         type="button"
         data-state={state}
@@ -138,7 +137,7 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
           {message.text}
         </span>
       )}
-      <span style={{ flexBasis: '100%', fontSize: 12, color: theme.waiting }}>{strings.settings.notSandboxed}</span>
+      </div>
     </section>
   )
 }

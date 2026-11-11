@@ -2,7 +2,7 @@
 
 import { Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance, ViewportPortal } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { derivedEdges, STAGE_ORDER, type Block, type Graph, type ValidationIssue } from '@/domain/graph'
 import { summarize } from '@/domain/summary'
 import { BlockInspector } from './BlockInspector'
@@ -14,6 +14,8 @@ import { ParticleLayer, type Cable } from './FlowParticles'
 import { useReducedMotion } from './useReducedMotion'
 import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, SpineCard, type NodeRunView } from './BlockCard'
 import { autoFocus, fisheyeLayout } from './fisheye'
+import { SidebarIcon, type SidebarIconName } from './SidebarIcons'
+import { usePersistentFlag } from './usePersistentFlag'
 
 export type { NodeRunView }
 
@@ -87,6 +89,48 @@ function BlockNode({ data }: NodeProps<CardNode>) {
 
 const nodeTypes = { block: BlockNode }
 
+const SIDEBAR_WIDTH = 300
+const RAIL_WIDTH = 56
+const SIDEBAR_KEY = 'factory.sidebar.open'
+const RUN_SECTION = 'sidebar-run'
+const PALETTE_SECTION = 'sidebar-palette'
+const SETTINGS_SECTION = 'sidebar-block-settings'
+/** The id the run panel gives its request box, so the rail's run icon can put the cursor in it. */
+export const RUN_INPUT_ID = 'run-request'
+
+/** An icon-only button. Its name is the label (read aloud and shown on hover), so the icon never stands alone. */
+function RailButton({ icon, label, onClick }: { icon: SidebarIconName; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      style={{
+        width: 36,
+        height: 36,
+        display: 'grid',
+        placeItems: 'center',
+        background: 'transparent',
+        color: theme.dim,
+        border: `1px solid transparent`,
+        borderRadius: 8,
+        cursor: 'pointer',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.background = theme.card
+        e.currentTarget.style.borderColor = theme.border
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.background = 'transparent'
+        e.currentTarget.style.borderColor = 'transparent'
+      }}
+    >
+      <SidebarIcon name={icon} />
+    </button>
+  )
+}
+
 /** The floor trails the pan at this fraction, which is what reads as depth. */
 const PARALLAX = 0.3
 
@@ -136,6 +180,7 @@ export function Canvas({
   runBlocks,
   highlightedId = null,
   flushRef,
+  sidebarTop,
 }: {
   graph: Graph
   nodeRuns?: NodeRunView[]
@@ -152,6 +197,8 @@ export function Canvas({
   highlightedId?: string | null
   /** Filled with a function that saves any pending edit now and says whether the draft is safely on the server. */
   flushRef?: { current: (() => Promise<boolean>) | null }
+  /** The first section of the sidebar: where a run is asked for. Absent: the sidebar holds only the editing tools. */
+  sidebarTop?: ReactNode
 }) {
   const [graph, setGraph] = useState(initialGraph)
   const [selectedId, setSelectedId] = useState<string | null>(initialExpandedId)
@@ -244,6 +291,27 @@ export function Canvas({
   const addable = addableKinds(graph)
   const flow = useRef<ReactFlowInstance<CardNode> | null>(null)
   const reducedMotion = useReducedMotion()
+  const [sidebarOpen, setSidebarOpen] = usePersistentFlag(SIDEBAR_KEY, true)
+  // The canvas gets wider or narrower when the sidebar moves, so the lane is fitted again rather than left off-centre.
+  useEffect(() => {
+    // Two frames: the first lays out the new width, the second lets the flow measure it before fitting to it.
+    let inner = 0
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => void flow.current?.fitView({ duration: reducedMotion ? 0 : 300, maxZoom: 1 }))
+    })
+    return () => {
+      cancelAnimationFrame(outer)
+      cancelAnimationFrame(inner)
+    }
+  }, [sidebarOpen, reducedMotion])
+  // From the rail: open the sidebar at one section, and put the cursor where typing belongs.
+  const openAt = (sectionId: string, focusId?: string) => {
+    setSidebarOpen(true)
+    requestAnimationFrame(() => {
+      document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' })
+      if (focusId) document.getElementById(focusId)?.focus()
+    })
+  }
   const floorRef = useRef<HTMLDivElement | null>(null)
   // Moved straight on the DOM node: a pan fires every frame and must not re-render the canvas.
   const parallax = useCallback((vp: { x: number; y: number }) => {
@@ -389,19 +457,46 @@ export function Canvas({
       data-edges={edges.map(e => e.id).join(',')}
       style={{ display: 'flex', width: '100%', height: '100%', background: theme.bg, color: 'inherit' }}
     >
+      {!sidebarOpen && (
+        <nav
+          data-testid="sidebar-rail"
+          aria-label={strings.sidebar.label}
+          style={{ width: RAIL_WIDTH, flexShrink: 0, padding: '10px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, borderRight: `1px solid ${theme.border}` }}
+        >
+          <RailButton icon="expand" label={strings.sidebar.open} onClick={() => setSidebarOpen(true)} />
+          <span aria-hidden="true" style={{ width: 24, height: 1, background: theme.border, margin: '4px 0' }} />
+          {sidebarTop && <RailButton icon="run" label={strings.sidebar.run} onClick={() => openAt(RUN_SECTION, RUN_INPUT_ID)} />}
+          <RailButton icon="add" label={strings.editing.paletteTitle} onClick={() => openAt(PALETTE_SECTION)} />
+          <RailButton icon="settings" label={strings.editing.inspectorTitle} onClick={() => openAt(SETTINGS_SECTION)} />
+        </nav>
+      )}
       <aside
+        data-testid="sidebar"
+        aria-label={strings.sidebar.label}
+        hidden={!sidebarOpen}
         style={{
-          width: 260,
+          width: SIDEBAR_WIDTH,
           flexShrink: 0,
           padding: 12,
-          display: 'grid',
+          display: sidebarOpen ? 'grid' : 'none',
           alignContent: 'start',
           gap: 20,
           borderRight: `1px solid ${theme.border}`,
           overflowY: 'auto',
         }}
       >
-        <section data-testid="palette" style={{ display: 'grid', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.13em', textTransform: 'uppercase', color: theme.dim }}>{strings.app.name}</span>
+          <RailButton icon="collapse" label={strings.sidebar.close} onClick={() => setSidebarOpen(false)} />
+        </div>
+
+        {sidebarTop && (
+          <section id={RUN_SECTION} style={{ display: 'grid', gap: 10, paddingBottom: 20, borderBottom: `1px solid ${theme.border}` }}>
+            {sidebarTop}
+          </section>
+        )}
+
+        <section id={PALETTE_SECTION} data-testid="palette" style={{ display: 'grid', gap: 6 }}>
           <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.paletteTitle}</h2>
           {addable.length === 0 && <p style={{ margin: 0, color: theme.skipped }}>{strings.editing.paletteEmpty}</p>}
           {addable.map(kind => (
@@ -411,7 +506,7 @@ export function Canvas({
           ))}
         </section>
 
-        <section style={{ display: 'grid', gap: 10 }}>
+        <section id={SETTINGS_SECTION} style={{ display: 'grid', gap: 10 }}>
           <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.inspectorTitle}</h2>
           {selected ? (
             <>

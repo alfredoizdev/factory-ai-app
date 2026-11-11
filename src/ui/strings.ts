@@ -129,6 +129,14 @@ export const strings = {
     notInRun: 'Not part of this run',
     notInRunDetail: 'Added after this run began. It will take part in the next run.',
   },
+  sidebar: {
+    label: 'Tools',
+    open: 'Open the sidebar',
+    close: 'Close the sidebar',
+    run: 'Ask the agents',
+    runTitle: 'Ask the agents',
+    runShortcut: '⌘↵ to run',
+  },
   editing: {
     paletteTitle: 'Add a block',
     paletteEmpty: 'Every block you can add is already on the canvas.',
