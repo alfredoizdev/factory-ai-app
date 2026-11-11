@@ -11,6 +11,9 @@ test('reads vitest and jest summaries, and nothing else', () => {
   expect(parseCounts('      Tests  2 failed | 5 passed (7)')).toEqual({ passed: 5, failed: 2, total: 7 })
   expect(parseCounts('Tests:       1 failed, 3 passed, 4 total')).toEqual({ passed: 3, failed: 1, total: 4 })
   expect(parseCounts('Tests:       3 passed, 3 total')).toEqual({ passed: 3, failed: 0, total: 3 })
+  // node's built-in runner (node --test) ends with a TAP-style tally.
+  expect(parseCounts('# tests 4\n# suites 0\n# pass 3\n# fail 1\n# cancelled 0\n')).toEqual({ passed: 3, failed: 1, total: 4 })
+  expect(parseCounts('ℹ tests 2\nℹ pass 2\nℹ fail 0\n')).toEqual({ passed: 2, failed: 0, total: 2 })
   expect(parseCounts('ok all good')).toBeNull()
   expect(parseCounts('')).toBeNull()
 })

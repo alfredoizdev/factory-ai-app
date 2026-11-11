@@ -33,6 +33,10 @@ export function parseCounts(output: string): TestCounts | null {
     const part = (word: string) => Number(jest[1]!.match(new RegExp(`(\\d+)\\s+${word}`))?.[1] ?? 0)
     return { passed: part('passed'), failed: part('failed'), total: Number(jest[2]) }
   }
+  // node --test: "# tests 4 / # pass 3 / # fail 1" (TAP reporter) or "ℹ tests 4 / ℹ pass 3 / ℹ fail 1" (spec reporter).
+  const tally = (word: string) => output.match(new RegExp(`^(?:#|ℹ)\\s+${word}\\s+(\\d+)\\s*$`, 'm'))?.[1]
+  const [tests, pass, fail] = [tally('tests'), tally('pass'), tally('fail')]
+  if (tests !== undefined && pass !== undefined && fail !== undefined) return { passed: Number(pass), failed: Number(fail), total: Number(tests) }
   return null
 }
 
