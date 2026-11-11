@@ -160,6 +160,13 @@ export function Canvas({
   const [issues, setIssues] = useState<ValidationIssue[]>([])
   // Null means the canvas follows the work by itself; a value means a person chose a block and it stays open.
   const [focusOverride, setFocusOverride] = useState<string | null>(null)
+  // Pointing at a block from the event bar is a request to see it, so it also becomes the focus. This is the
+  // adjust-state-while-rendering pattern, deliberately: doing it from an effect would render the lane twice.
+  const [pointedAt, setPointedAt] = useState(highlightedId)
+  if (highlightedId !== pointedAt) {
+    setPointedAt(highlightedId)
+    if (highlightedId) setFocusOverride(highlightedId)
+  }
   const [saveFailed, setSaveFailed] = useState(false)
 
   const graphRef = useRef(initialGraph)
@@ -243,10 +250,7 @@ export function Canvas({
     if (floorRef.current) floorRef.current.style.translate = `${vp.x * PARALLAX}px ${vp.y * PARALLAX}px`
   }, [])
   useEffect(() => {
-    if (!highlightedId) return
-    // Pointing at a block from the event bar is a request to see it, so it also becomes the focus.
-    setFocusOverride(highlightedId)
-    void flow.current?.fitView({ nodes: [{ id: highlightedId }], duration: 300, maxZoom: 1 })
+    if (highlightedId) void flow.current?.fitView({ nodes: [{ id: highlightedId }], duration: 300, maxZoom: 1 })
   }, [highlightedId])
 
   // The queued default is only true when there is no run. Once a run exists, a block it has no view for is
