@@ -17,13 +17,18 @@ Design a flow of blocks on a canvas and watch AI coding agents run it, live.
 npm install
 npm run db:migrate     # creates .factory/factory.db
 npm run seed           # adds the demo project; its workflow id is "demo"
-npx inngest-cli dev    # in a second terminal, see "Pressing Run needs Inngest" below
+npm run inngest        # in a second terminal, see "Pressing Run needs Inngest" below
 npm run dev            # in a third terminal
 ```
 
-Open <http://localhost:3000/canvas/demo>.
+Open <http://127.0.0.1:4100/canvas/demo>.
 
-`npm run dev` sets `INNGEST_DEV=1` for you. Without it the Inngest SDK looks for a cloud event key and
+**Port 4100, on this computer only.** The app and Inngest both listen on 127.0.0.1, so nothing on your network
+can reach them: an unattended agent sits behind the Run button. The app has its own port so it never shares one
+with another project's `next dev` (which usually takes 3000). Use the `127.0.0.1` address rather than
+`localhost`: some browsers try IPv6 first, and a different server listening there would answer instead.
+
+`npm run dev` sets `INNGEST_DEV` to the local Inngest address for you. Without it the Inngest SDK looks for a cloud event key and
 starting a run fails with "The run could not be started."
 
 ## Pressing Run needs the Inngest dev server
@@ -39,8 +44,8 @@ restricted networks), you can still use everything except executing a run:
   autosave, reloading, the database, and all unit and component tests.
 - Needs Inngest: starting a run, and therefore watching one, cancelling one, and the end-to-end test.
 
-If Inngest runs on a different app port than 3000, tell it where the app is:
-`npx inngest-cli dev -u http://localhost:<port>/api/inngest`.
+`npm run inngest` already points Inngest at the app on port 4100 and keeps it on 127.0.0.1. Started by hand,
+the equivalent is `npx inngest-cli dev --host 127.0.0.1 -u http://127.0.0.1:4100/api/inngest`.
 
 ## If the canvas looks wrong, reset the database
 

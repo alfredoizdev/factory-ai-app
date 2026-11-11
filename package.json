@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "INNGEST_DEV=1 next dev -H 127.0.0.1",
+    "dev": "INNGEST_DEV=http://127.0.0.1:8288 next dev -H 127.0.0.1 -p 4100",
     "build": "next build",
-    "start": "next start -H 127.0.0.1",
+    "start": "next start -H 127.0.0.1 -p 4100",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate": "tsx -e \"import('./src/db/client.ts').then(m => m.migrateDb())\"",
-    "seed": "tsx src/db/seed.ts"
+    "seed": "tsx src/db/seed.ts",
+    "inngest": "npx inngest-cli dev --host 127.0.0.1 -u http://127.0.0.1:4100/api/inngest"
   },
   "dependencies": {
     "@xyflow/react": "^12.12.1",
