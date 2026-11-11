@@ -85,7 +85,7 @@ test('design, run, skip, reach the human gate, reload', async ({ page }) => {
   // Run.
   await page.getByLabel('What should the agents do?').fill('Add a dark mode toggle')
   await page.getByRole('button', { name: 'Run', exact: true }).click()
-  await expect(page.getByText('Demo', { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTitle('Simulated run. No real agent did this work.')).toBeVisible({ timeout: 30_000 })
 
   // The flow particles travel the cable into Build while it runs. Sample them several times: each must sit on the
   // real cable (not just inside its bounding box) and they must advance along it.

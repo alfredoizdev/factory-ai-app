@@ -10,6 +10,10 @@ export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
   name: text('name').notNull(),
+  // One project = one local repository (design §7). Null until set; a real agent cannot run without it.
+  repoPath: text('repo_path'),
+  // The project's configured test command. It is the allow-list: nothing else runs as an evidence step.
+  testCommand: text('test_command'),
   createdAt: text('created_at').notNull(),
 })
 
@@ -48,6 +52,10 @@ export const runs = sqliteTable(
     status: text('status').notNull(),
     request: text('request').notNull(),
     providerId: text('provider_id').notNull(),
+    // The run's own working copy (one per run, never per job). Null for demo runs, which touch no repository.
+    worktreePath: text('worktree_path'),
+    branch: text('branch'),
+    baseCommit: text('base_commit'),
     createdAt: text('created_at').notNull(),
     startedAt: text('started_at'),
     finishedAt: text('finished_at'),

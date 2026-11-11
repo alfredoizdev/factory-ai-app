@@ -2,12 +2,16 @@ import { eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
-import { nodeRuns, runs, workflowVersions } from '@/db/schema'
+import { claims, evidence, nodeRuns, projects, runs, usageRecords, workflowVersions } from '@/db/schema'
 import { STAGE_ORDER, type BlockKind, type Graph } from '@/domain/graph'
 import { canTransition, rollUpRunStatus, type NodeState, type RunStatus } from '@/domain/states'
 import { appendEventSync, type DbHandle, type EventType } from '@/engine/events'
 import { APPROVAL_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
-import { DEMO_PROVIDER_ID } from '@/providers/ids'
+import { clip, redact } from '@/engine/redact'
+import type { TestRun } from '@/engine/test-runner'
+import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
+import { claudeProvider } from '@/providers/claude'
+import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { demoProvider } from '@/providers/demo'
 import type { AgentProvider } from '@/providers/types'
 import { strings } from '@/ui/strings'
@@ -31,17 +35,35 @@ export type StepApi = {
   ): Promise<{ data: { decision?: unknown } } | null>
 }
 
-export type ExecutorDeps = { resolveProvider: (providerId: string) => AgentProvider }
+export type ExecutorDeps = {
+  resolveProvider: (providerId: string) => AgentProvider
+  /** Makes the run's working copy. Only called for a provider that is not the demo. */
+  createWorktree?: (repoPath: string, runId: string) => RunWorkspace
+}
 
 const defaultDeps: ExecutorDeps = {
   resolveProvider: id => {
     if (id === DEMO_PROVIDER_ID) return demoProvider
+    if (id === CLAUDE_PROVIDER_ID) return claudeProvider
     throw new NonRetriableError(`Unknown provider ${id}`)
   },
+  createWorktree: createRunWorktree,
 }
 
+const MAX_LISTED_FILES = 20
+/** A step line is short: it says what the agent is doing, it is not a log. */
+const STEP_MAX = 240
+
 type PlannedBlock = { id: string; kind: BlockKind; enabled: boolean; timeoutMs: number }
-type Plan = { providerId: string; request: string; blocks: PlannedBlock[] }
+type Plan = {
+  providerId: string
+  request: string
+  blocks: PlannedBlock[]
+  repoPath: string | null
+  testCommand: string | null
+}
+/** What a block's execution may touch: the run's worktree (null for the demo) and the project's test command. */
+type Workspace = { workdir: string | null; testCommand: string | null; baseCommit: string | null }
 type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked' }
 
 const now = () => new Date().toISOString()
@@ -156,9 +178,10 @@ function outcomeOf(state: string): Outcome['outcome'] | null {
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
+type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined }
 type AttemptResult =
-  | { kind: 'done'; summary: string }
-  | { kind: 'error'; message: string }
+  | ({ kind: 'done' } & Done)
+  | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
   | { kind: 'ended' }
   | { kind: 'crashed'; detail: string }
   | { kind: 'timeout' }
@@ -169,7 +192,9 @@ async function runAttempt(
   block: PlannedBlock,
   request: string,
   runId: string,
+  workspace: Workspace,
   onStep: (text: string) => void,
+  onEvidence: (data: TestRun) => void,
 ): Promise<AttemptResult> {
   const controller = new AbortController()
   let closed = false
@@ -186,11 +211,19 @@ async function runAttempt(
 
   const consume = (async (): Promise<AttemptResult> => {
     try {
-      for await (const ev of provider.execute({ blockKind: block.kind, request }, { signal: controller.signal })) {
+      const input = {
+        blockKind: block.kind,
+        request,
+        workdir: workspace.workdir ?? undefined,
+        testCommand: workspace.testCommand,
+        baseCommit: workspace.baseCommit ?? undefined,
+      }
+      for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') onStep(ev.text)
-        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary }
-        else return { kind: 'error', message: ev.message }
+        else if (ev.type === 'evidence') onEvidence(ev.data)
+        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens }
+        else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
       }
       return { kind: 'ended' }
     } catch (e) {
@@ -210,18 +243,62 @@ async function runAttempt(
 
 // ---- nodes -------------------------------------------------------------------------------------------------------
 
-function skipNode(runId: string, block: PlannedBlock): Outcome {
+function skipNode(runId: string, block: PlannedBlock, reason: string = strings.run.skippedDisabled): Outcome {
   return withTx(tx => {
     const node = openNodeIn(tx, runId, block.id)
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
     if (settled) return { outcome: settled }
-    transitionNode(tx, node, 'skipped', { type: 'node.skipped', payload: { reason: strings.run.skippedDisabled } })
+    transitionNode(tx, node, 'skipped', { type: 'node.skipped', payload: { reason } })
     return { outcome: 'skipped' }
   })
 }
 
-async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, deps: ExecutorDeps): Promise<Outcome> {
+// Evidence: the full record (with the redacted output tail) goes to its own table; the event carries numbers only, so
+// the browser never receives command output. Written inside the transaction that ends the attempt, so a measurement
+// and the block's result are stored together or not at all: a crash in between cannot leave a measurement whose
+// block then re-runs and measures again.
+function writeEvidence(tx: DbHandle, node: NodeRow, blockId: string, measured: readonly TestRun[]): void {
+  if (node.state !== 'running') return
+  const { runId, id: nodeRunId } = node
+  for (const data of measured) {
+    tx.insert(evidence)
+      .values({ id: ulid(), projectId: node.projectId, runId, nodeRunId, kind: 'test_run', source: 'test-runner', dataJson: JSON.stringify(data), createdAt: now() })
+      .run()
+    appendEventSync(
+      {
+        runId,
+        nodeRunId,
+        type: 'node.evidence',
+        payload: {
+          blockId,
+          kind: 'test_run',
+          exitCode: data.exitCode,
+          signal: data.signal,
+          durationMs: data.durationMs,
+          counts: data.counts,
+          // Paths only, at most a screenful: enough to show that the tests were touched, and which.
+          changedTestFiles: data.changedTestFiles?.slice(0, MAX_LISTED_FILES).map(f => clip(f, 160)) ?? null,
+          changedTestFilesCount: data.changedTestFiles?.length ?? null,
+        },
+      },
+      tx,
+    )
+  }
+}
+
+// What a finished block leaves behind besides its state: the usage the provider reported (cost is never stored for
+// the subscription builder — not reported, never 0), and its sentence as a claim when a model wrote it.
+function recordDoneFacts(tx: DbHandle, node: NodeRow, done: Done): void {
+  if (done.tokens !== undefined) {
+    tx.insert(usageRecords).values({ id: ulid(), projectId: node.projectId, nodeRunId: node.id, tokens: done.tokens, costCents: null, createdAt: now() }).run()
+  }
+  if (done.source !== 'system' && done.summary.trim() !== '') {
+    tx.insert(claims).values({ id: ulid(), projectId: node.projectId, runId: node.runId, nodeRunId: node.id, text: done.summary, createdAt: now() }).run()
+  }
+}
+
+async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, deps: ExecutorDeps, workspace: Workspace): Promise<Outcome> {
   // Resolved before any row exists, so an unknown provider cannot strand a node.
   const provider = deps.resolveProvider(plan.providerId)
 
@@ -242,24 +319,48 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
   if ('outcome' in opened) return opened
 
   for (let attempt = freshNode(opened.id).attempt; attempt <= MAX_ATTEMPTS; attempt++) {
-    const result = await runAttempt(provider, block, plan.request, runId, text => {
-      withTx(tx => {
-        const node = freshNode(opened.id)
-        if (node.state === 'running') {
-          appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text } }, tx)
-        }
-      })
-    })
+    // Held until the attempt ends, then written in the same transaction as its outcome.
+    const measured: TestRun[] = []
+    const result = await runAttempt(
+      provider,
+      block,
+      plan.request,
+      runId,
+      workspace,
+      text => {
+        withTx(tx => {
+          const node = freshNode(opened.id)
+          // Everything a real agent prints is cleaned here, before it can reach the log or the browser.
+          const clean = clip(redact(text), STEP_MAX)
+          if (node.state === 'running') {
+            appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: clean } }, tx)
+          }
+        })
+      },
+      data => measured.push(data),
+    )
 
     if (result.kind === 'cancelled') return { outcome: 'cancelled' }
 
     if (result.kind === 'done') {
-      const done = withTx(tx =>
-        transitionNode(tx, freshNode(opened.id), 'passed', {
+      const done = withTx(tx => {
+        const node = freshNode(opened.id)
+        if (!canTransition(node.state as NodeState, 'passed')) return false
+        writeEvidence(tx, node, block.id, measured)
+        const moved = transitionNode(tx, node, 'passed', {
           type: 'node.completed',
-          payload: { summary: result.summary, summarySource: 'provider', attempt },
-        }, { summary: result.summary }),
-      )
+          payload: {
+            summary: result.summary,
+            summarySource: result.source,
+            attempt,
+            // Present only when the provider said something about usage; null inside means "not reported".
+            ...(result.tokens !== undefined ? { tokens: result.tokens } : {}),
+          },
+        }, { summary: result.summary })
+        if (!moved) return false
+        recordDoneFacts(tx, node, result)
+        return true
+      })
       return { outcome: done ? 'passed' : 'cancelled' }
     }
 
@@ -267,7 +368,9 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
       result.kind === 'timeout'
         ? 'timeout'
         : result.kind === 'error'
-          ? 'provider_error'
+          ? result.noRetry
+            ? 'tests_failed'
+            : 'provider_error'
           : result.kind === 'crashed'
             ? 'provider_crashed'
             : 'no_result'
@@ -280,17 +383,20 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
             ? strings.run.providerCrashed
             : strings.run.noResult
     // The exception's own text is kept: a failure whose cause is lost cannot be explained to the person reading it.
-    const detail = result.kind === 'crashed' ? result.detail : undefined
+    // Redacted like every other text from a provider: an exception message can carry a token or a path with one.
+    const detail = result.kind === 'crashed' ? clip(redact(result.detail), 300) : undefined
 
     // maxAttempts is 2 per node, with one deliberate exception: a timeout is never retried. A hang that already
     // used the whole timeout would double the wait before a person sees anything, and the cause is recorded
     // ('timeout') so they can retry on purpose.
-    const canRetry = attempt < MAX_ATTEMPTS && result.kind !== 'timeout'
+    // Failing tests are not retried either: running the same suite again on the same code proves nothing new.
+    const canRetry = attempt < MAX_ATTEMPTS && result.kind !== 'timeout' && !(result.kind === 'error' && result.noRetry)
     if (canRetry) {
       // The node stays running: failed is terminal in the state machine, so only the final failure is recorded as one.
       withTx(tx => {
         const node = freshNode(opened.id)
         if (node.state !== 'running') return
+        writeEvidence(tx, node, block.id, measured)
         tx.update(nodeRuns).set({ attempt: attempt + 1 }).where(eq(nodeRuns.id, node.id)).run()
         appendEventSync(
           {
@@ -313,14 +419,23 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
       continue
     }
 
-    const failed = withTx(tx =>
-      transitionNode(tx, freshNode(opened.id), 'failed', {
+    const failed = withTx(tx => {
+      const node = freshNode(opened.id)
+      if (!canTransition(node.state as NodeState, 'failed')) return false
+      writeEvidence(tx, node, block.id, measured)
+      return transitionNode(tx, node, 'failed', {
         type: 'node.failed',
         // messageSource says who wrote `message`: only a provider_error carries the provider's own words. The
         // column holds the cause code alone; the message lives in this event, the one place the canvas reads it.
-        payload: { cause, message, messageSource: cause === 'provider_error' ? 'provider' : 'system', attempt, ...(detail ? { detail } : {}) },
-      }, { failureCause: cause }),
-    )
+        payload: {
+          cause,
+          message,
+          messageSource: result.kind === 'error' ? result.source : 'system',
+          attempt,
+          ...(detail ? { detail } : {}),
+        },
+      }, { failureCause: cause })
+    })
     return { outcome: failed ? 'failed' : 'cancelled' }
   }
   return { outcome: 'failed' } // unreachable: the loop always returns
@@ -380,7 +495,28 @@ function loadPlan(runId: string): Plan {
     const t = (b.config as { timeoutMs?: unknown }).timeoutMs
     return { id: b.id, kind: b.kind, enabled: b.enabled, timeoutMs: typeof t === 'number' && t > 0 ? t : DEFAULT_TIMEOUT_MS }
   })
-  return { providerId: run.providerId, request: run.request, blocks }
+  const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
+  return { providerId: run.providerId, request: run.request, blocks, repoPath: project?.repoPath ?? null, testCommand: project?.testCommand ?? null }
+}
+
+// The run's working copy, made once before any block runs. A provider that touches no files (the demo) gets none. If the
+// copy cannot be made, the run fails with that sentence rather than letting an agent start somewhere else.
+function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Workspace | { failed: string } {
+  const provider = deps.resolveProvider(plan.providerId)
+  if (!provider.needsWorkspace) return { workdir: null, testCommand: plan.testCommand, baseCommit: null }
+  const existing = db.select().from(runs).where(eq(runs.id, runId)).get()
+  if (existing?.worktreePath) return { workdir: existing.worktreePath, testCommand: plan.testCommand, baseCommit: existing.baseCommit }
+  if (!plan.repoPath) return { failed: strings.run.noRepository }
+  try {
+    const ws = (deps.createWorktree ?? createRunWorktree)(plan.repoPath, runId)
+    withTx(tx => {
+      tx.update(runs).set({ worktreePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit }).where(eq(runs.id, runId)).run()
+      appendEventSync({ runId, type: 'run.workspace', payload: { branch: ws.branch, path: ws.path, baseCommit: ws.baseCommit } }, tx)
+    })
+    return { workdir: ws.path, testCommand: plan.testCommand, baseCommit: ws.baseCommit }
+  } catch (e) {
+    return { failed: strings.run.workspaceFailed(clip(redact(e instanceof Error ? e.message : String(e)), 300)) }
+  }
 }
 
 // Deliberately tolerant: it never reads run.created, so a run missing that event still executes.
@@ -389,10 +525,20 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   const started = await step.run('start', () => startRun(runId))
   if (!started) return // cancelled (or already finished) before it began
 
+  const prepared = await step.run('workspace', () => prepareWorkspace(runId, plan, deps))
+  if ('failed' in prepared) {
+    await step.run('fail', () => finishRun(runId, 'failed', { cause: 'workspace_failed', message: prepared.failed }))
+    return
+  }
+  const provider = deps.resolveProvider(plan.providerId)
+
   for (const block of plan.blocks) {
     let result: Outcome
+    const route = block.kind === 'human' ? undefined : provider.route?.(block.kind, { testCommand: prepared.testCommand })
     if (!block.enabled) {
       result = await step.run(`node-${block.id}`, () => skipNode(runId, block))
+    } else if (route?.mode === 'skip') {
+      result = await step.run(`node-${block.id}`, () => skipNode(runId, block, route.reason))
     } else if (block.kind === 'human') {
       result = await step.run(`node-${block.id}`, () => parkHumanNode(runId, block))
       if (result.outcome === 'parked') {
@@ -407,7 +553,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         result = await step.run(`decide-${block.id}`, () => decideHumanNode(runId, block, approved))
       }
     } else {
-      result = await step.run(`node-${block.id}`, () => runProviderNode(runId, plan, block, deps))
+      result = await step.run(`node-${block.id}`, () => runProviderNode(runId, plan, block, deps, prepared))
     }
     if (result.outcome === 'cancelled') return // run.cancelled and node.cancelled were written by cancelRun
     if (result.outcome === 'failed') {

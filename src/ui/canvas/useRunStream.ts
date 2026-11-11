@@ -32,6 +32,10 @@ type RawNode = {
   failureCause?: string
   failureMessage?: string
   failureSource?: string
+  /** From node.evidence: what the test runner measured. */
+  evidence?: NodeRunView['evidence']
+  /** From node.completed: tokens the provider reported. Undefined: it said nothing; null: it said "unknown". */
+  tokens?: number | null
 }
 export type StreamState = { nodes: Record<string, RawNode>; lastSequence: number }
 export const emptyStream: StreamState = { nodes: {}, lastSequence: 0 }
@@ -58,6 +62,13 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
     return { nodes: { ...prev.nodes, [blockId]: { ...node, steps: [...node.steps, step] } }, lastSequence: event.sequence }
   }
 
+  // node.evidence carries no state either: it attaches what a process measured to a block already seen.
+  if (event.type === 'node.evidence') {
+    const evidence = evidenceOf(payload)
+    if (!node || !evidence) return moved
+    return { nodes: { ...prev.nodes, [blockId]: { ...node, evidence } }, lastSequence: event.sequence }
+  }
+
   const state = NODE_EVENT_STATE[event.type]
   if (state === undefined) return moved
   // First sight of a block takes whatever the log says (a run may lack node.queued). After that the state
@@ -70,6 +81,7 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
     updated.reportedSummary = text(payload.summary)
     // Carry the producer's marker verbatim; summarize/claimUsed decide what it means.
     updated.claimSource = typeof payload.summarySource === 'string' ? payload.summarySource : undefined
+    if ('tokens' in payload) updated.tokens = typeof payload.tokens === 'number' ? payload.tokens : null
   }
   if (event.type === 'node.failed') {
     updated.failureCause = text(payload.cause)
@@ -81,7 +93,34 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   return { nodes: { ...prev.nodes, [blockId]: updated }, lastSequence: event.sequence }
 }
 
+const count = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null)
+
+// Only well-formed numbers pass: a malformed payload yields no evidence rather than evidence with invented parts.
+function evidenceOf(payload: Record<string, unknown>): RawNode['evidence'] {
+  const duration = count(payload.durationMs)
+  if (duration === null) return undefined
+  const exitCode = typeof payload.exitCode === 'number' && Number.isInteger(payload.exitCode) ? payload.exitCode : null
+  const raw = payload.counts as Record<string, unknown> | null | undefined
+  const passed = count(raw?.passed)
+  const failed = count(raw?.failed)
+  const total = count(raw?.total)
+  const counts = passed !== null && failed !== null && total !== null && passed + failed <= total ? { passed, failed, total } : null
+  const signal = typeof payload.signal === 'string' ? payload.signal : null
+  // Absent (an older event) and null (could not check) both mean unknown; only a real list counts as checked.
+  const files = Array.isArray(payload.changedTestFiles) ? payload.changedTestFiles.filter((f): f is string => typeof f === 'string') : null
+  const filesCount = files === null ? null : Math.max(count(payload.changedTestFilesCount) ?? 0, files.length)
+  return { counts, exitCode, signal, durationMs: duration, changedTestFiles: files, changedTestFilesCount: filesCount }
+}
+
 const KINDS: ReadonlySet<string> = new Set<BlockKind>(['input', 'plan', 'build', 'tests', 'review', 'approve', 'human', 'ship'])
+
+// Evidence and usage travel to the card as they were recorded; usage cost is never reported for a real builder.
+function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage'> {
+  return {
+    ...(n.evidence ? { evidence: n.evidence } : {}),
+    ...(n.tokens !== undefined ? { usage: { tokens: n.tokens, costCents: null } } : {}),
+  }
+}
 
 export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[] = []): Record<string, NodeRunView> {
   const out: Record<string, NodeRunView> = {}
@@ -89,7 +128,7 @@ export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[]
     const kind = blocks.find(b => b.id === blockId)?.kind
     if (kind === undefined || !KINDS.has(kind)) {
       // Without the block's kind there is no honest per-kind sentence, and nothing to attribute a claim to.
-      out[blockId] = { blockId, state: n.state, summary: strings.summary.generic[n.state], summaryIsClaim: false, steps: n.steps }
+      out[blockId] = { blockId, state: n.state, summary: strings.summary.generic[n.state], summaryIsClaim: false, steps: n.steps, ...facts(n) }
       continue
     }
     const failed = n.state === 'failed'
@@ -100,8 +139,10 @@ export function toViews(nodes: Record<string, RawNode>, blocks: readonly Block[]
       claimSource: failed ? n.failureSource : n.claimSource,
       cause: failed ? n.failureCause : undefined,
       skippedReason: n.skippedReason,
+      // Measured counts outrank any sentence: summarize builds its line from them first.
+      counts: n.evidence?.counts ?? undefined,
     }
-    out[blockId] = { blockId, state: n.state, summary: summarize(input), summaryIsClaim: claimUsed(input), steps: n.steps }
+    out[blockId] = { blockId, state: n.state, summary: summarize(input), summaryIsClaim: claimUsed(input), steps: n.steps, ...facts(n) }
   }
   return out
 }

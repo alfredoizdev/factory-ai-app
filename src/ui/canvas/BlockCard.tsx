@@ -13,11 +13,28 @@ export type NodeRunView = {
   steps: string[]
   /** Absent: no usage data for this node. Present with nulls: usage exists but was not reported. */
   usage?: { tokens: number | null; costCents: number | null }
+  /** What a non-model process measured (a test run). Absent: nothing was measured for this block. */
+  evidence?: RunEvidence
+}
+
+export type RunEvidence = {
+  counts: { passed: number; failed: number; total: number } | null
+  /** Null when the process did not exit on its own. */
+  exitCode: number | null
+  /** The signal that killed it, when that is how it ended. */
+  signal?: string | null
+  durationMs: number
+  /**
+   * Test files or test configuration this run changed (up to a screenful), and how many in all. A non-empty list means
+   * the agent touched what judges it, so the result is shown with that said. Null: it could not be checked.
+   */
+  changedTestFiles?: string[] | null
+  changedTestFilesCount?: number | null
 }
 
 /** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
 export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'summaryIsClaim' | 'usage'> &
-  Partial<Pick<NodeRunView, 'steps'>>
+  Partial<Pick<NodeRunView, 'steps' | 'evidence'>>
 
 // The domain and visual vocabularies are separate on purpose.
 const VISUAL: Record<NodeState, VisualState> = {
@@ -262,6 +279,8 @@ export function BlockCard({
         {!block.enabled ? strings.editing.disabledLine : hasSummary ? view.summary : strings.canvas.noResultLine}
       </p>
 
+      {view.evidence && <EvidenceStrip evidence={view.evidence} />}
+
       {issues.map(message => (
         <p
           key={message}
@@ -481,6 +500,99 @@ export function SpineCard({ block, view, selected = false }: { block: Block; vie
       >
         {view ? SPINE_GLYPH[view.state] : '·'}
       </span>
+    </div>
+  )
+}
+
+/** Above this many tests, one pip each stops being countable at a glance, so the strip shows a bar instead. */
+const MAX_PIPS = 30
+
+function formatDuration(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
+}
+
+/**
+ * Only what a process measured: the counts it printed, its exit code, how long it took. Nothing a model said can
+ * reach this strip — it is drawn from evidence records alone, which is what makes it worth trusting.
+ */
+export function EvidenceStrip({ evidence }: { evidence: RunEvidence }) {
+  const c = evidence.counts
+  const touched = evidence.changedTestFiles ?? []
+  const touchedCount = evidence.changedTestFilesCount ?? touched.length
+  // The check mark says "this was measured and nothing undercuts it". A run that changed its own tests loses it.
+  const clean = touchedCount === 0 && evidence.changedTestFiles !== null
+  return (
+    <div
+      data-testid="evidence-strip"
+      style={{
+        marginTop: 12,
+        background: 'rgba(124, 160, 255, 0.045)',
+        border: `1px solid ${theme.lineSoft}`,
+        borderRadius: 10,
+        padding: '9px 11px 10px',
+      }}
+    >
+      <div style={{ ...CAPS, fontSize: 9.5, letterSpacing: '0.14em', color: '#7d8798', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <span aria-hidden="true" style={{ color: clean ? theme.passed : theme.waiting }}>{clean ? '✓' : '!'}</span>
+        {strings.canvas.evidence}
+      </div>
+      {touchedCount > 0 && (
+        <div data-testid="tests-changed" role="note" style={{ fontSize: 12, color: theme.waiting, margin: '0 0 8px', lineHeight: 1.4 }}>
+          {strings.canvas.testsChanged(touchedCount)}{' '}
+          <span style={{ fontFamily: MONO, fontSize: 11.5, color: '#e7dcc4' }}>
+            {touched.slice(0, 3).join(', ')}
+            {touchedCount > 3 ? ` ${strings.canvas.andMore(touchedCount - 3)}` : ''}
+          </span>
+        </div>
+      )}
+      {evidence.changedTestFiles === null && (
+        <div data-testid="tests-unchecked" style={{ fontSize: 12, color: theme.skipped, margin: '0 0 8px' }}>
+          {strings.canvas.testsUnchecked}
+        </div>
+      )}
+      {c && c.total > 0 && (
+        <div
+          role="img"
+          aria-label={strings.canvas.evidenceCounts(c.passed, c.failed, c.total)}
+          style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 8 }}
+        >
+          {c.total <= MAX_PIPS ? (
+            Array.from({ length: c.total }, (_, i) => (
+              <span
+                key={i}
+                data-pip={i < c.passed ? 'passed' : i < c.passed + c.failed ? 'failed' : 'other'}
+                style={{
+                  width: 7,
+                  height: 13,
+                  borderRadius: 2,
+                  flex: '0 0 auto',
+                  background: i < c.passed ? theme.passed : i < c.passed + c.failed ? theme.failed : '#30394a',
+                }}
+              />
+            ))
+          ) : (
+            <span style={{ display: 'flex', flex: 1, height: 8, borderRadius: 4, overflow: 'hidden', background: '#30394a' }}>
+              <span style={{ width: `${(c.passed / c.total) * 100}%`, background: theme.passed }} />
+              <span style={{ width: `${(c.failed / c.total) * 100}%`, background: theme.failed }} />
+            </span>
+          )}
+          <span style={{ fontFamily: MONO, fontSize: 11.5, color: theme.dim, marginLeft: 7, fontWeight: 600 }}>
+            {strings.canvas.evidenceCounts(c.passed, c.failed, c.total)}
+          </span>
+        </div>
+      )}
+      <dl style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 14px', margin: 0, fontFamily: MONO, fontSize: 11.5, color: theme.dim }}>
+        <span>
+          <dt style={{ display: 'inline' }}>{strings.canvas.exitCode} </dt>
+          <dd style={{ display: 'inline', margin: 0, color: evidence.exitCode === 0 ? theme.passed : theme.failed, fontWeight: 600 }}>
+            {evidence.exitCode !== null ? evidence.exitCode : evidence.signal ? evidence.signal : strings.canvas.notReported}
+          </dd>
+        </span>
+        <span>
+          <dt style={{ display: 'inline' }}>{strings.canvas.took} </dt>
+          <dd style={{ display: 'inline', margin: 0, color: '#d6dce6', fontWeight: 600 }}>{formatDuration(evidence.durationMs)}</dd>
+        </span>
+      </dl>
     </div>
   )
 }

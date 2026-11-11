@@ -106,6 +106,14 @@ export const strings = {
     },
     stateAria: (label: string) => `State: ${label}`,
     claimMarker: 'AI says',
+    evidence: 'Evidence',
+    evidenceCounts: (passed: number, failed: number, total: number) =>
+      failed > 0 ? `${passed} of ${total} passed, ${failed} failed` : `${passed} of ${total} passed`,
+    exitCode: 'exit',
+    testsChanged: (n: number) => `This run changed ${n === 1 ? '1 test file' : `${n} test files`}, so the result also judges those changes:`,
+    andMore: (n: number) => `and ${n} more`,
+    testsUnchecked: 'Whether this run changed its own tests could not be checked.',
+    took: 'took',
     claimTitle: 'This sentence was written by an AI. It has not been verified.',
     cost: 'Cost',
     tokens: 'Tokens',
@@ -137,16 +145,45 @@ export const strings = {
     saveFailed: 'Your latest change could not be saved. It will be retried on your next edit.',
     unattributedIssues: 'Problems with the flow',
   },
+  settings: {
+    noProject: 'That project does not exist.',
+    notAbsolute: 'Give the full path to the repository, starting with /.',
+    missing: 'Nothing exists at that path.',
+    notRepo: 'That folder is not a git repository.',
+    notRoot: 'That folder is inside a repository. Give the repository\'s top folder.',
+    noCommits: 'That repository has no commits yet, so there is nothing to copy for a run.',
+    agentLabel: 'Agent',
+    agentDemo: 'Demo',
+    agentClaude: 'Claude',
+    repoLabel: 'Repository',
+    repoPlaceholder: '/Users/you/code/your-project',
+    testLabel: 'Test command',
+    testPlaceholder: 'npm test',
+    save: 'Save',
+    saved: 'Saved.',
+    saveFailed: 'The settings could not be saved.',
+    notSandboxed: 'Claude works on its own in a separate copy of the repository. It is not sandboxed.',
+    needsRepo: 'Set the repository before running Claude.',
+  },
   errors: {
     workflowNotFound: 'That workflow does not exist.',
     runNotFound: 'That run does not exist.',
     nothingPublished: 'Publish the workflow before starting a run.',
+    repoNotSet: 'Set a repository for this project before running Claude.',
     cannotPublish: 'The workflow has problems that must be fixed before it can be published.',
     crossSite: 'That request came from another site, so it was refused.',
+    notLocal: 'This app only answers on this computer (localhost), so the request was refused.',
     invalidBody: 'The request was not in the expected shape.',
   },
   run: {
     skippedDisabled: 'This block is switched off, so it was skipped.',
+    // Blocks the real agent does not do yet. Said plainly on the card instead of being faked.
+    notYet: {
+      plan: 'The editable plan arrives in the next step of this milestone.',
+      review: 'Reviews arrive in milestone 4.',
+      ship: 'Shipping arrives in milestone 6.',
+      noTestCommand: 'No test command is set for this project, so nothing was run.',
+    },
     retrying: 'That attempt failed. Trying once more.',
     timedOut: (seconds: number) => `No result after ${seconds} seconds, so the block was stopped.`,
     noResult: 'The agent stopped without a result.',
@@ -155,6 +192,10 @@ export const strings = {
     resumed: 'A person approved. The run continues.',
     internalFailure: 'The run stopped because of an internal error.',
     notReached: 'An earlier step stopped the run, so this block never started.',
+    noRepository: 'This project has no repository set, so the agent was not started.',
+    testsDidNotStart: (command: string) => `The test command could not be started: ${command}`,
+    testsKilled: (signal: string) => `The tests were killed (${signal}) before they finished.`,
+    workspaceFailed: (detail: string) => `The working copy for this run could not be made: ${detail}`,
     couldNotStart: 'The run could not be started. Nothing ran.',
     demoBadge: 'Demo',
     demoTitle: 'Simulated run. No real agent did this work.',
@@ -185,12 +226,32 @@ export const strings = {
     pointItOutAria: (label: string) => `Point it out on the canvas: ${label}`,
     started: 'Started.',
     waiting: 'Stopped and waiting for a person.',
+    measured: (counts: string | null, exitCode: number | null) => {
+      const head = counts ? `Tests measured: ${counts}.` : 'Tests measured.'
+      return exitCode === null ? head : `${head} Exit code ${exitCode}.`
+    },
   },
   demo: {
     projectName: 'Demo project',
     workflowName: 'Demo workflow',
   },
   providers: {
+    claude: {
+      buildPrompt: (request: string) =>
+        [
+          request,
+          '',
+          'Work only inside the current directory: it is a separate copy of the repository made for this task.',
+          'Do not commit, push or create branches. Leave the changes in the working tree.',
+          'When you are done, reply with one plain sentence saying what you changed.',
+        ].join('\n'),
+      notFound: 'The claude command was not found on this computer.',
+      noWorkdir: 'This run has no working copy, so the agent was not started.',
+      exitedWithoutResult: (code: number | null) =>
+        code === null ? 'The agent was stopped before it reported a result.' : `The agent exited (code ${code}) without reporting a result.`,
+      recordingRequest: 'Recording the request',
+      runningTests: (command: string) => `Running ${command}`,
+    },
     demo: {
       steps: {
         input: ['Recording the request', 'Checking it is not empty'],

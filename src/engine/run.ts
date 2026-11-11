@@ -2,17 +2,17 @@ import { createHash } from 'node:crypto'
 import { desc, eq, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
-import { nodeRuns, runs, workflows, workflowVersions } from '@/db/schema'
+import { nodeRuns, projects, runs, workflows, workflowVersions } from '@/db/schema'
 import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
-import { DEMO_PROVIDER_ID } from '@/providers/ids'
+import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
 
 // The boundary between designing and running. The draft is mutable; publishing freezes a version;
 // a run binds to a frozen version and never reads the draft again.
 
-// Every run in this milestone is simulated. The UI's Demo badge checks runs.providerId against this constant;
+// A run is the demo unless a real agent is chosen. The UI's Demo badge checks runs.providerId against this constant;
 // it is defined in a dependency-free module and re-exported here so existing imports keep working.
 export { DEMO_PROVIDER_ID }
 
@@ -25,6 +25,13 @@ export class WorkflowNotFoundError extends Error {
 export class RunNotFoundError extends Error {
   constructor(id: string) {
     super(`${strings.errors.runNotFound} (${id})`)
+  }
+}
+
+export class RepoNotSetError extends Error {
+  constructor() {
+    super(strings.errors.repoNotSet)
+    this.name = 'RepoNotSetError'
   }
 }
 
@@ -115,11 +122,21 @@ export async function publishVersion(workflowId: string): Promise<{ versionId: s
   )
 }
 
+export type RunProviderId = typeof DEMO_PROVIDER_ID | typeof CLAUDE_PROVIDER_ID
+
 export async function createRun(input: {
   workflowId: string
   request: string
+  /** Absent: the demo. A real agent is only ever chosen explicitly. */
+  providerId?: RunProviderId
 }): Promise<{ runId: string; versionId: string }> {
   const wf = requireWorkflow(input.workflowId)
+  const providerId = input.providerId ?? DEMO_PROVIDER_ID
+  // Refused before anything is written: a real run with nowhere to work would only fail later, after a row exists.
+  if (providerId === CLAUDE_PROVIDER_ID) {
+    const project = db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, wf.projectId)).get()
+    if (!project?.repoPath) throw new RepoNotSetError()
+  }
   // Latest published version only. The draft is never consulted.
   const version = db
     .select()
@@ -142,7 +159,7 @@ export async function createRun(input: {
           versionId: version.id,
           status: 'queued',
           request: input.request,
-          providerId: DEMO_PROVIDER_ID,
+          providerId,
           createdAt: now(),
         })
         .run()

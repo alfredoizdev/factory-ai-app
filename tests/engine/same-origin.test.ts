@@ -38,6 +38,13 @@ describe('the guard', () => {
     ['same-site but another origin (a sibling subdomain or port)', { host: HOST, origin: 'http://localhost:4000', 'sec-fetch-site': 'same-site' }, true],
     ['a sandboxed page, origin "null"', { host: HOST, origin: 'null' }, true],
     ['a forged Origin with no fetch metadata', { host: HOST, origin: 'https://evil.example' }, true],
+    // The app only answers to a loopback name. A request addressed to anything else came over the network (another
+    // machine on the wifi) or through DNS rebinding (a site that points its own name at 127.0.0.1) — refused even
+    // when its Origin matches its Host, because a rebound page's Origin always does.
+    ['another machine on the network, no browser headers', { host: '10.0.0.118:3000' }, true],
+    ['a DNS-rebound page whose Origin matches its own Host', { host: 'evil.example:3000', origin: 'http://evil.example:3000', 'sec-fetch-site': 'same-origin' }, true],
+    ['127.0.0.1', { host: '127.0.0.1:3000', origin: 'http://127.0.0.1:3000', 'sec-fetch-site': 'same-origin' }, false],
+    ['IPv6 loopback', { host: '[::1]:3000' }, false],
     ['fetch metadata that says cross-site with a matching Origin', { host: HOST, origin: `http://${HOST}`, 'sec-fetch-site': 'cross-site' }, true],
   ])('%s', (_n, headers, refused) => {
     const res = rejectCrossSite(req('POST', headers))

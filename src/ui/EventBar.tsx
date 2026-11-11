@@ -30,6 +30,16 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
   if (event.type === 'node.step') return { text: str(payload.text) ?? '', isClaim: false }
   if (event.type === 'node.started') return { text: strings.events.started, isClaim: false }
   if (event.type === 'node.waiting_approval') return { text: strings.events.waiting, isClaim: false }
+  if (event.type === 'node.evidence') {
+    // A measured fact: never a claim. Built from the numbers in the payload, the only part the event carries.
+    const c = payload.counts as { passed?: unknown; failed?: unknown; total?: unknown } | null | undefined
+    const counts =
+      c && typeof c.passed === 'number' && typeof c.failed === 'number' && typeof c.total === 'number'
+        ? strings.canvas.evidenceCounts(c.passed, c.failed, c.total)
+        : null
+    const exit = typeof payload.exitCode === 'number' ? payload.exitCode : null
+    return { text: strings.events.measured(counts, exit), isClaim: false }
+  }
   const state = EVENT_STATE[event.type]
   if (state === undefined) return { text: '', isClaim: false }
   const input: SummaryInput = {
@@ -47,7 +57,8 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
 }
 
 export function EventBar({ event, block, onPoint }: { event: Wire; block: Block; onPoint: (blockId: string) => void }) {
-  const state = EVENT_STATE[event.type] ?? 'running' // a step happens while the block runs
+  // A step or a measurement happens while the block runs.
+  const state = EVENT_STATE[event.type] ?? 'running'
   const colour = theme[visualStateOf(state)]
   const { text, isClaim } = describeEvent(event, block)
   return (
