@@ -20,7 +20,7 @@ export function shipView(blockId: string, ship: ShipState): NodeRunView | null {
       const done = ship.checks.filter(c => c.state !== 'pending').length
       return { ...base, state: 'running', summary: s.cardChecking(done, ship.checks.length) }
     }
-    return { ...base, state: 'waiting_approval', summary: s.cardReady }
+    return { ...base, state: 'waiting_approval', summary: ship.onHold ? s.cardOnHold : s.cardReady }
   }
   const after = [...steps, s.merged, ...ship.deploy.map(d => `${d.name}: ${s.checkState[d.state]}`)]
   if (ship.deploy.some(d => d.state === 'failed')) return { ...base, steps: after, state: 'failed', summary: s.deployFailed }

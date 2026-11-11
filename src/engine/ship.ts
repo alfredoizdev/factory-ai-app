@@ -35,6 +35,8 @@ export type ShipState = {
   /** After the merge: what reported on the merged commit (a deploy, CI on main). Empty: nothing reported. */
   deploy: Check[]
   mergedAt: string | null
+  /** The person said: everything is ready, but do not merge yet. Never true once merged or closed. */
+  onHold: boolean
 }
 
 export class ShipError extends Error {
@@ -63,7 +65,7 @@ export function checkOf(c: Rollup): Check {
   }
 }
 
-function recordOf(runId: string, type: 'run.pr_opened' | 'run.merged'): Record<string, unknown> | null {
+function recordOf(runId: string, type: 'run.pr_opened' | 'run.merged' | 'run.on_hold'): Record<string, unknown> | null {
   const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)).get()
   return row ? (JSON.parse(row.payloadJson) as Record<string, unknown>) : null
 }
@@ -121,7 +123,7 @@ export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promis
 /** Where the pull request stands: its checks while open, what reported on the merged commit once merged. */
 export async function shipState(runId: string, gh: Gh = defaultGh): Promise<ShipState> {
   const opened = recordOf(runId, 'run.pr_opened')
-  const empty: ShipState = { pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null }
+  const empty: ShipState = { pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null, onHold: false }
   if (!opened) return empty
   const { repo } = repoOf(runId)
   let view: { number: number; url: string; state: string; mergeable: string; statusCheckRollup: Rollup[]; mergeCommit: { oid: string } | null; mergedAt: string | null }
@@ -152,7 +154,28 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
     checksFailed: checks.some(c => c.state === 'failed'),
     deploy,
     mergedAt: view.mergedAt ?? null,
+    onHold: state === 'open' && isOnHold(runId),
   }
+}
+
+/** Whether the person's last word on this run's pull request was "hold", and it was not merged since. */
+export function isOnHold(runId: string): boolean {
+  if (recordOf(runId, 'run.merged')) return false
+  return recordOf(runId, 'run.on_hold')?.held === true
+}
+
+/**
+ * Puts the open pull request on hold, or takes it off: everything stays ready, nothing is merged, and the task list
+ * says it is waiting on the person. Only a label the person sets; merging is still their own click.
+ */
+export async function setHold(runId: string, held: boolean, gh: Gh = defaultGh): Promise<ShipState> {
+  const current = await shipState(runId, gh)
+  if (!current.pr) throw new ShipError(strings.ship.openFirst)
+  if (current.pr.state !== 'open') throw new ShipError(current.pr.state === 'merged' ? strings.ship.merged : strings.ship.closed)
+  if (current.onHold !== held) {
+    db.transaction(tx => void appendEventSync({ runId, type: 'run.on_hold', payload: { held } }, tx), { behavior: 'immediate' })
+  }
+  return { ...current, onHold: held }
 }
 
 /**

@@ -43,7 +43,7 @@ async function finishedRun(options: { approved?: boolean } = {}) {
   if (options.approved !== false) {
     db.insert(approvals).values({ id: ulid(), projectId, runId, nodeRunId: human.id, decision: 'approved', actor: 'me', diffHash: 'h', createdAt: now(), consumedAt: now() }).run()
   }
-  return { runId, repo, wt: ws.path, branch: ws.branch, base: ws.baseCommit }
+  return { runId, repo, workflowId, wt: ws.path, branch: ws.branch, base: ws.baseCommit }
 }
 
 test('an approved change lands in the project uncommitted, and is kept as a commit on its own local branch', async () => {
@@ -510,6 +510,27 @@ describe('shipping through GitHub', () => {
     expect(calls.find(c => c[1] === 'merge')).toEqual(['pr', 'merge', '5', '--squash'])
     expect(merged.pr!.state).toBe('merged')
     expect(merged.deploy).toEqual([{ name: 'Deploy', state: 'passed', url: 'https://site' }])
+  })
+
+  test('a ready pull request can be put on hold and taken off it; the task list says so; merging ends the hold', async () => {
+    const { openPullRequest, mergePullRequest, setHold, ShipError } = await import('@/engine/ship')
+    const { listRuns } = await import('@/engine/run')
+    const r = await shippable()
+    let view: View = { number: 6, url: 'u', state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [], mergeCommit: null, mergedAt: null }
+    const { gh } = fakeGh(() => view, args => (args[1] === 'merge' ? ((view = { ...view, state: 'MERGED', mergeCommit: { oid: 'abc' }, mergedAt: 'now' }), '') : undefined))
+    const onHoldInList = () => listRuns(r.workflowId).find(x => x.runId === r.runId)!.onHold
+    // Nothing to hold before there is a pull request.
+    await expect(setHold(r.runId, true, gh)).rejects.toBeInstanceOf(ShipError)
+    expect((await openPullRequest(r.runId, gh)).onHold).toBe(false)
+    expect(onHoldInList()).toBe(false)
+    expect((await setHold(r.runId, true, gh)).onHold).toBe(true)
+    expect(onHoldInList()).toBe(true)
+    expect((await setHold(r.runId, false, gh)).onHold).toBe(false)
+    expect(onHoldInList()).toBe(false)
+    await setHold(r.runId, true, gh)
+    const merged = await mergePullRequest(r.runId, gh)
+    expect(merged.onHold).toBe(false)
+    expect(onHoldInList()).toBe(false)
   })
 
   test('no gh on the computer is said plainly', async () => {

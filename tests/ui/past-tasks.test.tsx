@@ -104,3 +104,11 @@ test('with no task open the canvas says so and offers the past tasks', async () 
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.history.openPast) }))
   expect(screen.getByTestId('tasks-drawer')).toHaveAttribute('data-open', 'true')
 })
+
+test('a task whose pull request is on hold says so instead of its status', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ runs: [{ ...runs[0], onHold: true }, { ...runs[1], onHold: false }] }))))
+  render(<PastTasks workflowId="w1" currentRunId={null} refreshKey="x" onOpen={() => {}} />)
+  expect(await screen.findByTestId('on-hold-r2')).toHaveTextContent(strings.history.onHold)
+  expect(screen.getByTestId('past-task-r2')).not.toHaveTextContent(strings.run.status.completed)
+  expect(screen.queryByTestId('on-hold-r1')).toBeNull()
+})

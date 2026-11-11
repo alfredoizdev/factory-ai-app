@@ -8,6 +8,7 @@ import { nodeRuns, projects, runs, workflows, workflowVersions } from '@/db/sche
 import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
+import { isOnHold } from '@/engine/ship'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
 
@@ -283,6 +284,8 @@ export type RunSummary = {
   branch: string | null
   providerId: string
   parentRunId: string | null
+  /** Its pull request is ready and the person put it on hold. */
+  onHold: boolean
 }
 
 /** A workflow's past tasks, newest first: what was asked, when, how it ended, and the branch it was kept on. */
@@ -302,4 +305,5 @@ export function listRuns(workflowId: string, limit = 50): RunSummary[] {
     .orderBy(desc(sql`rowid`))
     .limit(limit)
     .all()
+    .map(r => ({ ...r, onHold: isOnHold(r.runId) }))
 }

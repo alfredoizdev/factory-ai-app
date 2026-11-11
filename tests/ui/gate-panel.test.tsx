@@ -188,3 +188,24 @@ test('shipping: open the pull request, wait for its checks, and merge only after
   expect(await screen.findByText(strings.ship.merged, { exact: false })).toBeInTheDocument()
   expect(screen.getByText(strings.ship.live, { exact: false })).toBeInTheDocument()
 })
+
+test('shipping: a ready pull request can be put on hold and taken off it, and merge stays on offer', async () => {
+  const { ShipSection } = await import('@/ui/canvas/ShipSection')
+  let ship: Record<string, unknown> = { pr: { number: 9, url: 'https://gh/pr/9', state: 'open', conflicts: false }, checks: [], checksDone: true, checksFailed: false, deploy: [], mergedAt: null, onHold: false }
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      const { action } = JSON.parse(String(init.body)) as { action: string }
+      ship = { ...ship, onHold: action === 'hold' }
+    }
+    return new Response(JSON.stringify(ship))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  render(<ShipSection runId="r1" button={() => ({})} />)
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(strings.ship.hold) }))
+  expect(await screen.findByTestId('on-hold')).toHaveTextContent(strings.ship.onHold)
+  expect(screen.getByRole('button', { name: strings.ship.merge })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.ship.unhold) }))
+  await waitFor(() => expect(screen.queryByTestId('on-hold')).toBeNull())
+  const sent = fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').map(([, i]) => JSON.parse(String(i!.body)).action)
+  expect(sent).toEqual(['hold', 'unhold'])
+})

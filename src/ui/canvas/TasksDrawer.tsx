@@ -5,7 +5,7 @@ import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { useReducedMotion } from './useReducedMotion'
 
-export const DRAWER_WIDTH = 380
+export const DRAWER_WIDTH = 460
 
 /**
  * A panel that slides in from the right over the canvas. It closes with its ✕, with Escape, or with a click on the

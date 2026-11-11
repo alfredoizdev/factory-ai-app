@@ -139,8 +139,18 @@ export function PastTasks({
                 {r.request}
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: theme.dim }}>
-                <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: COLOUR[status] ?? theme.skipped }} />
-                {strings.run.status[status]}
+                {r.onHold ? (
+                  // On hold: ready to merge, waiting on the person. A pause mark, in the waiting colour.
+                  <span data-testid={`on-hold-${r.runId}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: theme.waiting, fontWeight: 700 }}>
+                    <PauseIcon />
+                    {strings.history.onHold}
+                  </span>
+                ) : (
+                  <>
+                    <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: COLOUR[status] ?? theme.skipped }} />
+                    {strings.run.status[status]}
+                  </>
+                )}
                 <span>·</span>
                 {whenText(r.createdAt)}
                 {r.providerId === DEMO_PROVIDER_ID && <span style={{ color: theme.waiting }}>· {strings.history.demo}</span>}
@@ -171,5 +181,15 @@ export function PastTasks({
       })}
     </ul>
     </>
+  )
+}
+
+/** Pause: two bars, in the text's own colour. */
+export function PauseIcon({ size = 10 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="currentColor" aria-hidden="true">
+      <rect x="3.5" y="2.5" width="3" height="11" rx="1" />
+      <rect x="9.5" y="2.5" width="3" height="11" rx="1" />
+    </svg>
   )
 }

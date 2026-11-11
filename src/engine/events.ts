@@ -20,6 +20,8 @@ export type RunEventType =
   | 'run.installed'
   | 'run.pr_opened'
   | 'run.merged'
+  // The person put a ready pull request on hold (held: true), or took it off hold (held: false).
+  | 'run.on_hold'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'
   | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'

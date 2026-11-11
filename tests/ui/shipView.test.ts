@@ -2,7 +2,7 @@ import { shipView } from '@/ui/canvas/shipView'
 import { strings } from '@/ui/strings'
 import type { ShipState } from '@/engine/ship'
 
-const base: ShipState = { pr: { number: 4, url: 'u', state: 'open', conflicts: false }, checks: [], checksDone: true, checksFailed: false, deploy: [], mergedAt: null }
+const base: ShipState = { pr: { number: 4, url: 'u', state: 'open', conflicts: false }, checks: [], checksDone: true, checksFailed: false, deploy: [], mergedAt: null, onHold: false }
 
 test('nothing to show before a pull request exists', () => {
   expect(shipView('ship', { ...base, pr: null })).toBeNull()
@@ -27,4 +27,10 @@ test('merged: deploying, then live; with nothing reporting, just merged', () => 
   expect(live).toMatchObject({ state: 'passed', summary: strings.ship.cardLive })
   expect(live.steps).toContain('Vercel: passed')
   expect(shipView('ship', merged)).toMatchObject({ state: 'passed', summary: strings.ship.merged })
+})
+
+test('a ready pull request on hold still waits on the person, and says it is on hold', () => {
+  const view = shipView('ship', { ...base, onHold: true })!
+  expect(view.state).toBe('waiting_approval')
+  expect(view.summary).toBe(strings.ship.cardOnHold)
 })

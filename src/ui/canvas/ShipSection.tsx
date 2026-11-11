@@ -5,6 +5,7 @@ import type { Check, ShipState } from '@/engine/ship'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
+import { PauseIcon } from './PastTasks'
 
 const POLL_MS = 8000
 /** After a merge, how long to keep asking GitHub before saying nothing reported. */
@@ -62,7 +63,7 @@ export function ShipSection({
     },
     [onState],
   )
-  const [busy, setBusy] = useState<'open' | 'merge' | null>(null)
+  const [busy, setBusy] = useState<'open' | 'merge' | 'hold' | 'unhold' | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -87,7 +88,7 @@ export function ShipSection({
     return () => clearInterval(t)
   }, [waiting, load])
 
-  async function act(action: 'open' | 'merge') {
+  async function act(action: 'open' | 'merge' | 'hold' | 'unhold') {
     setBusy(action)
     setError(null)
     try {
@@ -129,12 +130,29 @@ export function ShipSection({
               {state.checksDone && state.checks.length > 0 && !state.checksFailed && <span style={{ color: theme.passed }}>✓ {strings.ship.allPassed}</span>}
               {state.checksFailed && <span style={{ color: theme.failed }}>{strings.ship.someFailed}</span>}
               {state.pr.conflicts && <span style={{ color: theme.failed }}>{strings.ship.conflicts}</span>}
+              {state.onHold && (
+                <div data-testid="on-hold" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: 8, borderRadius: 8, border: `1px solid ${theme.tint('waiting', 0.5)}`, background: theme.tint('waiting', 0.08), color: theme.waiting }}>
+                  <span style={{ marginTop: 2 }}><PauseIcon size={12} /></span>
+                  <span style={{ lineHeight: 1.4 }}>{strings.ship.onHold}</span>
+                </div>
+              )}
               {state.checksDone && !state.checksFailed && !state.pr.conflicts && !confirming && (
                 <>
-                  <button type="button" disabled={busy !== null} onClick={() => setConfirming(true)} style={button(busy)}>
-                    {strings.ship.merge}
-                  </button>
-                  <div style={{ ...hint, marginTop: -2 }}>{strings.ship.mergeWhat}</div>
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" disabled={busy !== null} onClick={() => setConfirming(true)} style={{ ...button(busy), flex: 1 }}>
+                      {strings.ship.merge}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={() => void act(state.onHold ? 'unhold' : 'hold')}
+                      style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, border: `1px solid ${theme.tint('waiting', 0.6)}`, background: 'transparent', color: theme.waiting, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}
+                    >
+                      {busy === 'hold' || busy === 'unhold' ? <WorkingSpinner blockId="ship-hold" size={13} /> : <PauseIcon size={11} />}
+                      {busy === 'hold' ? strings.ship.holding : state.onHold ? strings.ship.unhold : strings.ship.hold}
+                    </button>
+                  </span>
+                  <div style={{ ...hint, marginTop: -2 }}>{state.onHold ? strings.ship.mergeWhat : `${strings.ship.mergeWhat} ${strings.ship.holdWhat}`}</div>
                 </>
               )}
               {confirming && (
