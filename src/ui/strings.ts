@@ -214,9 +214,9 @@ export const strings = {
   },
   followUp: {
     title: 'Another change',
-    hint: 'It starts from this approved change and works only on what you ask now.',
+    hint: 'Continue builds on this approved change. Run, in the top bar, starts fresh from your project.',
     placeholder: 'What to change next',
-    start: 'Reopen with this change',
+    start: 'Continue from this change',
     starting: 'Starting the follow-up…',
     needNote: 'Say what to change next.',
     notEligible: 'Only a finished run that a person approved can be continued.',
@@ -232,6 +232,9 @@ export const strings = {
     uploading: 'Attaching…',
     dropHere: 'Drop images to attach them',
     failed: 'The image could not be attached.',
+  },
+  card: {
+    working: 'The agents are working on it. You can watch each step on the canvas.',
   },
   sidebar: {
     label: 'Tools',

@@ -16,7 +16,7 @@ beforeEach(() => window.localStorage.clear())
 const settings = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false }
 const page = () => render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={settings} />)
 
-test('the request is a large box in the sidebar, which starts open', () => {
+test('the request is a large box in the command card, and the sidebar starts open', () => {
   page()
   const box = screen.getByLabelText(strings.run.requestLabel)
   expect(box.tagName).toBe('TEXTAREA')
@@ -37,13 +37,12 @@ test('closing the sidebar leaves a rail of named icons, and the choice is rememb
   expect(screen.getByTestId('sidebar-rail')).toBeInTheDocument()
 })
 
-test('the run icon opens the sidebar with the cursor in the request box', async () => {
+test('the run icon puts the cursor in the request box, which lives on the canvas', () => {
   page()
   fireEvent.click(screen.getByRole('button', { name: strings.sidebar.close }))
   fireEvent.click(screen.getByRole('button', { name: strings.sidebar.run }))
-  await act(() => new Promise(r => requestAnimationFrame(() => r(undefined))))
-  expect(screen.getByTestId('sidebar')).toBeVisible()
   expect(document.activeElement).toBe(screen.getByLabelText(strings.run.requestLabel))
+  expect(screen.getByTestId('command-card')).toContainElement(screen.getByLabelText(strings.run.requestLabel))
 })
 
 test('Cmd+Enter in the request box starts a run; an empty box does not', async () => {

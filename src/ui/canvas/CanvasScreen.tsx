@@ -9,8 +9,8 @@ import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { AgentSettings } from './AgentSettings'
 import { WorkingSpinner } from './BlockCard'
-import { GatePanel } from './GatePanel'
-import { ResultPanel } from './ResultPanel'
+import { CommandCard, type CardMode } from './CommandCard'
+import { imagesBusy, readyImageIds, type ComposerImage } from './Composer'
 import { Canvas, RUN_INPUT_ID } from './Canvas'
 import { useRunStream, type RunStatus } from './useRunStream'
 
@@ -53,12 +53,19 @@ export function CanvasScreen({
   const [agent, setAgent] = useState<Agent>(DEMO_PROVIDER_ID)
   const claudeBlocked = agent === CLAUDE_PROVIDER_ID && !settings?.repoPath
   const [request, setRequest] = useState('')
+  const [images, setImages] = useState<ComposerImage[]>([])
+  const clearComposer = () => {
+    setRequest('')
+    setImages(prev => {
+      for (const i of prev) URL.revokeObjectURL(i.previewUrl)
+      return []
+    })
+  }
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
   const flushRef = useRef<(() => Promise<boolean>) | null>(null)
-  const gateRef = useRef<HTMLElement | null>(null)
-  const resultRef = useRef<HTMLElement | null>(null)
+  const cardRef = useRef<HTMLElement | null>(null)
 
   // A follow-up is a new run: the canvas switches to watching it, the same way a new run started from the sidebar does.
   async function watchRun(runId: string) {
@@ -93,7 +100,7 @@ export function CanvasScreen({
       const created = await fetch(`/api/workflows/${workflowId}/runs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ request, provider: agent }),
+        body: JSON.stringify({ request, provider: agent, attachments: readyImageIds(images) }),
       })
       if (!created.ok) return setMessage(await readError(created, strings.run.startFailed))
       const { runId } = (await created.json()) as { runId: string }
@@ -101,6 +108,7 @@ export function CanvasScreen({
       if (!detail.ok) return setMessage(await readError(detail, strings.run.startFailed))
       setHighlightedId(null)
       setRun((await detail.json()) as RunInfo)
+      clearComposer()
     } catch {
       setMessage(strings.run.startFailed)
     } finally {
@@ -122,51 +130,26 @@ export function CanvasScreen({
   const live = runStatus !== null && LIVE.has(runStatus)
   const statusText = run === null ? null : runStatus !== null ? strings.run.status[runStatus] : connected ? null : strings.run.connecting
 
-  const canRun = !busy && !live && request.trim() !== '' && !claudeBlocked
+  const canRun = !busy && !live && request.trim() !== '' && !claudeBlocked && !imagesBusy(images)
 
-  // Where a run is asked for. It lives at the top of the sidebar, with room to write a real request.
-  const runPanel = (
+  // The sidebar keeps the agent's settings; what to ask for lives in the command card on the canvas.
+  const agentPanel = settings && agent === CLAUDE_PROVIDER_ID ? (
     <>
-      <h2 style={{ margin: 0, fontSize: 14 }}>{strings.sidebar.runTitle}</h2>
-      <textarea
-        id={RUN_INPUT_ID}
-        aria-label={strings.run.requestLabel}
-        placeholder={strings.run.requestPlaceholder}
-        value={request}
-        rows={6}
-        onChange={e => setRequest(e.target.value)}
-        onKeyDown={e => {
-          // Cmd+Enter (Ctrl+Enter elsewhere) runs, so a long request does not need the mouse.
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canRun) {
-            e.preventDefault()
-            void startRun()
-          }
-        }}
-        style={{
-          width: '100%',
-          boxSizing: 'border-box',
-          resize: 'vertical',
-          minHeight: 110,
-          padding: '10px 12px',
-          background: theme.card,
-          color: 'inherit',
-          border: `1px solid ${theme.border}`,
-          borderRadius: 8,
-          font: 'inherit',
-          fontSize: 14,
-          lineHeight: 1.45,
-        }}
-      />
-      {settings && agent === CLAUDE_PROVIDER_ID && <AgentSettings settings={settings} onSaved={setSettings} />}
-      <span style={{ fontSize: 11.5, color: theme.skipped, textAlign: 'center' }}>{strings.sidebar.runShortcut}</span>
+      <h2 style={{ margin: 0, fontSize: 14 }}>{strings.settings.agentLabel}: {strings.settings.agentClaude}</h2>
+      <AgentSettings settings={settings} onSaved={setSettings} />
       {claudeBlocked && <span style={{ fontSize: 12.5, color: theme.waiting }}>{strings.settings.needsRepo}</span>}
-      {message && (
-        <span role="alert" style={{ color: theme.failed, fontSize: 13 }}>
-          {message}
-        </span>
-      )}
     </>
-  )
+  ) : undefined
+
+  // One card follows the run: ask, watch, decide, continue.
+  const mode: CardMode =
+    run && runStatus === 'waiting_approval'
+      ? 'waiting'
+      : run && (runStatus === 'running' || runStatus === 'queued')
+        ? 'working'
+        : run && runStatus === 'completed' && run.providerId !== DEMO_PROVIDER_ID
+          ? 'done'
+          : 'idle'
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -220,8 +203,8 @@ export function CanvasScreen({
             onClick={() => {
               const waiting = run?.blocks.find(b => views[b.id]?.state === 'waiting_approval')
               if (waiting) setHighlightedId(waiting.id)
-              gateRef.current?.focus()
-              gateRef.current?.scrollIntoView?.({ block: 'nearest' })
+              cardRef.current?.focus()
+              cardRef.current?.scrollIntoView?.({ block: 'nearest' })
             }}
             style={{
               display: 'flex',
@@ -247,8 +230,8 @@ export function CanvasScreen({
             data-testid="run-status"
             title={strings.delivery.title}
             onClick={() => {
-              resultRef.current?.focus()
-              resultRef.current?.scrollIntoView?.({ block: 'nearest' })
+              cardRef.current?.focus()
+              cardRef.current?.scrollIntoView?.({ block: 'nearest' })
             }}
             style={{
               display: 'flex',
@@ -281,17 +264,21 @@ export function CanvasScreen({
         )}
       </header>
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        {run && runStatus === 'waiting_approval' && (
-          <GatePanel
-            key={run.runId}
-            ref={gateRef}
-            runId={run.runId}
-            risk={Object.values(views).find(v => v.state === 'waiting_approval')?.risk}
-          />
-        )}
-        {run && runStatus === 'completed' && run.providerId !== DEMO_PROVIDER_ID && (
-          <ResultPanel key={run.runId} ref={resultRef} runId={run.runId} onFollowUp={id => void watchRun(id)} />
-        )}
+        <CommandCard
+          key={`${run?.runId ?? 'none'}-${mode}`}
+          ref={cardRef}
+          mode={mode}
+          runId={run?.runId ?? null}
+          risk={Object.values(views).find(v => v.state === 'waiting_approval')?.risk}
+          text={request}
+          onText={setRequest}
+          images={images}
+          onImages={setImages}
+          onRun={() => void startRun()}
+          canRun={canRun}
+          onFollowUp={id => void watchRun(id)}
+          onSent={clearComposer}
+        />
         <Canvas
           graph={graph}
           save={save}
@@ -299,7 +286,7 @@ export function CanvasScreen({
           runBlocks={run?.blocks}
           highlightedId={highlightedId}
           flushRef={flushRef}
-          sidebarTop={runPanel}
+          sidebarTop={agentPanel}
         />
       </div>
       {run && <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} />}

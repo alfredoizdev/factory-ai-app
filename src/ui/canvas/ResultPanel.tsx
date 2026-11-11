@@ -1,6 +1,6 @@
 'use client'
 
-import { forwardRef, useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { Delivery } from '@/engine/delivery'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
@@ -10,14 +10,25 @@ import { WorkingSpinner } from './BlockCard'
  * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
  * on top of it. Bringing it over writes into the person's folder, so the button says exactly what it will do.
  */
-export const ResultPanel = forwardRef<HTMLElement, { runId: string; onFollowUp: (runId: string) => void }>(function ResultPanel(
-  { runId, onFollowUp },
-  ref,
-) {
+export function ResultSection({
+  runId,
+  note,
+  imageIds,
+  imagesBusy,
+  composer,
+  onFollowUp,
+}: {
+  runId: string
+  /** The shared composer's text: what to change next, on top of this approved change. */
+  note: string
+  imageIds: string[]
+  imagesBusy: boolean
+  composer: ReactNode
+  onFollowUp: (runId: string) => void
+}) {
   const [delivery, setDelivery] = useState<Delivery | null>(null)
   const [busy, setBusy] = useState<'bring' | 'follow' | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [note, setNote] = useState('')
 
   useEffect(() => {
     let live = true
@@ -52,7 +63,7 @@ export const ResultPanel = forwardRef<HTMLElement, { runId: string; onFollowUp: 
       const res = await fetch(`/api/runs/${runId}/follow-up`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ note }),
+        body: JSON.stringify({ note, attachments: imageIds }),
       })
       const body = (await res.json().catch(() => null)) as { runId?: string; error?: string } | null
       if (!res.ok || !body?.runId) return setError(body?.error ?? strings.run.startFailed)
@@ -64,32 +75,11 @@ export const ResultPanel = forwardRef<HTMLElement, { runId: string; onFollowUp: 
     }
   }
 
-  if (!delivery?.eligible) return null
+  // Not (yet) known to be an approved, finished run: only the composer, for a fresh request from the top bar.
+  if (!delivery?.eligible) return <>{composer}</>
 
   return (
-    <section
-      ref={ref}
-      tabIndex={-1}
-      data-testid="result-panel"
-      aria-label={strings.delivery.title}
-      style={{
-        position: 'absolute',
-        right: 16,
-        bottom: 16,
-        zIndex: 5,
-        width: 460,
-        maxHeight: 'calc(100% - 32px)',
-        overflowY: 'auto',
-        background: 'linear-gradient(180deg, #0f1f16 0%, #0c1711 100%)',
-        border: `1px solid ${theme.tint('passed', 0.5)}`,
-        borderRadius: 14,
-        boxShadow: `0 0 0 1px ${theme.tint('passed', 0.15)}, 0 0 30px ${theme.tint('passed', 0.14)}, 0 18px 40px rgba(0,0,0,0.55)`,
-        padding: 16,
-        display: 'grid',
-        gap: 12,
-        outline: 'none',
-      }}
-    >
+    <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: 8, display: 'grid', placeItems: 'center', background: theme.passed, color: '#07110a', fontWeight: 900, fontSize: 16 }}>
           ✓
@@ -118,18 +108,11 @@ export const ResultPanel = forwardRef<HTMLElement, { runId: string; onFollowUp: 
       )}
 
       <div style={{ display: 'grid', gap: 6, paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
-        <div style={{ fontSize: 13, fontWeight: 700 }}>{strings.followUp.title}</div>
         <div style={{ fontSize: 12, color: theme.dim }}>{strings.followUp.hint}</div>
-        <textarea
-          value={note}
-          rows={2}
-          placeholder={strings.followUp.placeholder}
-          onChange={e => setNote(e.target.value)}
-          style={{ resize: 'vertical', padding: '7px 9px', background: theme.card, color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 6, font: 'inherit', fontSize: 13 }}
-        />
+        {composer}
         <button
           type="button"
-          disabled={busy !== null || note.trim() === ''}
+          disabled={busy !== null || imagesBusy || note.trim() === ''}
           onClick={() => void followUp()}
           style={{
             padding: '9px 12px',
@@ -150,6 +133,6 @@ export const ResultPanel = forwardRef<HTMLElement, { runId: string; onFollowUp: 
           {error}
         </div>
       )}
-    </section>
+    </>
   )
-})
+}

@@ -1,6 +1,6 @@
 'use client'
 
-import { forwardRef, useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { ChangeUnderReview } from '@/engine/approvals'
 import { strings } from '@/ui/strings'
 import { WorkingSpinner } from './BlockCard'
@@ -19,14 +19,29 @@ type Review = Pick<ChangeUnderReview, 'hash' | 'files' | 'diff' | 'truncated'>
  * change itself, and what was measured about it. A decision is sent with the hash of the change shown here, so if
  * the change moved meanwhile the server refuses it and this panel reloads what is there now.
  */
-export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level: 'low' | 'high'; reasons: string[] } }>(function GatePanel(
-  { runId, risk },
-  ref,
-) {
+export function GateSection({
+  runId,
+  risk,
+  note,
+  imageIds,
+  imagesBusy,
+  composer,
+  onSent,
+}: {
+  runId: string
+  risk?: { level: 'low' | 'high'; reasons: string[] }
+  /** The shared composer's text: the note recorded with a decision, and what a request for changes asks for. */
+  note: string
+  imageIds: string[]
+  imagesBusy: boolean
+  /** The shared composer, placed between what is being decided on and the buttons that decide. */
+  composer: ReactNode
+  onSent: () => void
+}) {
   const [review, setReview] = useState<Review | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
-  const [reason, setReason] = useState('')
+  const reason = note
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null)
   const [reload, setReload] = useState(0)
@@ -50,7 +65,7 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
       const res = await fetch(`/api/runs/${runId}/decision`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ decision, reason: reason.trim() || null, diffHash: review.hash }),
+        body: JSON.stringify({ decision, reason: reason.trim() || null, diffHash: review.hash, ...(decision === 'changes' ? { attachments: imageIds } : {}) }),
       })
       const body = (await res.json().catch(() => null)) as { error?: string } | null
       if (!res.ok) {
@@ -62,6 +77,7 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
         text: decision === 'approved' ? strings.gate.approved : decision === 'rejected' ? strings.gate.rejected : strings.gate.changesSent,
         ok: true,
       })
+      onSent()
     } catch {
       setOutcome({ text: strings.gate.notDelivered, ok: false })
     } finally {
@@ -91,31 +107,7 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
   })
 
   return (
-    <section
-      ref={ref}
-      tabIndex={-1}
-      data-testid="gate-panel"
-      aria-label={strings.gate.title}
-      style={{
-        position: 'absolute',
-        right: 16,
-        bottom: 16,
-        zIndex: 5,
-        // Wider while the change is open, so code lines are readable without scrolling sideways.
-        width: showDiff ? 'min(760px, 60vw)' : 460,
-        transition: 'width 160ms ease-out',
-        maxHeight: 'calc(100% - 32px)',
-        overflowY: 'auto',
-        background: 'linear-gradient(180deg, #1f1a10 0%, #16130d 100%)',
-        border: `1px solid ${theme.tint('waiting', 0.55)}`,
-        borderRadius: 14,
-        boxShadow: `0 0 0 1px ${theme.tint('waiting', 0.2)}, 0 0 30px ${theme.tint('waiting', 0.18)}, 0 18px 40px rgba(0,0,0,0.55)`,
-        padding: 16,
-        display: 'grid',
-        gap: 12,
-        outline: 'none',
-      }}
-    >
+    <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span
           aria-hidden="true"
@@ -173,25 +165,14 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
       {/* Only a run that changed files has something to preview. */}
       {review && review.files.length > 0 && !decided && <PreviewButton runId={runId} />}
 
-      {!decided && (
-        <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>
-          {strings.gate.reasonLabel}
-          <textarea
-            value={reason}
-            rows={2}
-            placeholder={strings.gate.reasonPlaceholder}
-            onChange={e => setReason(e.target.value)}
-            style={{ resize: 'vertical', padding: '7px 9px', background: theme.card, color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 6, font: 'inherit', fontSize: 13 }}
-          />
-        </label>
-      )}
+      {!decided && composer}
 
       {!decided && (
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" disabled={busy || !review} onClick={() => void decide('approved')} style={button('passed')}>
+          <button type="button" disabled={busy || !review || imagesBusy} onClick={() => void decide('approved')} style={button('passed')}>
             {busy ? strings.gate.deciding : `✓ ${strings.gate.approve}`}
           </button>
-          <button type="button" disabled={busy || !review} onClick={() => void decide('rejected')} style={button('failed')}>
+          <button type="button" disabled={busy || !review || imagesBusy} onClick={() => void decide('rejected')} style={button('failed')}>
             ✕ {strings.gate.reject}
           </button>
         </div>
@@ -200,7 +181,7 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
         // Not yes, not no: back to the builder in the same copy, with the note. The note is what it works from.
         <button
           type="button"
-          disabled={busy || !review || reason.trim() === ''}
+          disabled={busy || !review || imagesBusy || reason.trim() === ''}
           title={reason.trim() === '' ? strings.gate.changesHint : undefined}
           onClick={() => void decide('changes')}
           style={{
@@ -228,6 +209,6 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
           {strings.gate.notPickedUp}
         </div>
       )}
-    </section>
+    </>
   )
-})
+}

@@ -465,7 +465,8 @@ export function Canvas({
         >
           <RailButton icon="expand" label={strings.sidebar.open} onClick={() => setSidebarOpen(true)} />
           <span aria-hidden="true" style={{ width: 24, height: 1, background: theme.border, margin: '4px 0' }} />
-          {sidebarTop && <RailButton icon="run" label={strings.sidebar.run} onClick={() => openAt(RUN_SECTION, RUN_INPUT_ID)} />}
+          {/* The request box lives in the command card on the canvas, so this puts the cursor there without opening anything. */}
+          <RailButton icon="run" label={strings.sidebar.run} onClick={() => document.getElementById(RUN_INPUT_ID)?.focus()} />
           <RailButton icon="add" label={strings.editing.paletteTitle} onClick={() => openAt(PALETTE_SECTION)} />
           <RailButton icon="settings" label={strings.editing.inspectorTitle} onClick={() => openAt(SETTINGS_SECTION)} />
         </nav>
