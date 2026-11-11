@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas v2 — mockup</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#0e1219; --card-a:#1a2230; --card-b:#141a24;
+    --line:#262d3a; --line-soft:rgba(255,255,255,.06);
+    --ink:#e6e9ef; --dim:#8b95a8; --quiet:#6b7280;
+    --run:#3b82f6; --pass:#22c55e; --fail:#ef4444; --wait:#f59e0b;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#07090d;color:var(--ink);
+       font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+
+  /* ---------- page chrome (not part of the design) ---------- */
+  .page{max-width:1220px;margin:0 auto;padding:48px 24px 120px}
+  .page h1{font-size:28px;font-weight:650;letter-spacing:-.02em;margin:0 0 6px}
+  .page .sub{color:var(--dim);margin:0 0 40px;max-width:70ch}
+  .page h2{font-size:13px;font-weight:650;letter-spacing:.14em;text-transform:uppercase;
+           color:var(--dim);margin:56px 0 4px;padding-top:28px;border-top:1px solid #151b25}
+  .page h2:first-of-type{border-top:0;padding-top:0}
+  .page .note{color:var(--dim);margin:0 0 20px;max-width:78ch}
+  .page .note b{color:var(--ink);font-weight:600}
+  .fit{overflow:hidden}
+  .fit>.frame{transform-origin:top left}
+
+  /* ---------- the app frame ---------- */
+  .frame{position:relative;background:var(--bg);border:1px solid var(--line);border-radius:12px;
+         overflow:hidden;display:flex;flex-direction:column}
+
+  /* header */
+  .hdr{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);
+       background:#0a0d13;flex:0 0 auto;z-index:4}
+  .req{flex:0 1 460px;padding:8px 12px;background:#141a24;border:1px solid var(--line);
+       border-radius:8px;color:var(--dim);font-size:13px}
+  .btn{padding:8px 16px;background:#1a2230;border:1px solid var(--line);border-radius:8px;font-size:13px;font-weight:550}
+  .btn.ghost{color:var(--dim)}
+  .pill{padding:3px 10px;border:1px solid var(--wait);color:var(--wait);border-radius:999px;
+        font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+  .runstat{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--run)}
+  .runstat .dot{width:7px;height:7px;border-radius:50%;background:var(--run);box-shadow:0 0 8px var(--run)}
+
+  .body{flex:1;display:flex;min-height:0}
+
+  /* sidebar */
+  .side{width:232px;flex:0 0 232px;border-right:1px solid var(--line);padding:16px;background:#0a0d13;z-index:3}
+  .side h3{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--quiet);margin:0 0 10px}
+  .side .add{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:28px}
+  .side .add span{padding:5px 10px;background:#141a24;border:1px solid var(--line);border-radius:7px;font-size:12px;color:var(--dim)}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;color:var(--quiet);margin-bottom:4px}
+  .field div{padding:7px 10px;background:#0b0e14;border:1px solid var(--line);border-radius:7px;font-size:13px}
+  .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--dim);margin-bottom:16px}
+  .chk i{width:14px;height:14px;border:1px solid var(--line);border-radius:4px;background:var(--run);
+         position:relative;flex:0 0 auto}
+  .chk i::after{content:"";position:absolute;left:3.5px;top:1px;width:4px;height:7px;
+         border:2px solid #fff;border-top:0;border-left:0;transform:rotate(40deg)}
+  .rm{font-size:12px;color:var(--fail)}
+
+  /* canvas + floor */
+  .canvas{position:relative;flex:1;min-width:0;overflow:hidden}
+  .floor{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+  .floor .amb{position:absolute;inset:0;
+    background:radial-gradient(ellipse at 32% 38%,rgba(59,130,246,.10),transparent 55%),
+               radial-gradient(ellipse at 76% 66%,rgba(245,158,11,.055),transparent 50%)}
+  .floor .persp{position:absolute;inset:0;perspective:700px;perspective-origin:50% 0%}
+  .floor .grid{position:absolute;left:-100%;width:300%;top:14%;height:300%;
+    transform-origin:50% 0%;transform:rotateX(62deg);
+    background-image:linear-gradient(#2a3548 1px,transparent 1px),linear-gradient(90deg,#2a3548 1px,transparent 1px);
+    background-size:64px 64px;
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 34%,rgba(0,0,0,.5) 70%,transparent 95%)}
+  .cables{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:visible}
+  .row{position:absolute;display:flex;align-items:flex-start;z-index:2}
+
+  /* ---------- THE CARD ---------- */
+  .card{
+    --state:var(--quiet);
+    position:relative;width:320px;min-height:304px;flex:0 0 auto;
+    display:flex;flex-direction:column;
+    background:linear-gradient(180deg,var(--card-a) 0%,var(--card-b) 62%);
+    border:1px solid var(--line);border-left:4px solid var(--state);
+    border-radius:14px;padding:15px 16px 13px;
+  }
+  .card::before{ /* top edge catch-light */
+    content:"";position:absolute;left:0;right:0;top:0;height:1px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.09) 20%,rgba(255,255,255,.09) 80%,transparent);
+    border-radius:14px 14px 0 0}
+  .card.on{box-shadow:0 0 0 1px color-mix(in srgb,var(--state) 55%,transparent),
+                      0 0 26px color-mix(in srgb,var(--state) 26%,transparent),
+                      0 14px 28px rgba(0,0,0,.45)}
+  .card.off{opacity:.5}
+
+  /* identity row */
+  .id{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+  .mark{width:28px;height:28px;flex:0 0 auto;border-radius:8px;display:grid;place-items:center;
+        background:color-mix(in srgb,var(--state) 13%,transparent);
+        border:1px solid color-mix(in srgb,var(--state) 28%,transparent);color:var(--state)}
+  .mark svg{width:15px;height:15px;display:block}
+  .name{font-size:19px;font-weight:620;letter-spacing:-.015em;line-height:1.1}
+  .model{margin-left:auto;display:flex;align-items:center;gap:5px;padding:4px 9px;
+         background:rgba(255,255,255,.045);border:1px solid var(--line-soft);border-radius:999px;
+         font-size:11.5px;font-weight:600;color:#c3cbd9;white-space:nowrap}
+  .model s{text-decoration:none;color:var(--dim);font-size:11px}
+  .badge{position:absolute;right:-9px;top:-9px;width:24px;height:24px;border-radius:50%;
+         display:grid;place-items:center;background:var(--state);color:#07090d;
+         border:2.5px solid #0f141c;font-size:12px;font-weight:800;line-height:1}
+
+  /* state word */
+  .state{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;
+         letter-spacing:.1em;text-transform:uppercase;color:var(--state);margin:9px 0 0}
+  .state i{width:6px;height:6px;border-radius:50%;background:var(--state);flex:0 0 auto}
+  .state u{text-decoration:none;color:var(--quiet);font-weight:500;letter-spacing:.02em;
+           text-transform:none;font-size:11.5px;font-family:var(--mono)}
+
+  /* headline */
+  .head{font-size:16px;line-height:1.36;margin:8px 0 0;color:#eef1f6;letter-spacing:-.005em}
+  .claimtag{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:800;
+            letter-spacing:.13em;text-transform:uppercase;color:var(--wait);margin:10px 0 2px}
+  .claimtag::before{content:"";width:12px;height:1px;background:var(--wait)}
+  .head.claim{font-style:italic;color:#e7dcc4;border-left:2px solid color-mix(in srgb,var(--wait) 50%,transparent);
+              padding-left:10px;margin-left:-1px}
+
+  /* evidence strip */
+  .ev{margin-top:12px;background:rgba(124,160,255,.045);border:1px solid rgba(255,255,255,.055);
+      border-radius:10px;padding:9px 11px 10px}
+  .ev h4{display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:9.5px;font-weight:800;
+         letter-spacing:.14em;text-transform:uppercase;color:#7d8798}
+  .ev h4 svg{width:11px;height:11px;color:var(--pass)}
+  .pips{display:flex;gap:3px;align-items:center;margin-bottom:8px}
+  .pips b{width:7px;height:13px;border-radius:2px;background:var(--pass);flex:0 0 auto;opacity:.92}
+  .pips b.x{background:var(--fail)}
+  .pips b.q{background:#30394a}
+  .pips em{font-style:normal;font-family:var(--mono);font-size:11.5px;color:#c3cbd9;margin-left:7px;font-weight:600}
+  .ev dl{display:flex;flex-wrap:wrap;gap:3px 14px;margin:0;font-family:var(--mono);font-size:11.5px;color:#9aa5b6}
+  .ev dl b{color:#d6dce6;font-weight:600}
+
+  /* ticker */
+  .tick{margin-top:11px;display:grid;gap:3px;font-size:12.5px}
+  .tick span{color:#5f6878;display:flex;gap:7px;align-items:baseline}
+  .tick span::before{content:"";width:4px;height:4px;border-radius:50%;background:#39424f;margin-top:6px;flex:0 0 auto}
+  .tick span.now{color:#dfe4ec}
+  .tick span.now::before{background:var(--run);box-shadow:0 0 7px var(--run)}
+
+  /* spend */
+  .spend{margin-top:auto;padding-top:11px;display:flex;align-items:center;gap:8px;
+         border-top:1px solid rgba(255,255,255,.05);font-family:var(--mono);font-size:11.5px;color:#7d8798}
+  .spend b{color:#c3cbd9;font-weight:600}
+  .spend .bar{flex:1;height:3px;border-radius:2px;background:#222a37;overflow:hidden;min-width:28px}
+  .spend .bar i{display:block;height:100%;background:#47546b}
+  .issue{margin:10px 0 0;font-size:12.5px;color:#ffb4ac;background:rgba(239,68,68,.09);
+         border:1px solid rgba(239,68,68,.28);border-radius:8px;padding:7px 9px}
+
+  /* not part of this run */
+  .card.ghostcard{background:transparent;border:1px dashed #3b4454;border-left:1px dashed #3b4454;
+                  min-height:304px;justify-content:center}
+  .ghostcard .name{color:#8b95a8}
+  .ghostcard .head{color:var(--quiet);font-size:14px}
+
+  /* spine (compressed) card */
+  .spine{--state:var(--quiet);position:relative;width:80px;min-height:304px;flex:0 0 auto;
+    display:flex;flex-direction:column;align-items:center;gap:12px;padding:14px 0 16px;
+    background:linear-gradient(180deg,#141a24,#10151d);border:1px solid var(--line);
+    border-top:3px solid var(--state);border-radius:12px;cursor:pointer}
+  .spine .mark{width:26px;height:26px}
+  .spine .vname{writing-mode:vertical-rl;font-size:13px;font-weight:600;letter-spacing:.02em;color:#aeb7c6}
+  .spine .sdot{margin-top:auto;width:9px;height:9px;border-radius:50%;background:var(--state)}
+  .spine.ok .sdot{background:var(--pass)}
+  .spine .ring{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+     background:var(--state);color:#07090d;font-size:11px;font-weight:800;margin-top:auto}
+
+  /* log strip */
+  .log{flex:0 0 auto;border-top:1px solid var(--line);background:#0a0d13;max-height:124px;overflow:hidden;z-index:4}
+  .log ul{list-style:none;margin:0;padding:0}
+  .log li{display:flex;align-items:baseline;gap:10px;padding:5px 16px;border-left:3px solid var(--state);font-size:12.5px}
+  .log li b{color:var(--state);font-weight:650;flex:0 0 auto;min-width:92px}
+  .log li span{color:#aeb7c6;flex:1}
+  .log li em{font-style:italic;color:var(--wait);font-weight:600;font-size:11.5px}
+  .log li u{text-decoration:none;font-size:11px;color:var(--quiet);border:1px solid var(--line);
+            border-radius:5px;padding:2px 7px;flex:0 0 auto}
+
+  /* annotations */
+  .anno{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 0}
+  .anno div{font-size:12.5px;color:var(--dim);background:#0d1118;border:1px solid #1b222d;
+            border-radius:8px;padding:8px 11px;flex:1 1 230px}
+  .anno b{color:var(--ink);font-weight:600}
+  .gallery{display:flex;flex-wrap:wrap;gap:22px;background:var(--bg);border:1px solid var(--line);
+           border-radius:12px;padding:26px;position:relative}
+  .gallery::after{content:"";position:absolute;inset:0;border-radius:12px;pointer-events:none;
+    background:radial-gradient(ellipse at 30% 20%,rgba(59,130,246,.07),transparent 60%)}
+  .cap{font-size:11px;color:var(--quiet);margin:8px 0 0;font-family:var(--mono)}
+  .wrap{position:relative;z-index:1}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>AI Factory — canvas v2</h1>
+  <p class="sub">Static mockup. Every sentence, state and number on this page is the real copy and the
+  real shape of the data; nothing here is wired up. The question this design answers: eight blocks at
+  a readable size do not fit on one screen.</p>
+
+  <h2>1 · The canvas, mid-run</h2>
+  <p class="note"><b>The answer: a fisheye along the flow.</b> The running block and its two neighbours are
+  full panels. Everything else collapses to an 80px spine that still carries its mark, its name, its state
+  and its badge — so all eight blocks are always on screen, the left-to-right reading never breaks, and
+  the full detail follows the work as it moves. Click a spine card and it becomes the panel.</p>
+  <div class="fit" id="fit1">
+    <div class="frame" id="scene1" style="width:1920px;height:744px">
+      <div class="hdr">
+        <div class="req">Add rate limiting to the public API</div>
+        <div class="btn ghost">Run</div>
+        <div class="btn ghost">Cancel</div>
+        <div class="pill">Demo</div>
+        <div class="runstat"><span class="dot"></span>Running · 4 of 8 done</div>
+      </div>
+      <div class="body">
+        <aside class="side">
+          <h3>Add a block</h3>
+          <div class="add"><span>Review</span><span>Human check</span></div>
+          <h3>Block settings</h3>
+          <div class="field"><label>Name</label><div>Tests</div></div>
+          <div class="field"><label>Model</label><div>Sonnet 4.6</div></div>
+          <div class="chk"><i></i>Enabled</div>
+          <div class="rm">Remove block</div>
+        </aside>
+        <div class="canvas">
+          <div class="floor"><div class="amb"></div><div class="persp"><div class="grid"></div></div></div>
+          <svg class="cables" id="cables1"></svg>
+          <div class="row" id="row1" style="left:28px;top:124px"></div>
+        </div>
+      </div>
+      <div class="log">
+        <ul>
+          <li style="--state:var(--run)"><b>Tests</b><span>Running 12 tests.</span><u>Point it out</u></li>
+          <li style="--state:var(--pass)"><b>Build</b><span>Code is written.</span><u>Point it out</u></li>
+          <li style="--state:var(--run)"><b>Build</b><span>Started.</span><u>Point it out</u></li>
+          <li style="--state:var(--pass)"><b>Plan</b><span><em>AI says:</em> Plan is ready — six files, no schema change.</span><u>Point it out</u></li>
+          <li style="--state:var(--pass)"><b>Input</b><span>Input received.</span><u>Point it out</u></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <p class="cap scaleCap"></p>
+  <div class="anno">
+    <div><b>Glow only on what matters.</b> One blue card pulls the eye. Four finished blocks are green and then quiet.</div>
+    <div><b>Dots travel only the cable feeding a block that is really running.</b> Nothing on this screen animates on a timer.</div>
+    <div><b>Junction dots on every orthogonal cable.</b> The flow looks engineered, not sketched.</div>
+  </div>
+
+  <h2>2 · Card anatomy</h2>
+  <p class="note">Six zones. The one that matters is the third: <b>the evidence strip holds only measured
+  facts</b> — test results, elapsed time, attempt, diff stat — and nothing a language model said. A card
+  whose result is only a claim <b>has no strip at all</b>, so the difference between "a test passed" and
+  "an AI said it's fine" is structural, not a colour you could miss.</p>
+  <div class="gallery"><div class="wrap" id="anatomy"></div>
+    <div style="flex:1 1 300px;min-width:260px;align-self:center;font-size:13px;color:var(--dim);line-height:1.8">
+      <div><b style="color:var(--ink)">1 · Identity</b> — type mark, name at 19px, and the model chip inside the card.</div>
+      <div><b style="color:var(--ink)">2 · State</b> — the word, always. Colour only reinforces it. Elapsed time beside it.</div>
+      <div><b style="color:var(--ink)">3 · Headline</b> — one sentence at 16px. What happened, in plain language.</div>
+      <div><b style="color:var(--ink)">4 · Evidence</b> — measured facts only. Twelve pips you can count without reading a number.</div>
+      <div><b style="color:var(--ink)">5 · Activity</b> — the last three steps while it runs. A ticker, not a log.</div>
+      <div><b style="color:var(--ink)">6 · Spend</b> — tokens and cost, or the words "Not reported". Never a zero.</div>
+    </div>
+  </div>
+
+  <h2>3 · Every state</h2>
+  <p class="note">Running, passed, failed, waiting on a person, quiet — plus the two special cards: a block
+  switched off, and a block added after the run started, which has <b>no state at all</b> because the run
+  never heard of it.</p>
+  <div class="gallery"><div class="wrap" id="gallery" style="display:flex;flex-wrap:wrap;gap:22px"></div></div>
+
+  <h2>4 · A failure, traced</h2>
+  <p class="note">Review turned the work down. The red cable leaves Approve, drops under the lane and
+  re-enters Build — <b>you can follow a failure by eye from where it was produced to where it stopped
+  everything</b>. Only the block where the failure <em>started</em> glows; the ones it knocked over are
+  red and quiet, so the origin stays findable.</p>
+  <div class="fit" id="fit2">
+    <div class="frame" id="scene2" style="width:1920px;height:498px">
+      <div class="body">
+        <div class="canvas">
+          <div class="floor"><div class="amb" style="background:radial-gradient(ellipse at 55% 45%,rgba(239,68,68,.10),transparent 55%)"></div><div class="persp"><div class="grid"></div></div></div>
+          <svg class="cables" id="cables2"></svg>
+          <div class="row" id="row2" style="left:40px;top:62px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="cap scaleCap"></p>
+
+  <h2>5 · Waiting on you</h2>
+  <p class="note">The state the whole product exists for. Amber, full panel, and the only card on screen
+  with any light on it.</p>
+  <div class="fit" id="fit3">
+    <div class="frame" id="scene3" style="width:1400px;height:436px">
+      <div class="body">
+        <div class="canvas">
+          <div class="floor"><div class="amb" style="background:radial-gradient(ellipse at 62% 45%,rgba(245,158,11,.13),transparent 55%)"></div><div class="persp"><div class="grid"></div></div></div>
+          <svg class="cables" id="cables3"></svg>
+          <div class="row" id="row3" style="left:44px;top:62px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="cap scaleCap"></p>
+  <div class="anno">
+    <div><b>On a 1,440px laptop</b> the fisheye keeps two full panels instead of three. The running block, or the one that needs you, is always one of them.</div>
+    <div><b>The decision controls</b> (approve / turn down) land with the human gate in a later milestone. The card is designed with room for them.</div>
+  </div>
+</div>
+
+<script>
+/* ---------- type marks: one consistent 16px stroke set ---------- */
+const MARKS = {
+  input:'<path d="M2 8h8M7 5l3 3-3 3M12 2v12"/>',
+  plan:'<path d="M3 4h10M3 8h10M3 12h6"/>',
+  build:'<path d="M2.5 5.5l3-3 8 8-3 3zM9 3l1.5-1.5 3.5 3.5L12.5 6.5"/>',
+  tests:'<path d="M3 8l2.5 2.5L9 6"/><rect x="1.5" y="1.5" width="13" height="13" rx="3"/>',
+  review:'<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/>',
+  approve:'<circle cx="8" cy="8" r="6.5"/><path d="M5 8.2l2.2 2.2L11 6.4"/>',
+  human:'<circle cx="8" cy="5" r="2.6"/><path d="M3 14c0-2.8 2.2-4.6 5-4.6s5 1.8 5 4.6"/>',
+  ship:'<path d="M8 13V3M8 3l4 4M8 3L4 7"/><path d="M2.5 13.5h11"/>'
+};
+const C = {run:'var(--run)',pass:'var(--pass)',fail:'var(--fail)',wait:'var(--wait)',quiet:'var(--quiet)'};
+const mark = k => `<span class="mark"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
+  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${MARKS[k]}</svg></span>`;
+
+function pips(total, pass, fail){
+  let s='';
+  for(let i=0;i<total;i++) s += `<b class="${i<pass?'':(i<pass+fail?'x':'q')}"></b>`;
+  return s;
+}
+/* ---------- the card ---------- */
+function card(o){
+  const st = C[o.tone];
+  return `<div class="card ${o.glow?'on':''} ${o.off?'off':''}" data-id="${o.id}" style="--state:${st};${o.w?`width:${o.w}px`:''}">
+    ${o.badge?`<span class="badge">${o.badge}</span>`:''}
+    <div class="id">${mark(o.id)}<span class="name">${o.name}</span>
+      ${o.model?`<span class="model"><s>${o.glyph||'✳'}</s>${o.model}</span>`:''}</div>
+    <p class="state"><i></i>${o.state}${o.time?`<u>${o.time}</u>`:''}</p>
+    ${o.claim?`<div class="claimtag">AI says</div><p class="head claim">${o.claim}</p>`
+             :`<p class="head">${o.head}</p>`}
+    ${o.ev?`<div class="ev">
+        <h4><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2"
+          stroke-linecap="round"><path d="M3 8.5l3.2 3.2L13 5"/></svg>Evidence</h4>
+        ${o.pips?`<div class="pips">${pips(o.pips.total,o.pips.pass,o.pips.fail||0)}<em>${o.pips.label}</em></div>`:''}
+        <dl>${o.ev.map(([k,v])=>`<span>${k} <b>${v}</b></span>`).join('')}</dl></div>`:''}
+    ${o.steps?`<div class="tick">${o.steps.map((s,i)=>
+        `<span class="${i===o.steps.length-1?'now':''}">${s}</span>`).join('')}</div>`:''}
+    ${o.issue?`<p class="issue">${o.issue}</p>`:''}
+    ${o.spend === undefined
+        ? `<div style="margin-top:auto"></div>`
+        : `<div class="spend">${o.spend
+            ? `Tokens <b>${o.spend[0]}</b><span class="bar"><i style="width:${o.spend[2]}%"></i></span>Cost <b>${o.spend[1]}</b>`
+            : `Tokens <b>Not reported</b> · Cost <b>Not reported</b>`}</div>`}
+  </div>`;
+}
+function ghost(o){
+  return `<div class="card ghostcard" data-id="${o.id}">
+    <div class="id">${mark(o.id)}<span class="name">${o.name}</span></div>
+    <p class="state" style="--state:var(--quiet)"><i></i>Not part of this run</p>
+    <p class="head">Added after this run began. It will take part in the next run.</p></div>`;
+}
+function spine(o){
+  return `<div class="spine ${o.tone==='pass'?'ok':''}" data-id="${o.id}" style="--state:${C[o.tone]}">
+    ${mark(o.id)}<span class="vname">${o.name}</span>
+    ${o.badge?`<span class="ring">${o.badge}</span>`:`<span class="sdot"></span>`}</div>`;
+}
+
+/* ---------- scene 1: mid-run fisheye ---------- */
+const GAP = {sp_sp:18, sp_full:44, full_full:64};
+const scene1 = [
+  ['spine',{id:'input',name:'Input',tone:'pass',badge:'✓'}],
+  ['spine',{id:'plan', name:'Plan', tone:'pass',badge:'✓'}],
+  ['card', {id:'build',name:'Build',tone:'pass',glow:false,badge:'✓',state:'Passed',time:'1m 48s',
+            model:'Opus 5',head:'Code is written.',
+            ev:[['files','7'],['diff','+214 −38'],['attempt','1'],['worktree','run-4f2a']],
+            spend:['48.2k','$0.31',62]}],
+  ['card', {id:'tests',name:'Tests',tone:'run',glow:true,state:'Running',time:'0m 22s',
+            model:'Sonnet 4.6',glyph:'◎',head:'Running 12 tests.',
+            pips:{total:12,pass:9,fail:0,label:'9 of 12 so far'},
+            ev:[['suite','vitest'],['attempt','1']],
+            steps:['Finding the test suite','Running the tests'],
+            spend:['6.1k','$0.04',14]}],
+  ['card', {id:'review',name:'Review',tone:'quiet',state:'Queued',
+            model:'Haiku 5.5',glyph:'◍',head:'Waits for the tests.'}],
+  ['spine',{id:'approve',name:'Approve',tone:'quiet'}],
+  ['spine',{id:'human',  name:'Human check',tone:'quiet'}],
+  ['spine',{id:'ship',   name:'Ship',tone:'quiet'}]
+];
+
+/* ---------- scene 2: the failure ---------- */
+const scene2 = [
+  ['spine',{id:'input',name:'Input',tone:'pass',badge:'✓'}],
+  ['spine',{id:'plan', name:'Plan', tone:'pass',badge:'✓'}],
+  ['card', {id:'build',name:'Build',tone:'quiet',state:'Queued',time:'waiting',w:300,
+            model:'Opus 5',head:'The work came back. Waiting to start again.',
+            ev:[['attempt','2 of 2'],['worktree','run-4f2a']],spend:['48.2k','$0.31',62]}],
+  ['card', {id:'tests',name:'Tests',tone:'fail',glow:true,badge:'✕',state:'Failed',time:'1m 02s',w:300,
+            model:'Sonnet 4.6',glyph:'◎',head:'9 of 12 passed. 3 failed.',
+            pips:{total:12,pass:9,fail:3,label:'3 failed'},
+            ev:[['suite','vitest'],['attempt','1']],spend:['6.1k','$0.04',14]}],
+  ['card', {id:'review',name:'Review',tone:'fail',badge:'✕',state:'Failed',time:'0m 41s',w:300,
+            model:'Haiku 5.5',glyph:'◍',claim:'Three tests fail on the new limiter — the window resets early.',
+            spend:['11.4k','$0.02',22]}],
+  ['card', {id:'approve',name:'Approve',tone:'fail',badge:'✕',state:'Failed',w:300,
+            head:'Not approved. Nothing ships.',
+            ev:[['in favour','0 of 1'],['blocker','Review']]}],
+  ['spine',{id:'human',name:'Human check',tone:'quiet'}],
+  ['spine',{id:'ship', name:'Ship',tone:'quiet'}]
+];
+
+/* ---------- scene 3: waiting on a person ---------- */
+const scene3 = [
+  ['spine',{id:'input',name:'Input',tone:'pass',badge:'✓'}],
+  ['spine',{id:'plan', name:'Plan', tone:'pass',badge:'✓'}],
+  ['spine',{id:'build',name:'Build',tone:'pass',badge:'✓'}],
+  ['spine',{id:'tests',name:'Tests',tone:'pass',badge:'✓'}],
+  ['card', {id:'review',name:'Review',tone:'pass',badge:'✓',state:'Passed',time:'0m 38s',
+            model:'Haiku 5.5',glyph:'◍',claim:'No problems found in the limiter or its tests.',
+            spend:['11.4k','$0.02',22]}],
+  ['card', {id:'human',name:'Human check',tone:'wait',glow:true,state:'Waiting for approval',time:'4m 11s',
+            head:'Stopped. Nothing ships without your yes.',
+            ev:[['tests','12 of 12'],['files','7'],['diff','+214 −38'],['branch','run-4f2a']],
+            pips:{total:12,pass:12,label:'all passed'},spend:null}],
+  ['spine',{id:'ship',name:'Ship',tone:'quiet'}]
+];
+
+function build(rowId, spec){
+  const row = document.getElementById(rowId);
+  let html='', prev=null;
+  for(const [kind,o] of spec){
+    const cur = kind==='spine' ? 'sp' : 'full';
+    if(prev){
+      const g = prev==='sp'&&cur==='sp' ? GAP.sp_sp
+              : prev==='full'&&cur==='full' ? GAP.full_full : GAP.sp_full;
+      html += `<div style="width:${g}px;flex:0 0 auto"></div>`;
+    }
+    html += kind==='spine' ? spine(o) : card(o);
+    prev = cur;
+  }
+  row.innerHTML = html;
+}
+
+/* ---------- cables, measured after layout ---------- */
+function cables(svgId, rowId, opts){
+  const svg = document.getElementById(svgId), row = document.getElementById(rowId);
+  const base = svg.getBoundingClientRect();
+  const kids = [...row.children].filter(el => el.dataset.id);
+  const box = el => { const r = el.getBoundingClientRect();
+    return {l:r.left-base.left, r:r.right-base.left, t:r.top-base.top, b:r.bottom-base.top,
+            cy:r.top-base.top+r.height/2, cx:r.left-base.left+r.width/2}; };
+  let out = '', dots = '';
+  for(let i=0;i<kids.length-1;i++){
+    const a = box(kids[i]), b = box(kids[i+1]);
+    const y = Math.round(Math.min(a.cy,b.cy));
+    const active = opts.active===`${kids[i].dataset.id}-${kids[i+1].dataset.id}`;
+    const col = active ? 'var(--run)' : '#2e3747';
+    const d = a.cy===b.cy ? `M${a.r} ${y} H${b.l}`
+            : `M${a.r} ${a.cy} H${(a.r+b.l)/2} V${b.cy} H${b.l}`;
+    out += `<path d="${d}" fill="none" stroke="${col}" stroke-width="2"
+             ${active?'style="filter:drop-shadow(0 0 5px var(--run))"':''}/>`;
+    dots += `<circle cx="${a.r}" cy="${a.cy}" r="3" fill="${col}"/><circle cx="${b.l}" cy="${b.cy}" r="3" fill="${col}"/>`;
+    if(active) for(let k=0;k<3;k++)
+      dots += `<circle r="3.4" fill="var(--run)" style="filter:drop-shadow(0 0 5px var(--run))">
+        <animateMotion dur="2.4s" begin="${k*0.8}s" repeatCount="indefinite" path="${d}"/></circle>`;
+  }
+  if(opts.ret){
+    const from = box(kids.find(k=>k.dataset.id===opts.ret[0]));
+    const to   = box(kids.find(k=>k.dataset.id===opts.ret[1]));
+    const y = Math.round(Math.max(from.b,to.b)) + 54;
+    const d = `M${from.cx} ${from.b} V${y} H${to.cx} V${to.b}`;
+    out += `<path d="${d}" fill="none" stroke="var(--fail)" stroke-width="2" stroke-dasharray="7 5"/>`;
+    dots += `<circle cx="${from.cx}" cy="${from.b}" r="3.5" fill="var(--fail)"/>
+             <circle cx="${to.cx}" cy="${to.b}" r="3.5" fill="var(--fail)"/>
+             <path d="M${to.cx-5} ${to.b+9} L${to.cx} ${to.b+1} L${to.cx+5} ${to.b+9}" fill="none"
+               stroke="var(--fail)" stroke-width="2" stroke-linecap="round"/>`;
+    out += `<text x="${(from.cx+to.cx)/2}" y="${y-9}" fill="var(--fail)" font-size="12.5"
+              font-family="system-ui" text-anchor="middle" font-weight="600">Sends work back to Build</text>`;
+  }
+  svg.innerHTML = out + dots;
+}
+
+build('row1', scene1); build('row2', scene2); build('row3', scene3);
+document.getElementById('anatomy').innerHTML = card(scene1[3][1]);
+document.getElementById('gallery').innerHTML = [
+  card({...scene1[3][1]}),
+  card(scene3[5][1]),
+  card(scene2[4][1]),
+  card({id:'plan',name:'Plan',tone:'pass',badge:'✓',state:'Passed',time:'0m 29s',model:'Opus 5',
+        claim:'Plan is ready — six files, no schema change needed.',spend:['9.8k','$0.07',24]}),
+  card({id:'ship',name:'Ship',tone:'quiet',state:'Queued',head:'Ships after your yes.'}),
+  card({id:'tests',name:'Tests',tone:'quiet',off:true,state:'Skipped',model:'Sonnet 4.6',glyph:'◎',
+        head:'Turned off. It is skipped and its neighbours connect around it.'}),
+  ghost({id:'review',name:'Review'})
+].join('');
+
+function layout(){
+  cables('cables1','row1',{active:'build-tests'});
+  cables('cables2','row2',{ret:['approve','build']});
+  cables('cables3','row3',{});
+  for(const [wrapId, sceneId] of [['fit1','scene1'],['fit2','scene2'],['fit3','scene3']]){
+    const wrap = document.getElementById(wrapId), frame = document.getElementById(sceneId);
+    const s = Math.min(1, wrap.clientWidth / parseInt(frame.style.width));
+    frame.style.transform = `scale(${s})`;
+    const cap = wrap.nextElementSibling;
+    if(cap && cap.classList.contains('scaleCap'))
+      cap.textContent = `${parseInt(frame.style.width)} × ${parseInt(frame.style.height)} px, shown at ${Math.round(s*100)}%`;
+    wrap.style.height = (parseInt(frame.style.height) * s) + 'px';
+  }
+}
+layout(); addEventListener('resize', layout);
+</script>
+</body>
+</html>
