@@ -88,3 +88,13 @@ test('a failed install leaves the base failed, with what it said', async () => {
 test('no package.json, no lock fingerprint', () => {
   expect(lockHashOf(mkdtempSync(join(tmpdir(), 'factory-empty-')))).toBeNull()
 })
+
+test('a tree is cloned whole, contents and nested folders alike', async () => {
+  const { cloneTree } = await import('@/engine/base')
+  const from = mkdtempSync(join(tmpdir(), 'factory-clone-'))
+  mkdirSync(join(from, 'a', 'b'), { recursive: true })
+  writeFileSync(join(from, 'a', 'b', 'x.js'), 'x\n')
+  const to = join(mkdtempSync(join(tmpdir(), 'factory-clone-to-')), 'copy')
+  cloneTree(from, to)
+  expect(readFileSync(join(to, 'a', 'b', 'x.js'), 'utf8')).toBe('x\n')
+})

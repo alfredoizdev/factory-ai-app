@@ -105,6 +105,33 @@ export async function prepareBase(
   }
 }
 
+/**
+ * Copies a folder the fastest way the system allows. On macOS, one clonefile(2) call clones the whole tree in the
+ * kernel (copy-on-write: under a second for ~50,000 files, no extra disk); `cp -c` clones file by file and takes ~10x
+ * longer, and a plain copy is the last resort.
+ */
+export function cloneTree(from: string, to: string): void {
+  if (process.platform === 'darwin') {
+    try {
+      execFileSync(
+        'python3',
+        ['-I', '-c', 'import ctypes,sys; sys.exit(ctypes.CDLL(None).clonefile(sys.argv[1].encode(), sys.argv[2].encode(), 0))', from, to],
+        { stdio: 'ignore', timeout: 120_000 },
+      )
+      return
+    } catch {
+      rmSync(to, { recursive: true, force: true })
+    }
+    try {
+      execFileSync('cp', ['-cR', from, to], { stdio: 'ignore' })
+      return
+    } catch {
+      rmSync(to, { recursive: true, force: true })
+    }
+  }
+  execFileSync('cp', ['-R', from, to], { stdio: 'ignore' })
+}
+
 export type BaseCopy = { copied: true; ms: number } | { copied: false; reason: 'no-base' | 'different-lockfile' | 'copy-failed' }
 
 /** Gives a task's working copy the base's installed dependencies, when its lockfile is the base's. */
@@ -119,12 +146,7 @@ export function copyBaseInto(projectId: string, workdir: string, root = BASE_ROO
       const target = join(workdir, dir)
       if (existsSync(target)) continue
       mkdirSync(dirname(target), { recursive: true })
-      // -c: a copy-on-write clone on APFS, near instant and sharing disk until written; plain copy elsewhere.
-      try {
-        execFileSync('cp', ['-cR', join(base, dir), target], { stdio: 'ignore' })
-      } catch {
-        execFileSync('cp', ['-R', join(base, dir), target], { stdio: 'ignore' })
-      }
+      cloneTree(join(base, dir), target)
     }
     return { copied: true, ms: Date.now() - started }
   } catch {
