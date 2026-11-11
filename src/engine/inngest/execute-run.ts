@@ -1,9 +1,9 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
-import { claims, evidence, nodeRuns, projects, runs, usageRecords, workflowVersions } from '@/db/schema'
+import { claims, events, evidence, nodeRuns, projects, runs, usageRecords, workflowVersions } from '@/db/schema'
 import { STAGE_ORDER, type BlockKind, type Graph } from '@/domain/graph'
 import { canReopen, canTransition, rollUpRunStatus, type NodeState, type RunStatus } from '@/domain/states'
 import { appendEventSync, type DbHandle, type EventType } from '@/engine/events'
@@ -12,6 +12,7 @@ import { clip, redact } from '@/engine/redact'
 import { MAX_REVISIONS, takeRecordedDecision, type Decision } from '@/engine/approvals'
 import { imagePathsFor } from '@/engine/attachments'
 import { assessRisk, type RiskAssessment, type TestFacts } from '@/engine/risk'
+import { installCommandFor, installDependencies, type InstallResult } from '@/engine/install'
 import type { TestRun } from '@/engine/test-runner'
 import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
 import { claudeProvider } from '@/providers/claude'
@@ -45,6 +46,8 @@ export type ExecutorDeps = {
   createWorktree?: (repoPath: string, runId: string, startPoint?: string, request?: string) => RunWorkspace
   /** Reads whether a request is front end or back end, for a block with a model per area. */
   classifyArea?: (request: string) => Promise<Area | null>
+  /** Installs the project's dependencies in the run's copy, once, before the builder starts. */
+  installDependencies?: (dir: string) => Promise<InstallResult | null>
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -54,6 +57,7 @@ const defaultDeps: ExecutorDeps = {
     throw new NonRetriableError(`Unknown provider ${id}`)
   },
   createWorktree: (repo, runId, startPoint, request) => createRunWorktree(repo, runId, undefined, startPoint, request),
+  installDependencies,
 }
 
 const MAX_LISTED_FILES = 20
@@ -359,6 +363,12 @@ async function runProviderNode(
   })
   if ('outcome' in opened) return opened
 
+  // The copy is a fresh worktree, without node_modules: install once, before the first build, so the agent and the
+  // tests work against the project's real dependencies. A failed install is said on the card; the run carries on.
+  if (block.kind === 'build' && workspace.workdir && deps.installDependencies && !alreadyInstalled(runId)) {
+    await prepareDependencies(runId, opened, block, workspace.workdir, deps.installDependencies)
+  }
+
   for (let attempt = freshNode(opened.id).attempt; attempt <= MAX_ATTEMPTS; attempt++) {
     // Held until the attempt ends, then written in the same transaction as its outcome.
     const measured: TestRun[] = []
@@ -485,6 +495,32 @@ async function runProviderNode(
 }
 
 // What the tests of this run measured, read back from its evidence: the gate is judged on records, not on a summary.
+function alreadyInstalled(runId: string): boolean {
+  return db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.installed'))).get() !== undefined
+}
+
+async function prepareDependencies(
+  runId: string,
+  node: NodeRow,
+  block: PlannedBlock,
+  dir: string,
+  install: (dir: string) => Promise<InstallResult | null>,
+): Promise<void> {
+  const step = (text: string, tx: DbHandle) =>
+    appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: node.attempt, text } }, tx)
+  const command = installCommandFor(dir)
+  if (!command) return
+  withTx(tx => step(strings.run.installing(command), tx))
+  const result = await install(dir)
+  withTx(tx => {
+    if (result) {
+      const seconds = Math.max(1, Math.round(result.durationMs / 1000))
+      step(result.ok ? strings.run.installed(seconds) : strings.run.installFailed(clip(redact(result.outputTail).trim().split('\n').slice(-2).join(' '), 200)), tx)
+    }
+    appendEventSync({ runId, type: 'run.installed', payload: { command, ok: result?.ok ?? false } }, tx)
+  })
+}
+
 /** A command written on a Tests block: one line, of a sane length, or none at all. */
 function ownCommand(b: { kind: string; config: Record<string, unknown> }): { testCommand?: string } {
   const v = b.config.testCommand

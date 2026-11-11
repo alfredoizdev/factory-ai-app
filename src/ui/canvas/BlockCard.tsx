@@ -176,7 +176,8 @@ export function BlockCard({
         }}
       />
       {view.state === 'running' && (
-        <span style={{ position: 'absolute', right: 12, top: 14 }}>
+        // Bottom left, clear of the header, where the model chip and the actions sit.
+        <span style={{ position: 'absolute', left: 14, bottom: 12 }}>
           <WorkingSpinner blockId={block.id} />
         </span>
       )}

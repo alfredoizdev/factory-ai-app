@@ -479,3 +479,36 @@ test('each Tests block runs its own command, and one without falls back to the p
   await drive(runId, provider)
   expect(commands).toEqual(['npm test', 'npm run lint'])
 })
+
+test('dependencies are installed once in the copy, before the builder, and the card says so', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join: j } = await import('node:path')
+  const { strings } = await import('@/ui/strings')
+  const copy = mkdtempSync(j(tmpdir(), 'factory-copy-'))
+  writeFileSync(j(copy, 'package.json'), '{}')
+  writeFileSync(j(copy, 'pnpm-lock.yaml'), '')
+  const runId = await newRun({ repoPath: '/repo' })
+  const order: string[] = []
+  const provider: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute(input) {
+      order.push(input.blockKind)
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  try {
+    await orchestrateRun(runId, step, {
+      resolveProvider: () => provider,
+      createWorktree: () => ({ path: copy, branch: 'ai/x', baseCommit: 'abc' }),
+      installDependencies: async dir => (order.push(`install:${dir === copy}`), { command: 'pnpm install', ok: true, durationMs: 2400, outputTail: '' }),
+    })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  expect(order.filter(o => o.startsWith('install'))).toEqual(['install:true'])
+  expect(order.indexOf('install:true')).toBeLessThan(order.indexOf('build'))
+  const steps = (await payloadOf(runId, 'node.step', 'build')).map(p => p.text)
+  expect(steps[0]).toBe(strings.run.installing('pnpm install --frozen-lockfile --prefer-offline'))
+  expect(steps[1]).toBe(strings.run.installed(2))
+})

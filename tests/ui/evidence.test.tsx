@@ -198,3 +198,8 @@ test('the event bar shows the person\'s note when work is sent back', async () =
     isClaim: false,
   })
 })
+
+test('a failed command whose counted tests all passed does not read as a pass', () => {
+  expect(strings.summary.testsFailed(77, 0, 77)).toMatch(/failed, although the 77 tests it counted passed/)
+  expect(strings.summary.testsFailed(77, 0, 77)).not.toMatch(/0 failed/)
+})

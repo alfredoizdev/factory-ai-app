@@ -93,8 +93,12 @@ export const strings = {
       unknown: 'Stopped. The cause was recorded, but it is not one this screen knows.',
     },
     testsPassed: (passed: number, total: number) => `${passed} of ${total} passed.`,
+    // Every counted test passed but the command still failed: something outside the counted tests broke, most often a
+    // test file that could not even load. Saying "0 failed" there would read as a pass.
     testsFailed: (passed: number, failed: number, total: number) =>
-      `${passed} of ${total} passed. ${failed} failed.`,
+      failed === 0
+        ? `The test command failed, although the ${total} tests it counted passed. Some test files probably could not load.`
+        : `${passed} of ${total} passed. ${failed} failed.`,
     testsRunning: (total: number) => `Running ${total} ${total === 1 ? 'test' : 'tests'}.`,
     jobsFinished: (count: number) => `${count} agent ${count === 1 ? 'job' : 'jobs'} finished.`,
     passedWithoutCounts: 'Passed, but no test counts were recorded.',
@@ -384,6 +388,9 @@ export const strings = {
     cancelFailed: 'The run could not be cancelled.',
     statusLabel: 'Run',
     connecting: 'Connecting to the run',
+    installing: (command: string) => `Installing the project's dependencies in the agent's copy: ${command}`,
+    installed: (seconds: number) => `Dependencies installed in ${seconds}s.`,
+    installFailed: (said: string) => `Could not install the dependencies, so tests may not load. It said: ${said}`,
     noSuchBranch: (branch: string) => `There is no branch called ${branch} in your project.`,
     lastRun: (state: string) => `This run: ${state.toLowerCase()}`,
     status: {
