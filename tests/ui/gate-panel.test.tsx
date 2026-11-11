@@ -109,7 +109,7 @@ test('there is one box to write in, whatever the moment', () => {
 
 const approved = { eligible: true, kept: false, delivered: false, branch: 'ai/outline-buttons-abc123', commit: null, files: [], appliedTo: null, current: 'main', returnTo: null, pushed: false, pullRequestUrl: null }
 
-test('done: the branch name is suggested and editable, keeping uses it, and the project can be switched there and back', async () => {
+test('done: the branch name is the person\'s, with a suggestion on request, keeping uses it, and the project can be switched there and back', async () => {
   let state: Record<string, unknown> = approved
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/branch-name')) return new Response(JSON.stringify({ name: 'ai/watch-videos-outline-abc123' }))
@@ -127,6 +127,9 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   vi.stubGlobal('fetch', fetchMock)
   render(<Card mode="done" />)
   const field = await screen.findByLabelText(new RegExp(strings.delivery.branchName))
+  // Empty until the person writes one or asks for a suggestion: nothing fills it on its own.
+  expect(field).toHaveValue('')
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.suggestName) }))
   await waitFor(() => expect(field).toHaveValue('ai/watch-videos-outline-abc123'))
   fireEvent.change(field, { target: { value: 'feature/my-name' } })
   fireEvent.click(screen.getByRole('button', { name: strings.delivery.moreOptions }))

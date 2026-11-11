@@ -35,8 +35,9 @@ export function ResultSection({
   const [delivery, setDelivery] = useState<Delivery | null>(null)
   const [busy, setBusy] = useState<Mode | 'follow' | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
-  // The branch name, suggested by the app and the person's to change. null: the suggestion has not arrived yet.
-  const [branchName, setBranchName] = useState<string | null>(null)
+  // The branch name the person writes, or asks the app to suggest. Empty: one is suggested when the change is saved.
+  const [branchName, setBranchName] = useState('')
+  const [suggesting, setSuggesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -50,19 +51,19 @@ export function ResultSection({
     }
   }, [runId])
 
-  // A name is suggested only while there is still a branch to name.
-  const needsName = delivery?.eligible === true && !delivery.kept
-  useEffect(() => {
-    if (!needsName) return
-    let live = true
-    fetch(`/api/runs/${runId}/branch-name`)
-      .then(r => (r.ok ? (r.json() as Promise<{ name?: string }>) : null))
-      .then(d => live && setBranchName(current => current ?? d?.name ?? ''))
-      .catch(() => live && setBranchName(current => current ?? ''))
-    return () => {
-      live = false
+  // A name is suggested only when asked for: nothing fills the field behind the person's back.
+  async function suggestName() {
+    setSuggesting(true)
+    try {
+      const res = await fetch(`/api/runs/${runId}/branch-name`)
+      const body = (await res.json().catch(() => null)) as { name?: string } | null
+      if (res.ok && body?.name) setBranchName(body.name)
+    } catch {
+      // The field stays as it was; saving with it empty still gets a suggested name.
+    } finally {
+      setSuggesting(false)
     }
-  }, [runId, needsName])
+  }
 
   async function bring(mode: Mode) {
     setBusy(mode)
@@ -71,7 +72,7 @@ export function ResultSection({
       const res = await fetch(`/api/runs/${runId}/delivery`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(mode === 'branch' || mode === 'apply' ? { mode, name: branchName ?? '' } : { mode }),
+        body: JSON.stringify(mode === 'branch' || mode === 'apply' ? { mode, name: branchName.trim() } : { mode }),
       })
       const body = (await res.json().catch(() => null)) as (Delivery & { error?: string }) | null
       if (!res.ok || !body) return setError(body?.error ?? strings.run.startFailed)
@@ -147,21 +148,32 @@ export function ResultSection({
           </div>
         ) : (
           <>
-            <label style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
-              {strings.delivery.branchName}
-              <input
-                value={branchName ?? ''}
-                placeholder={branchName === null ? strings.delivery.suggesting : ''}
-                disabled={branchName === null || busy !== null}
-                spellCheck={false}
-                onChange={e => setBranchName(e.target.value)}
-                style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
-              />
+            <div style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
+              <label htmlFor={`branch-name-${runId}`}>{strings.delivery.branchName}</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  id={`branch-name-${runId}`}
+                  value={branchName}
+                  placeholder={strings.delivery.branchPlaceholder}
+                  disabled={busy !== null || suggesting}
+                  spellCheck={false}
+                  onChange={e => setBranchName(e.target.value)}
+                  style={{ flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
+                />
+                <button
+                  type="button"
+                  disabled={busy !== null || suggesting}
+                  onClick={() => void suggestName()}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12, fontWeight: 600, cursor: suggesting ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  {suggesting ? <WorkingSpinner blockId="suggest" size={12} /> : <SparkIcon />} {suggesting ? strings.delivery.suggesting : strings.delivery.suggestName}
+                </button>
+              </div>
               <span style={{ fontSize: 11, lineHeight: 1.4 }}>{strings.delivery.branchNameHint}</span>
-            </label>
+            </div>
             <button
               type="button"
-              disabled={busy !== null || branchName === null}
+              disabled={busy !== null || suggesting}
               onClick={() => void bring('branch')}
               style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
             >
@@ -253,4 +265,13 @@ function primaryButton(busy: unknown): CSSProperties {
 
 function secondaryButton(busy: unknown): CSSProperties {
   return { padding: '8px 12px', borderRadius: 8, border: `1px solid ${theme.tint('passed', 0.6)}`, background: 'transparent', color: '#b9dcc5', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }
+}
+
+/** A small spark: "let the app suggest one". */
+function SparkIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 1.5 9.4 6.6 14.5 8 9.4 9.4 8 14.5 6.6 9.4 1.5 8 6.6 6.6 8 1.5Z" />
+    </svg>
+  )
 }
