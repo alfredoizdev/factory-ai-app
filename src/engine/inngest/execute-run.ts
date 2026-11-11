@@ -13,6 +13,7 @@ import { clip, redact } from '@/engine/redact'
 import { MAX_REVISIONS, takeRecordedDecision, type Decision } from '@/engine/approvals'
 import { imagePathsFor } from '@/engine/attachments'
 import { assessRisk, type RiskAssessment, type TestFacts } from '@/engine/risk'
+import { copyBaseInto, type BaseCopy } from '@/engine/base'
 import { installCommandFor, installDependencies, type InstallResult } from '@/engine/install'
 import type { TestRun } from '@/engine/test-runner'
 import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
@@ -49,6 +50,8 @@ export type ExecutorDeps = {
   classifyArea?: (request: string) => Promise<Area | null>
   /** Installs the project's dependencies in the run's copy, once, before the builder starts. */
   installDependencies?: (dir: string) => Promise<InstallResult | null>
+  /** Copies the project's prepared base's dependencies into the run's copy instead, when its lockfile matches. */
+  copyBase?: (runId: string, dir: string) => BaseCopy
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -59,6 +62,10 @@ const defaultDeps: ExecutorDeps = {
   },
   createWorktree: (repo, runId, startPoint, request) => createRunWorktree(repo, runId, undefined, startPoint, request),
   installDependencies,
+  copyBase: (runId, dir) => {
+    const projectId = db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)).get()?.p
+    return projectId ? copyBaseInto(projectId, dir) : { copied: false, reason: 'no-base' }
+  },
 }
 
 const MAX_LISTED_FILES = 20
@@ -375,7 +382,7 @@ async function runProviderNode(
   // The copy is a fresh worktree, without node_modules: install once, before the first build, so the agent and the
   // tests work against the project's real dependencies. A failed install is said on the card; the run carries on.
   if (block.kind === 'build' && workspace.workdir && deps.installDependencies && !alreadyInstalled(runId)) {
-    await prepareDependencies(runId, opened, block, workspace.workdir, deps.installDependencies)
+    await prepareDependencies(runId, opened, block, workspace.workdir, deps.installDependencies, deps.copyBase)
   }
 
   for (let attempt = freshNode(opened.id).attempt; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -518,12 +525,22 @@ async function prepareDependencies(
   block: PlannedBlock,
   dir: string,
   install: (dir: string) => Promise<InstallResult | null>,
+  copyBase?: (runId: string, dir: string) => BaseCopy,
 ): Promise<void> {
   const step = (text: string, tx: DbHandle) =>
     appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: node.attempt, text } }, tx)
   const command = installCommandFor(dir)
   if (!command) return
-  withTx(tx => step(strings.run.installing(command), tx))
+  // The project's prepared base, when this copy's lockfile is the one it was installed from: copied, not installed.
+  const copied = copyBase?.(runId, dir)
+  if (copied?.copied) {
+    withTx(tx => {
+      step(strings.run.copiedFromBase(Math.max(1, Math.round(copied.ms / 1000))), tx)
+      appendEventSync({ runId, type: 'run.installed', payload: { command, ok: true, fromBase: true } }, tx)
+    })
+    return
+  }
+  withTx(tx => step(copied && copied.reason === 'different-lockfile' ? strings.run.installingChanged(command) : strings.run.installing(command), tx))
   const result = await install(dir)
   withTx(tx => {
     if (result) {

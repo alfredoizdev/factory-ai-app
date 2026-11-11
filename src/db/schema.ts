@@ -17,6 +17,14 @@ export const projects = sqliteTable('projects', {
   // The person's choice: a run whose change is measured as low risk does not stop at the human check. Off unless
   // they turn it on; never a default.
   autoApproveLowRisk: integer('auto_approve_low_risk', { mode: 'boolean' }).notNull().default(false),
+  // The prepared base: a copy of the main branch with its dependencies installed once, which every task's working
+  // copy starts from instead of installing again. 'none' until prepared; 'installing', 'ready' or 'failed' after.
+  baseStatus: text('base_status').notNull().default('none'),
+  baseCommit: text('base_commit'),
+  // A fingerprint of the lockfile the base was installed from: a task whose lockfile differs installs for itself.
+  baseLockHash: text('base_lock_hash'),
+  baseMessage: text('base_message'),
+  baseUpdatedAt: text('base_updated_at'),
   createdAt: text('created_at').notNull(),
 })
 

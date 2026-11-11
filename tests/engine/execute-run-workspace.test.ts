@@ -560,3 +560,33 @@ describe('the reviewer', () => {
     expect(node(runId, 'human').state).toBe('waiting_approval')
   })
 })
+
+test('a copy whose lockfile matches the prepared base gets its dependencies by copy, and nothing is installed', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join: j } = await import('node:path')
+  const { strings } = await import('@/ui/strings')
+  const copy = mkdtempSync(j(tmpdir(), 'factory-copy-'))
+  writeFileSync(j(copy, 'package.json'), '{}')
+  writeFileSync(j(copy, 'pnpm-lock.yaml'), '')
+  const runId = await newRun({ repoPath: '/repo' })
+  let installed = false
+  const provider: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute() {
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  try {
+    await orchestrateRun(runId, step, {
+      resolveProvider: () => provider,
+      createWorktree: () => ({ path: copy, branch: 'ai/x', baseCommit: 'abc' }),
+      installDependencies: async () => ((installed = true), null),
+      copyBase: () => ({ copied: true, ms: 800 }),
+    })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  expect(installed).toBe(false)
+  expect((await payloadOf(runId, 'node.step', 'build')).map(p => p.text)[0]).toBe(strings.run.copiedFromBase(1))
+})

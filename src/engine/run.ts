@@ -1,3 +1,4 @@
+import { baseIsStale, prepareBase } from '@/engine/base'
 import { branchCommit, defaultBranch, freshestStart } from '@/engine/branches'
 import { createHash } from 'node:crypto'
 import { desc, eq, sql } from 'drizzle-orm'
@@ -180,6 +181,9 @@ export async function createRun(input: {
       // starts behind what was merged there. Any other branch the person picked is used exactly as it is in their folder.
       baseCommit = branch === main ? ((await freshestStart(project.repoPath, branch))?.commit ?? null) : branchCommit(project.repoPath, branch)
       if (!baseCommit) throw new StartBranchError(branch)
+      // The prepared base is rebuilt in the background when main's lockfile moved on from the one it holds. This task
+      // installs for itself meanwhile; the next ones copy again.
+      if (branch === main && baseIsStale(wf.projectId, baseCommit)) void prepareBase(wf.projectId)
     }
   }
   // Latest published version only. The draft is never consulted.

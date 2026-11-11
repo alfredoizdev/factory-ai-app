@@ -21,6 +21,11 @@ export const strings = {
     duplicateSingleton: (label: string) => `Only one ${label} block is allowed.`,
     disabledRequired: (label: string) => `The ${label} block is required and cannot be disabled.`,
   },
+  projects: {
+    badName: 'Give the project a name of up to 80 characters, on one line.',
+    alreadyProject: 'That folder is a project already. Pick it from the project list.',
+    badCommand: 'A check needs a name and a one-line command.',
+  },
   ship: {
     shipIt: 'Ship it',
     stepPushed: 'Sent to GitHub',
@@ -473,6 +478,8 @@ export const strings = {
     connecting: 'Connecting to the run',
     installing: (command: string) => `Installing the project's dependencies in the agent's copy: ${command}`,
     installed: (seconds: number) => `Dependencies installed in ${seconds}s.`,
+    copiedFromBase: (seconds: number) => `Dependencies copied from the project's prepared base in ${seconds}s.`,
+    installingChanged: (command: string) => `This copy's dependencies differ from the project's prepared base, so they are installed fresh: ${command}`,
     installFailed: (said: string) => `Could not install the dependencies, so tests may not load. It said: ${said}`,
     noSuchBranch: (branch: string) => `There is no branch called ${branch} in your project.`,
     lastRun: (state: string) => `This run: ${state.toLowerCase()}`,
