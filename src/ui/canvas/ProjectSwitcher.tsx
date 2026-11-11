@@ -63,7 +63,7 @@ function BaseMark({ status }: { status: string }) {
  * The project the canvas is on, and every other one: switch, add a project, see whether this one's dependencies are
  * prepared (and prepare them again), rename it.
  */
-export function ProjectSwitcher({ workflowId, style }: { workflowId: string; style: CSSProperties }) {
+export function ProjectSwitcher({ workflowId, style, onOpenSettings }: { workflowId: string; style: CSSProperties; onOpenSettings?: () => void }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
   const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -154,6 +154,11 @@ export function ProjectSwitcher({ workflowId, style }: { workflowId: string; sty
                   <button type="button" onClick={() => setRenaming(current.name)} style={smallButton(false)}>
                     <PencilIcon /> {s.rename}
                   </button>
+                  {onOpenSettings && (
+                    <button type="button" onClick={() => (setOpen(false), onOpenSettings())} style={smallButton(false)}>
+                      ⚙ {s.settings}
+                    </button>
+                  )}
                 </div>
               )}
               <span style={{ display: 'flex', gap: 6, alignItems: 'flex-start', color: theme.dim, fontSize: 11.5 }}>

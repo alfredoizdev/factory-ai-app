@@ -38,7 +38,7 @@ test('reads the folder, shows what it found, and creates the project with the ch
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.setup.create) }))
   await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith('w9'))
   const sent = JSON.parse(String(fetchMock.mock.calls.find(([u, i]) => u === '/api/projects' && i?.method === 'POST')![1]!.body))
-  expect(sent).toEqual({ path: '/Users/me/shop', name: 'shop', testCommand: 'pnpm test', checks: [{ label: 'Lint', command: 'pnpm lint' }] })
+  expect(sent).toEqual({ path: '/Users/me/shop', name: 'shop', testCommand: 'pnpm test', checks: [{ label: 'Lint', command: 'pnpm lint' }], autoApproveLowRisk: false })
 })
 
 test('a folder that is not a repository says why', async () => {

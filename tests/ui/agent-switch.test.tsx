@@ -29,11 +29,12 @@ const noRepo = { projectId: 'p1', repoPath: null, testCommand: null, autoApprove
 const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
 const runButton = () => screen.getByRole('button', { name: strings.run.run })
 
-test('the demo is the default, and choosing Claude shows where it works and that it is not sandboxed', () => {
+test('the demo is the default without a folder; the project settings open in their own window, saying Claude is not sandboxed', () => {
   render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={noRepo} />)
   expect(screen.getByLabelText(strings.settings.agentLabel)).toHaveValue('demo')
   expect(screen.queryByTestId('agent-settings')).toBeNull()
   fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+  fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
   expect(screen.getByTestId('agent-settings')).toBeInTheDocument()
   expect(screen.getByText(strings.settings.notSandboxed)).toBeInTheDocument()
 })
@@ -42,11 +43,13 @@ test('Claude cannot be run until the project has a repository', () => {
   const { unmount } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={noRepo} />)
   fireEvent.change(screen.getByLabelText(strings.run.requestLabel), { target: { value: 'make it blue' } })
   fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+  fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
   expect(runButton()).toBeDisabled()
   unmount()
   render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
   fireEvent.change(screen.getByLabelText(strings.run.requestLabel), { target: { value: 'make it blue' } })
   fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+  fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
   expect(runButton()).toBeEnabled()
   expect(screen.getByLabelText(strings.settings.repoLabel)).toHaveValue('/repo')
 })
@@ -62,6 +65,7 @@ test('after a save the button itself says so, and an edit makes it a Save button
   try {
     const { findByRole } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
     fireEvent.click(screen.getByRole('button', { name: strings.settings.save }))
     const saved = await findByRole('button', { name: strings.settings.savedButton })
     expect(saved).toHaveAttribute('data-state', 'saved')
@@ -78,6 +82,7 @@ test('a refused save turns the button red and says why', async () => {
   try {
     const { findByRole } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
     fireEvent.click(screen.getByRole('button', { name: strings.settings.save }))
     expect(await findByRole('alert')).toHaveTextContent(strings.settings.notRepo)
     expect(screen.getByRole('button', { name: strings.settings.save })).toHaveAttribute('data-state', 'failed')
@@ -96,6 +101,7 @@ test('choosing a folder fills the path and its test command, then saves them', a
   try {
     const { findByRole } = render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
     fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.settings.choose) }))
     expect(await findByRole('button', { name: strings.settings.savedButton })).toBeInTheDocument()
     expect(screen.getByLabelText(strings.settings.repoLabel)).toHaveValue('/Users/me/Desktop/comets-web')
@@ -113,6 +119,7 @@ test('closing the folder window changes nothing', async () => {
   try {
     render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
     fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.settings.choose) }))
     await vi.waitFor(() => expect(screen.getByRole('button', { name: new RegExp(strings.settings.choose) })).toBeEnabled())
     expect(screen.getByLabelText(strings.settings.repoLabel)).toHaveValue('/repo')
@@ -129,6 +136,7 @@ test('the low-risk switch starts off and saves the moment it is turned on', asyn
   try {
     render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
+    fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
     const box = screen.getByRole('checkbox', { name: new RegExp(strings.settings.autoLowLabel) })
     expect(box).not.toBeChecked()
     fireEvent.click(box)

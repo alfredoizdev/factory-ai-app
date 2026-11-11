@@ -19,6 +19,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const [name, setName] = useState('')
   const [testCommand, setTestCommand] = useState('')
   const [checks, setChecks] = useState<Set<CheckName>>(new Set())
+  const [autoLow, setAutoLow] = useState(false)
   const [busy, setBusy] = useState<'pick' | 'read' | 'create' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const panel = useRef<HTMLDivElement>(null)
@@ -80,6 +81,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
           name,
           testCommand: testCommand.trim() || null,
           checks: EXTRA.filter(c => checks.has(c) && analysis.commands[c]).map(c => ({ label: s.checkLabel[c], command: analysis.commands[c]! })),
+          autoApproveLowRisk: autoLow,
         }),
       })
       const body = (await res.json().catch(() => null)) as { workflowId?: string; error?: string } | null
@@ -177,6 +179,13 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
                 ))}
               </div>
             )}
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13 }}>
+              <input type="checkbox" checked={autoLow} onChange={e => setAutoLow(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>
+                {strings.settings.autoLowLabel}
+                <span style={{ display: 'block', fontSize: 12, color: theme.dim, lineHeight: 1.4 }}>{strings.settings.autoLowHelp}</span>
+              </span>
+            </label>
             <span style={{ fontSize: 12, color: theme.dim, lineHeight: 1.45 }}>{s.installNote(analysis.packageManager)}</span>
             <button type="button" disabled={busy !== null || name.trim() === ''} onClick={() => void create()} style={{ ...button(true), justifySelf: 'start' }}>
               {busy === 'create' ? <WorkingSpinner blockId="create" size={14} /> : null} {s.create}

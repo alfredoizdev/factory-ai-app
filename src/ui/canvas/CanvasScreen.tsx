@@ -3,6 +3,7 @@
 import { PastTasks } from './PastTasks'
 import { TasksDrawer } from './TasksDrawer'
 import { ProjectSwitcher } from './ProjectSwitcher'
+import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { shipView } from './shipView'
 import type { ShipState } from '@/engine/ship'
 import { useCallback, useRef, useState } from 'react'
@@ -12,7 +13,6 @@ import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { EventBarList } from '@/ui/EventBar'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
-import { AgentSettings } from './AgentSettings'
 import { WorkingSpinner } from './BlockCard'
 import { CommandCard, type CardMode } from './CommandCard'
 import { imagesBusy, readyImageIds, type ComposerImage } from './Composer'
@@ -214,13 +214,8 @@ export function CanvasScreen({
   const canRun = !busy && !live && request.trim() !== '' && !claudeBlocked && !imagesBusy(images)
 
   // The sidebar keeps the agent's settings; what to ask for lives in the command card on the canvas.
-  const agentPanel = settings && agent === CLAUDE_PROVIDER_ID ? (
-    <>
-      <h2 style={{ margin: 0, fontSize: 14 }}>{strings.settings.agentLabel}: {strings.settings.agentClaude}</h2>
-      <AgentSettings settings={settings} onSaved={setSettings} />
-      {claudeBlocked && <span style={{ fontSize: 12.5, color: theme.waiting }}>{strings.settings.needsRepo}</span>}
-    </>
-  ) : undefined
+  // The project's settings live with the project (its menu, and the gear beside it), not with a task.
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   // One card follows the run: ask, watch, decide, continue.
   const mode: CardMode =
@@ -236,7 +231,16 @@ export function CanvasScreen({
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* The controls stay in the top bar, visible with the sidebar closed: which agent, run, stop, and the run's state. */}
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', minHeight: 36, borderBottom: `1px solid ${theme.border}`, background: theme.bg }}>
-        <ProjectSwitcher workflowId={workflowId} style={headerButton} />
+        <ProjectSwitcher workflowId={workflowId} style={headerButton} onOpenSettings={settings ? () => setSettingsOpen(true) : undefined} />
+        {settings && (
+          <button type="button" aria-label={strings.projectSettings.open} title={strings.projectSettings.open} onClick={() => setSettingsOpen(true)} style={{ ...headerButton, padding: '6px 9px', display: 'grid', placeItems: 'center' }}>
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+              <circle cx="8" cy="8" r="2.2" />
+              <path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
+        {settingsOpen && settings && <ProjectSettingsDialog settings={settings} onClose={() => setSettingsOpen(false)} onSaved={setSettings} />}
         {settings && (
           <select
             aria-label={strings.settings.agentLabel}
@@ -265,6 +269,11 @@ export function CanvasScreen({
         >
           {busy ? strings.run.starting : strings.run.run}
         </button>
+        {claudeBlocked && (
+          <button type="button" onClick={() => setSettingsOpen(true)} style={{ background: 'none', border: 'none', padding: 0, fontSize: 12.5, color: theme.waiting, cursor: 'pointer', textDecoration: 'underline' }}>
+            {strings.settings.needsRepo}
+          </button>
+        )}
         <button type="button" style={headerButton} disabled={!live} onClick={cancel}>
           {strings.run.cancel}
         </button>
@@ -450,7 +459,6 @@ export function CanvasScreen({
           runBlocks={run?.blocks}
           highlightedId={highlightedId}
           flushRef={flushRef}
-          sidebarTop={agentPanel}
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
       </div>

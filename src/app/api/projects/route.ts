@@ -17,6 +17,7 @@ const createSchema = z.object({
   name: z.string().max(200),
   testCommand: z.string().max(500).nullable(),
   checks: z.array(z.object({ label: z.string().max(200), command: z.string().max(500) })).max(10),
+  autoApproveLowRisk: z.boolean().optional(),
 })
 
 // Makes a folder a project, then prepares its base in the background (installing its dependencies once).

@@ -38,7 +38,14 @@ const COMMAND = /^[^\n\r\0]{1,500}$/
  * Makes a repository a project: its settings, its flow (the default one, plus a Tests block per extra check chosen),
  * published so a task can run at once. Refused when the folder is not a repository's top folder or is a project already.
  */
-export async function createProject(input: { path: string; name: string; testCommand: string | null; checks: readonly ExtraCheck[] }): Promise<{ projectId: string; workflowId: string }> {
+export async function createProject(input: {
+  path: string
+  name: string
+  testCommand: string | null
+  checks: readonly ExtraCheck[]
+  /** The person's own choice at setup; off unless they turn it on. */
+  autoApproveLowRisk?: boolean
+}): Promise<{ projectId: string; workflowId: string }> {
   const repoPath = validRepoRoot(input.path.trim())
   const name = input.name.trim()
   if (!NAME.test(name)) throw new ProjectSettingsError(strings.projects.badName)
@@ -61,7 +68,7 @@ export async function createProject(input: { path: string; name: string; testCom
     position: { x: testsColumn, y: (i + 1) * 340 },
   }))
   db.transaction(tx => {
-    tx.insert(projects).values({ id: projectId, projectId, name, repoPath, testCommand, createdAt: now }).run()
+    tx.insert(projects).values({ id: projectId, projectId, name, repoPath, testCommand, autoApproveLowRisk: input.autoApproveLowRisk === true, createdAt: now }).run()
     tx.insert(workflows).values({ id: workflowId, projectId, name, draftJson: JSON.stringify(graph), createdAt: now, updatedAt: now }).run()
   })
   await saveDraft(workflowId, { blocks: [...graph.blocks, ...extra] })

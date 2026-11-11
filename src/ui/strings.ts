@@ -21,7 +21,13 @@ export const strings = {
     duplicateSingleton: (label: string) => `Only one ${label} block is allowed.`,
     disabledRequired: (label: string) => `The ${label} block is required and cannot be disabled.`,
   },
+  projectSettings: {
+    title: 'Project settings',
+    open: 'Project settings',
+    what: 'These belong to the project, not to a task: every task of this project uses them.',
+  },
   projectSwitcher: {
+    settings: 'Settings',
     loading: 'Projects…',
     add: 'Add project',
     rename: 'Rename',
