@@ -10,7 +10,9 @@ export type RunEventType =
   | 'run.created' | 'run.started' | 'run.completed' | 'run.failed' | 'run.cancelled' | 'run.waiting_approval'
   // The run's own working copy: branch, path and the commit it started from.
   | 'run.workspace'
-  // The approved change was brought into the person's project: committed on the run's branch, applied to their checkout.
+  // The approved change was committed on its own branch in the person's repository, their checkout untouched.
+  | 'run.kept'
+  // The approved change was applied to the person's checkout, uncommitted.
   | 'run.delivered'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'

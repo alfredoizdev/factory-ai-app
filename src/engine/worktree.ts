@@ -17,8 +17,30 @@ const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, en
  * `startPoint` (a commit) makes the worktree start from somewhere other than the repository's HEAD: a follow-up run
  * starts from its parent's approved commit, so it builds on that change.
  */
-export function createRunWorktree(repoPath: string, runId: string, root: string = DEFAULT_WORKTREE_ROOT, startPoint?: string): RunWorkspace {
-  const branch = `factory/${runId.toLowerCase()}`
+/**
+ * A branch name a person can read, from what they asked for: `ai/outline-buttons-in-the-other-colour-k9x2qa`. The
+ * run's last characters keep it unique; accents and symbols are dropped so it is a valid, portable git name.
+ */
+export function branchNameFor(runId: string, request?: string): string {
+  const slug = (request ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/g, '')
+  return `ai/${slug || 'change'}-${runId.slice(-6).toLowerCase()}`
+}
+
+export function createRunWorktree(
+  repoPath: string,
+  runId: string,
+  root: string = DEFAULT_WORKTREE_ROOT,
+  startPoint?: string,
+  request?: string,
+): RunWorkspace {
+  const branch = branchNameFor(runId, request)
   const path = join(root, runId)
   // A replay of the same step after a crash finds the worktree it already made.
   if (existsSync(path)) {

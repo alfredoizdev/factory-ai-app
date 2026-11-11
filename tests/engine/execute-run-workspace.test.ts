@@ -80,7 +80,7 @@ test('the worktree is made before any block runs, and every block is handed its 
   const made = vi.fn((_repo: string, id: string) => ({ path: `/wt/${id}`, branch: `factory/${id}`, baseCommit: 'abc' }))
   const provider = filesProvider({})
   await drive(runId, provider, made)
-  expect(made).toHaveBeenCalledWith('/repo', runId, undefined) // no start point: an ordinary run starts from HEAD
+  expect(made).toHaveBeenCalledWith('/repo', runId, undefined, 'do it') // no start point (from HEAD); the request names the branch
   const types = (await eventsSince(runId, 0)).map(e => e.type)
   expect(types.indexOf('run.workspace')).toBeLessThan(types.indexOf('node.started'))
   expect(await payloadOf(runId, 'run.workspace')).toEqual([{ branch: `factory/${runId}`, path: `/wt/${runId}`, baseCommit: 'abc' }])

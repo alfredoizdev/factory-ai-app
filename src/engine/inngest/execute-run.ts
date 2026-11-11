@@ -41,7 +41,7 @@ export type StepApi = {
 export type ExecutorDeps = {
   resolveProvider: (providerId: string) => AgentProvider
   /** Makes the run's working copy. Only called for a provider that works on files. `startPoint`: a follow-up's parent commit. */
-  createWorktree?: (repoPath: string, runId: string, startPoint?: string) => RunWorkspace
+  createWorktree?: (repoPath: string, runId: string, startPoint?: string, request?: string) => RunWorkspace
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -50,7 +50,7 @@ const defaultDeps: ExecutorDeps = {
     if (id === CLAUDE_PROVIDER_ID) return claudeProvider
     throw new NonRetriableError(`Unknown provider ${id}`)
   },
-  createWorktree: (repo, runId, startPoint) => createRunWorktree(repo, runId, undefined, startPoint),
+  createWorktree: (repo, runId, startPoint, request) => createRunWorktree(repo, runId, undefined, startPoint, request),
 }
 
 const MAX_LISTED_FILES = 20
@@ -645,8 +645,9 @@ function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Worksp
   try {
     // A follow-up starts from its parent's approved commit, recorded as its base when it was created.
     const startPoint = existing?.parentRunId ? (existing.baseCommit ?? undefined) : undefined
-    const make = deps.createWorktree ?? ((r: string, id: string, sp?: string) => createRunWorktree(r, id, undefined, sp))
-    const ws = make(plan.repoPath, runId, startPoint)
+    const make = deps.createWorktree ?? ((r: string, id: string, sp?: string, req?: string) => createRunWorktree(r, id, undefined, sp, req))
+    // The branch is named after the request, so a person can tell it apart in their own `git branch`.
+    const ws = make(plan.repoPath, runId, startPoint, plan.request)
     withTx(tx => {
       tx.update(runs).set({ worktreePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit }).where(eq(runs.id, runId)).run()
       appendEventSync({ runId, type: 'run.workspace', payload: { branch: ws.branch, path: ws.path, baseCommit: ws.baseCommit } }, tx)

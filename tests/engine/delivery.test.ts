@@ -208,3 +208,46 @@ function approveAndFinish(runId: string) {
   db.insert(approvals).values({ id: ulid(), projectId: human.projectId, runId, nodeRunId: human.id, decision: 'approved', actor: 'me', diffHash: 'h', createdAt: now(), consumedAt: now() }).run()
   db.update(runs).set({ status: 'completed' }).where(eq(runs.id, runId)).run()
 }
+
+// ---- keep it on its own branch ------------------------------------------------------------------------------------
+
+import { keepOnBranch } from '@/engine/delivery'
+
+test('keeping it on its own branch commits it there and leaves the person\'s checkout exactly as it was', async () => {
+  const { runId, repo, branch, base } = await finishedRun()
+  const kept = keepOnBranch(runId)
+  expect(kept).toMatchObject({ kept: true, delivered: false, branch, files: ['Button.tsx', 'page.tsx'] })
+  expect(git(repo, 'log', '-1', '--format=%s', branch)).toBe('Outline buttons in the other team colour')
+  expect(git(repo, 'show', `${branch}:page.tsx`)).toBe('button: outline\nfooter: same')
+  // Their side: same branch, same commit, same files, nothing pending.
+  expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
+  expect(git(repo, 'rev-parse', 'HEAD')).toBe(base)
+  expect(git(repo, 'status', '--porcelain')).toBe('')
+  expect(readFileSync(join(repo, 'page.tsx'), 'utf8')).toBe('button: white\nfooter: same\n')
+})
+
+test('keeping works even with unsaved work in the project, because it does not touch the checkout', async () => {
+  const { runId, repo } = await finishedRun()
+  writeFileSync(join(repo, 'notes.md'), 'mine\n')
+  expect(keepOnBranch(runId).kept).toBe(true)
+  expect(readFileSync(join(repo, 'notes.md'), 'utf8')).toBe('mine\n')
+})
+
+test('a run from before readable names gets one when it is kept', async () => {
+  const { runId, repo, wt } = await finishedRun()
+  git(wt, 'branch', '-m', `factory/${runId.toLowerCase()}`)
+  db.update(runs).set({ branch: `factory/${runId.toLowerCase()}` }).where(eq(runs.id, runId)).run()
+  const kept = keepOnBranch(runId)
+  expect(kept.branch).toMatch(/^ai\/outline-buttons-in-the-other-team-colour-[a-z0-9]{6}$/)
+  expect(git(repo, 'branch', '--list', 'factory/*')).toBe('')
+  expect(git(repo, 'log', '-1', '--format=%s', kept.branch!)).toBe('Outline buttons in the other team colour')
+})
+
+test('applying after keeping reuses the kept commit: one commit, not two', async () => {
+  const { runId, repo, branch, base } = await finishedRun()
+  const kept = keepOnBranch(runId)
+  const applied = deliverToProject(runId)
+  expect(applied.commit).toBe(kept.commit)
+  expect(git(repo, 'rev-list', '--count', `${base}..${branch}`)).toBe('1')
+  expect(readFileSync(join(repo, 'page.tsx'), 'utf8')).toBe('button: outline\nfooter: same\n')
+})

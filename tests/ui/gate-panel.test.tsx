@@ -106,3 +106,26 @@ test('there is one box to write in, whatever the moment', () => {
   expect(screen.queryAllByRole('textbox')).toHaveLength(0)
   expect(screen.getByText(strings.card.working)).toBeInTheDocument()
 })
+
+const approved = { eligible: true, kept: false, delivered: false, branch: 'ai/outline-buttons-abc123', commit: null, files: [], appliedTo: null }
+
+test('done: two ways to bring it over, and keeping it shows the branch and how to look at it', async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/delivery') && init?.method === 'POST') {
+      const { mode } = JSON.parse(String(init.body)) as { mode: string }
+      return new Response(JSON.stringify({ ...approved, kept: true, commit: '1234567abc', files: ['src/app/page.tsx'], delivered: mode === 'apply' }))
+    }
+    return new Response(JSON.stringify(approved))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  render(<Card mode="done" />)
+  const keep = await screen.findByRole('button', { name: new RegExp(strings.delivery.keepButton) })
+  expect(screen.getByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeInTheDocument()
+  fireEvent.click(keep)
+  expect(await screen.findByTestId('kept')).toHaveTextContent('git checkout ai/outline-buttons-abc123')
+  expect(screen.getByTestId('kept')).toHaveTextContent('1234567')
+  const sent = fetchMock.mock.calls.find(([, i]) => i?.method === 'POST')!
+  expect(JSON.parse(String(sent[1]!.body))).toEqual({ mode: 'branch' })
+  // Applying is still on offer after keeping.
+  expect(screen.getByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeInTheDocument()
+})
