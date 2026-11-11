@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { claudeArgs, createClaudeProvider, routeFor } from '@/providers/claude'
+import { claudeArgs, createClaudeProvider, routeFor, STOP_GRACE_MS } from '@/providers/claude'
 import type { AgentEvent } from '@/providers/types'
 import type { TestRun } from '@/engine/test-runner'
 import { strings } from '@/ui/strings'
@@ -103,6 +103,37 @@ test('no worktree means the agent is never started', async () => {
     { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir },
   ])
   expect(spawn).not.toHaveBeenCalled()
+})
+
+test('the builder starts in its own process group', async () => {
+  const child = fakeChild()
+  const spawn = vi.fn(() => child)
+  const pending = collect(createClaudeProvider({ spawn: spawn as never }).execute(build, { signal: signal() }))
+  finish(child, [{ type: 'result', is_error: false, result: 'ok' }])
+  await pending
+  expect((spawn.mock.calls[0] as unknown as [string, string[], { detached: boolean }])[2].detached).toBe(true)
+})
+
+test('cancelling signals the whole process group, then kills whatever is left after the grace period', async () => {
+  vi.useFakeTimers()
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+  try {
+    const child = Object.assign(fakeChild(), { pid: 4242 })
+    const controller = new AbortController()
+    const pending = collect(createClaudeProvider({ spawn: (() => child) as never }).execute(build, { signal: controller.signal }))
+    await vi.advanceTimersByTimeAsync(1)
+    controller.abort()
+    expect(kill).toHaveBeenCalledWith(-4242, 'SIGTERM')
+    expect(kill).not.toHaveBeenCalledWith(-4242, 'SIGKILL')
+    child.stdout.end()
+    child.emit('close', null)
+    await vi.advanceTimersByTimeAsync(STOP_GRACE_MS)
+    await pending
+    expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL')
+  } finally {
+    kill.mockRestore()
+    vi.useRealTimers()
+  }
 })
 
 test('cancelling stops the builder process', async () => {

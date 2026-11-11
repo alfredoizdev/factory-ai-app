@@ -13,6 +13,31 @@ import { strings } from '@/ui/strings'
 // sentence saying which milestone brings it — nothing here pretends to do work it does not do.
 
 const STDERR_TAIL = 600
+/** How long the builder's processes get to exit after SIGTERM before they are killed outright. */
+export const STOP_GRACE_MS = 3000
+
+type Child = ReturnType<typeof nodeSpawn>
+
+function signalTree(child: Child, sig: NodeJS.Signals): void {
+  // The builder runs as the leader of its own process group, so the group's id is its pid: signalling -pid reaches
+  // everything it started (a dev server, a watcher). Without a pid (it never started) only the handle is left.
+  try {
+    if (child.pid) {
+      process.kill(-child.pid, sig)
+      return
+    }
+  } catch {
+    // ESRCH: the whole group is already gone.
+    return
+  }
+  child.kill(sig)
+}
+
+/** Asks the builder and everything it started to stop, then makes sure they have. */
+function stopTree(child: Child): void {
+  signalTree(child, 'SIGTERM')
+  setTimeout(() => signalTree(child, 'SIGKILL'), STOP_GRACE_MS).unref()
+}
 
 export type ClaudeDeps = {
   spawn?: typeof nodeSpawn
@@ -47,12 +72,14 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
     return
   }
   const workdir = input.workdir
-  let child: ReturnType<typeof nodeSpawn>
+  let child: Child
   try {
     child = deps.spawn(deps.bin, claudeArgs(strings.providers.claude.buildPrompt(input.request)), {
       cwd: workdir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
+      // Its own process group, so stopping it stops what it started too.
+      detached: true,
     })
   } catch {
     yield { type: 'error', source: 'system', message: strings.providers.claude.notFound }
@@ -67,7 +94,7 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
     child.once('error', (e: NodeJS.ErrnoException) => resolve({ code: null, missing: e.code === 'ENOENT' }))
     child.once('close', (code: number | null) => resolve({ code, missing: false }))
   })
-  const stop = () => child.kill('SIGTERM')
+  const stop = () => stopTree(child)
   if (signal.aborted) stop()
   else signal.addEventListener('abort', stop, { once: true })
 
@@ -97,8 +124,9 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
     yield { type: 'error', source: 'system', message: [strings.providers.claude.exitedWithoutResult(code), tail].filter(Boolean).join(' ') }
   } finally {
     signal.removeEventListener('abort', stop)
-    // A builder still running after the stream ended (or after an abort) must not keep writing into the worktree.
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+    // Whatever the builder left running — itself after an abort, or a background process it started and walked away
+    // from — must not keep writing into the worktree once the block is over.
+    stopTree(child)
   }
 }
 

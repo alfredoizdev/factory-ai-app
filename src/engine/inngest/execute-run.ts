@@ -255,11 +255,13 @@ function skipNode(runId: string, block: PlannedBlock, reason: string = strings.r
 }
 
 // Evidence: the full record (with the redacted output tail) goes to its own table; the event carries numbers only, so
-// the browser never receives command output.
-function recordEvidence(runId: string, nodeRunId: string, blockId: string, data: TestRun): void {
-  withTx(tx => {
-    const node = freshNode(nodeRunId)
-    if (node.state !== 'running') return
+// the browser never receives command output. Written inside the transaction that ends the attempt, so a measurement
+// and the block's result are stored together or not at all: a crash in between cannot leave a measurement whose
+// block then re-runs and measures again.
+function writeEvidence(tx: DbHandle, node: NodeRow, blockId: string, measured: readonly TestRun[]): void {
+  if (node.state !== 'running') return
+  const { runId, id: nodeRunId } = node
+  for (const data of measured) {
     tx.insert(evidence)
       .values({ id: ulid(), projectId: node.projectId, runId, nodeRunId, kind: 'test_run', source: 'test-runner', dataJson: JSON.stringify(data), createdAt: now() })
       .run()
@@ -282,7 +284,7 @@ function recordEvidence(runId: string, nodeRunId: string, blockId: string, data:
       },
       tx,
     )
-  })
+  }
 }
 
 // What a finished block leaves behind besides its state: the usage the provider reported (cost is never stored for
@@ -317,6 +319,8 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
   if ('outcome' in opened) return opened
 
   for (let attempt = freshNode(opened.id).attempt; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Held until the attempt ends, then written in the same transaction as its outcome.
+    const measured: TestRun[] = []
     const result = await runAttempt(
       provider,
       block,
@@ -333,7 +337,7 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
           }
         })
       },
-      data => recordEvidence(runId, opened.id, block.id, data),
+      data => measured.push(data),
     )
 
     if (result.kind === 'cancelled') return { outcome: 'cancelled' }
@@ -341,6 +345,8 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
     if (result.kind === 'done') {
       const done = withTx(tx => {
         const node = freshNode(opened.id)
+        if (!canTransition(node.state as NodeState, 'passed')) return false
+        writeEvidence(tx, node, block.id, measured)
         const moved = transitionNode(tx, node, 'passed', {
           type: 'node.completed',
           payload: {
@@ -390,6 +396,7 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
       withTx(tx => {
         const node = freshNode(opened.id)
         if (node.state !== 'running') return
+        writeEvidence(tx, node, block.id, measured)
         tx.update(nodeRuns).set({ attempt: attempt + 1 }).where(eq(nodeRuns.id, node.id)).run()
         appendEventSync(
           {
@@ -412,8 +419,11 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
       continue
     }
 
-    const failed = withTx(tx =>
-      transitionNode(tx, freshNode(opened.id), 'failed', {
+    const failed = withTx(tx => {
+      const node = freshNode(opened.id)
+      if (!canTransition(node.state as NodeState, 'failed')) return false
+      writeEvidence(tx, node, block.id, measured)
+      return transitionNode(tx, node, 'failed', {
         type: 'node.failed',
         // messageSource says who wrote `message`: only a provider_error carries the provider's own words. The
         // column holds the cause code alone; the message lives in this event, the one place the canvas reads it.
@@ -424,8 +434,8 @@ async function runProviderNode(runId: string, plan: Plan, block: PlannedBlock, d
           attempt,
           ...(detail ? { detail } : {}),
         },
-      }, { failureCause: cause }),
-    )
+      }, { failureCause: cause })
+    })
     return { outcome: failed ? 'failed' : 'cancelled' }
   }
   return { outcome: 'failed' } // unreachable: the loop always returns

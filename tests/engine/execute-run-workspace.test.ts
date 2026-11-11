@@ -5,7 +5,7 @@ import { claims, evidence, nodeRuns, projects, runs, usageRecords, workflows } f
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
-import { createRun, publishVersion, saveDraft } from '@/engine/run'
+import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { TestRun } from '@/engine/test-runner'
 import type { AgentEvent, AgentProvider, BlockRoute } from '@/providers/types'
 import { strings } from '@/ui/strings'
@@ -170,4 +170,24 @@ test('the text of an exception a provider throws is redacted before it is logged
   expect(logged).toContain('crashed reading')
   expect(logged).not.toContain('hunter2hunter2')
   expect(logged).not.toContain('ghp_')
+})
+
+test('evidence commits together with the block\'s ending: a block that never ends records no measurement', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
+  const provider: AgentProvider = {
+    id: 'files', isDemo: false, needsWorkspace: true,
+    async *execute(input) {
+      if (input.blockKind === 'tests') {
+        yield { type: 'evidence', kind: 'test_run', data: testRun }
+        await cancelRun(runId) // the person cancels between the measurement and the result
+        yield { type: 'error', message: 'x', source: 'system', cause: 'tests_failed' }
+        return
+      }
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    },
+  }
+  await drive(runId, provider)
+  expect(node(runId, 'tests').state).toBe('cancelled')
+  expect(db.select().from(evidence).where(eq(evidence.runId, runId)).all()).toEqual([])
+  expect(await payloadOf(runId, 'node.evidence')).toEqual([])
 })
