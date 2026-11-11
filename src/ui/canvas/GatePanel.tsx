@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChangeUnderReview } from '@/engine/approvals'
 import { strings } from '@/ui/strings'
 import type { ComposerSend } from './Composer'
@@ -43,6 +44,7 @@ export function GateSection({
   const [review, setReview] = useState<Review | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const reason = note
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null)
@@ -138,7 +140,20 @@ export function GateSection({
           data-testid="gate-changes"
           style={{ display: 'grid', gap: 6, maxHeight: showDiff ? 260 : 180, overflowY: 'auto', padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}
         >
-          <div style={{ fontSize: 12.5, color: theme.dim }}>{review.files.length === 0 ? strings.gate.noFiles : strings.gate.filesChanged(review.files.length)}</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ fontSize: 12.5, color: theme.dim }}>{review.files.length === 0 ? strings.gate.noFiles : strings.gate.filesChanged(review.files.length)}</div>
+            {review.diff && (
+              <button
+                type="button"
+                aria-label={strings.gate.expandChanges}
+                title={strings.gate.expandChanges}
+                onClick={() => setExpanded(true)}
+                style={{ display: 'grid', placeItems: 'center', width: 26, height: 26, padding: 0, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', cursor: 'pointer' }}
+              >
+                <ExpandIcon />
+              </button>
+            )}
+          </div>
           {review.files.slice(0, 8).map(f => (
             <div key={f.path} style={{ display: 'flex', gap: 8, fontFamily: MONO, fontSize: 12, color: '#d6dce6' }}>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>
@@ -156,18 +171,13 @@ export function GateSection({
           )}
           {showDiff && (
             <pre data-testid="gate-diff" style={{ margin: 0, background: '#0b0e14', border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, fontSize: 12, lineHeight: 1.5 }}>
-              {review.diff.split('\n').map((line, i) => (
-                <div key={i} style={{ color: line.startsWith('+') ? '#86efac' : line.startsWith('-') ? '#fca5a5' : line.startsWith('@@') ? '#93c5fd' : '#9aa5b6',
-                  // Long lines wrap instead of running off the side; the indent keeps the +/− marker readable.
-                  whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', paddingLeft: '1.2em', textIndent: '-1.2em' }}>
-                  {line || ' '}
-                </div>
-              ))}
-              {review.truncated && <div style={{ color: theme.waiting }}>{strings.gate.truncated}</div>}
+              <DiffLines diff={review.diff} truncated={review.truncated} />
             </pre>
           )}
         </div>
       )}
+
+      {expanded && review && <ChangesModal files={review.files} diff={review.diff} truncated={review.truncated} onClose={() => setExpanded(false)} />}
 
       {/* Only a run that changed files has something to preview. */}
       {review && review.files.length > 0 && !decided && <PreviewButton runId={runId} />}
@@ -202,5 +212,84 @@ export function GateSection({
         </div>
       )}
     </>
+  )
+}
+
+/** The change, line by line: added in green, removed in red, positions in blue. Long lines wrap. */
+function DiffLines({ diff, truncated }: { diff: string; truncated: boolean }) {
+  return (
+    <>
+      {diff.split('\n').map((line, i) => (
+        <div
+          key={i}
+          style={{
+            color: line.startsWith('+') ? '#86efac' : line.startsWith('-') ? '#fca5a5' : line.startsWith('@@') ? '#93c5fd' : '#9aa5b6',
+            // Long lines wrap instead of running off the side; the indent keeps the +/− marker readable.
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            paddingLeft: '1.2em',
+            textIndent: '-1.2em',
+          }}
+        >
+          {line || ' '}
+        </div>
+      ))}
+      {truncated && <div style={{ color: theme.waiting }}>{strings.gate.truncated}</div>}
+    </>
+  )
+}
+
+/** The whole change, large, over the page. Closes with its ✕, Escape, or a click outside it. */
+function ChangesModal({ files, diff, truncated, onClose }: { files: Review['files']; diff: string; truncated: boolean; onClose: () => void }) {
+  const panel = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    panel.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return createPortal(
+    <div
+      data-testid="changes-modal"
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(5, 7, 11, 0.7)', display: 'grid', placeItems: 'center', padding: 24 }}
+    >
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-label={strings.gate.changesTitle}
+        tabIndex={-1}
+        onClick={e => e.stopPropagation()}
+        style={{ width: 'min(1100px, 100%)', height: 'min(86vh, 100%)', display: 'flex', flexDirection: 'column', background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: '0 30px 80px rgba(0,0,0,0.6)', outline: 'none', color: '#e6e9ef' }}
+      >
+        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${theme.border}` }}>
+          <div style={{ display: 'grid', gap: 2 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{strings.gate.changesTitle}</div>
+            <div style={{ fontSize: 12, color: theme.dim, fontFamily: MONO }}>
+              {files.map(f => `${f.path} +${f.added} −${f.removed}`).join('   ·   ')}
+            </div>
+          </div>
+          <button type="button" aria-label={strings.gate.closeChanges} onClick={onClose} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: 6 }}>
+            ✕
+          </button>
+        </header>
+        <pre style={{ flex: 1, minHeight: 0, margin: 0, overflow: 'auto', padding: 16, fontFamily: MONO, fontSize: 13, lineHeight: 1.55, background: '#0b0e14', borderRadius: '0 0 14px 14px', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>
+          <DiffLines diff={diff} truncated={truncated} />
+        </pre>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+/** Expand: two arrows pointing out to the corners. */
+function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" />
+    </svg>
   )
 }

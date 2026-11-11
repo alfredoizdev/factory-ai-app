@@ -249,3 +249,14 @@ test('done: once the pull request is open the other options go away, and once me
   expect(screen.getAllByRole('listitem').every(li => li.getAttribute('aria-current') !== 'step')).toBe(true)
   expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeNull()
 })
+
+test('waiting: the changes open large in a window over the page, which Escape closes', async () => {
+  vi.stubGlobal('fetch', routes())
+  render(<Card />)
+  await screen.findByText('src/app/page.tsx')
+  fireEvent.click(screen.getByRole('button', { name: strings.gate.expandChanges }))
+  const dialog = screen.getByRole('dialog', { name: strings.gate.changesTitle })
+  expect(dialog).toHaveTextContent('+new')
+  fireEvent.keyDown(window, { key: 'Escape' })
+  expect(screen.queryByRole('dialog')).toBeNull()
+})
