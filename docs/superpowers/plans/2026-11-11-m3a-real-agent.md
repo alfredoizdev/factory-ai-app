@@ -164,3 +164,20 @@ two bugs, `node --test`, 2 of 4 passing. Request: make every test pass without c
   `Editing src/cart.js`. Honest, but less legible; a later pass could recognise a heredoc write.
 - The demo project now points at the scratch repository. If that folder is deleted, a Claude run fails at the
   worktree step with a sentence saying so.
+
+## Independent review and fixes (2026-11-11)
+
+A fresh reviewer read the whole branch diff. Seven findings, all verified against the code before fixing:
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | critical | `next dev` listened on every interface and the guard admitted header-less requests: a machine on the same network could set the test command and start a Claude run (shell + unattended agent). DNS rebinding also passed. Confirmed live: server on `*:3000`, reachable at the LAN address. | Bind dev/start/e2e to 127.0.0.1; refuse any non-loopback Host in the guard and, via `src/proxy.ts`, on every request. The running dev server was restarted on loopback. |
+| 2 | important | Evidence came from tests the unattended builder could have just rewritten. | Test files, test scripts and runner config changed since the base commit are recorded with the evidence; the strip names them and drops its ✓. |
+| 3 | important | App-written failures were recorded as the model's words. | `source: 'system'` on each. |
+| 4 | minor | Tests killed by a signal left no evidence and re-ran. | Recorded as a measured failure; not retried. |
+| 5 | minor | Cancel stopped only `claude`, not what it started. | Own process group; SIGTERM then SIGKILL. |
+| 6 | minor | Exception text reached the log unredacted. | Redacted and clipped. |
+| 7 | minor | Evidence and outcome in separate transactions. | One transaction. |
+
+**Re-verified after the fixes:** 388 unit tests, `tsc` clean, lint 0 errors, and a second real run (13 s, 4 of 4,
+`changedTestFiles: []`, no processes left in the worktree). The e2e remains unverified for want of Inngest.
