@@ -535,9 +535,40 @@ export function Canvas({
           ))}
         </section>
 
-        <section id={SETTINGS_SECTION} style={{ display: 'grid', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.inspectorTitle}</h2>
+        {/* Its own enclosed panel, like the log: a header bar, then the fields, with the same quiet edge. */}
+        <section
+          id={SETTINGS_SECTION}
+          data-testid="block-settings"
+          style={{
+            flexShrink: 0,
+            background: '#0f141c',
+            border: `1px solid ${theme.border}`,
+            borderRadius: 10,
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 10px',
+              background: '#131a24',
+              borderBottom: `1px solid ${theme.border}`,
+            }}
+          >
+            <h2
+              style={{
+                margin: 0,
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: selected ? theme.ink : theme.dim,
+              }}
+            >
+              {strings.editing.inspectorTitle}
+            </h2>
             {selected && (
               <button
                 type="button"
@@ -550,31 +581,33 @@ export function Canvas({
               </button>
             )}
           </div>
-          {selected ? (
-            <>
-              <BlockInspector
-                block={selected}
-                canDisable={canDisable(graph, selected)}
-                runOnScreen={hasRun}
-                onChange={b => edit(g => updateBlock(g, b))}
-              />
-              {canRemove(graph, selected) && (
-                <button
-                  type="button"
-                  style={{ ...panelButton, color: theme.failed }}
-                  onClick={() => {
-                    edit(g => removeBlock(g, selected.id))
-                    setSelectedId(null)
-                    setExpandedId(null)
-                  }}
-                >
-                  {strings.editing.remove}
-                </button>
-              )}
-            </>
-          ) : (
-            <p style={{ margin: 0, color: theme.skipped }}>{strings.editing.inspectorEmpty}</p>
-          )}
+          <div style={{ display: 'grid', gap: 10, padding: 10 }}>
+            {selected ? (
+              <>
+                <BlockInspector
+                  block={selected}
+                  canDisable={canDisable(graph, selected)}
+                  runOnScreen={hasRun}
+                  onChange={b => edit(g => updateBlock(g, b))}
+                />
+                {canRemove(graph, selected) && (
+                  <button
+                    type="button"
+                    style={{ ...panelButton, color: theme.failed }}
+                    onClick={() => {
+                      edit(g => removeBlock(g, selected.id))
+                      setSelectedId(null)
+                      setExpandedId(null)
+                    }}
+                  >
+                    {strings.editing.remove}
+                  </button>
+                )}
+              </>
+            ) : (
+              <p style={{ margin: 0, color: theme.skipped }}>{strings.editing.inspectorEmpty}</p>
+            )}
+          </div>
         </section>
 
         {unattributed.length > 0 && (
