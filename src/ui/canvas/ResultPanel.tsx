@@ -38,6 +38,8 @@ export function ResultSection({
   // The branch name the person writes, or asks the app to suggest. Empty: one is suggested when the change is saved.
   const [branchName, setBranchName] = useState('')
   const [suggesting, setSuggesting] = useState(false)
+  // The name field stays out of sight unless the person asks to change it; the suggestion is already in it then.
+  const [naming, setNaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // What GitHub says about this change, as the ship section last read it: once it is sent, the other ways of
   // bringing it over are no longer choices, and once merged, it is finished.
@@ -63,7 +65,15 @@ export function ResultSection({
     }
   }, [runId])
 
-  // A name is suggested only when asked for: nothing fills the field behind the person's back.
+  // Before it is saved, a name is suggested from what changed, so saving is one click. It is only used when the person
+  // presses Save; they can open the name and change it first. If no suggestion arrives, the server suggests on save.
+  const needsName = delivery?.eligible === true && !delivery.kept
+  useEffect(() => {
+    if (needsName) void suggestName()
+    // Once per run that still needs a name.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsName, runId])
+
   async function suggestName() {
     setSuggesting(true)
     try {
@@ -118,130 +128,140 @@ export function ResultSection({
   // Not (yet) known to be an approved, finished run: only the composer, for a fresh request from the top bar.
   if (!delivery?.eligible) return <>{composer}</>
 
+  const kept = delivery.kept && delivery.branch !== null
+  const checksOk = ship?.pr?.state === 'open' && ship.checksDone && !ship.checksFailed && !ship.pr.conflicts
+  // One place on one path: Approved → Save → Check → Publish. Each moment shows one main button, its next step.
+  const step: Step = merged ? 4 : checksOk ? 3 : kept ? 2 : 1
+  const d = strings.delivery
+  const headline = merged
+    ? d.finished
+    : checksOk
+      ? ship!.onHold
+        ? d.nowOnHold
+        : d.nowPublish
+      : shipped
+        ? ship!.checksFailed || ship!.pr!.conflicts
+          ? d.nowProblem
+          : d.nowChecking
+        : kept
+          ? d.nowSend
+          : d.nowSave
+  const onBranch = kept && delivery.current === delivery.branch
+  const canApply = !shipped && !delivery.delivered && !onBranch
+  const canPushOnly = kept && !shipped && !delivery.pushed
+
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: 8, display: 'grid', placeItems: 'center', background: theme.passed, color: '#07110a', fontWeight: 900, fontSize: 16 }}>
-          ✓
-        </span>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{strings.delivery.title}</div>
-          <div style={{ fontSize: 12.5, color: '#b9dcc5' }}>{merged ? strings.delivery.finished : shipped ? strings.delivery.sent : delivery.delivered ? strings.delivery.done(delivery.files.length) : delivery.kept ? strings.delivery.readyKept : strings.delivery.ready}</div>
-        </div>
+      <Steps current={step} />
+      <div data-testid="next-step" style={{ fontSize: 13.5, color: '#d6dce6', lineHeight: 1.45 }}>
+        {headline}
       </div>
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
-        {delivery.kept && delivery.branch ? (
-          <div data-testid="kept" style={{ display: 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)' }}>
-            <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-              {strings.delivery.keptOnBranch(delivery.branch, delivery.commit ?? '')}
-            </div>
-            {delivery.current === delivery.branch ? (
+        {!kept && (
+          <>
+            <button type="button" disabled={busy !== null} onClick={() => void bring('branch')} style={primaryButton(busy)}>
+              {busy === 'branch' ? <WorkingSpinner blockId="keep" size={16} /> : <SaveIcon />} {d.keepButton}
+            </button>
+            {!naming ? (
+              <button type="button" onClick={() => setNaming(true)} style={linkButton}>
+                {d.changeName}
+              </button>
+            ) : (
+              <div style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
+                <label htmlFor={`branch-name-${runId}`}>{d.branchName}</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    id={`branch-name-${runId}`}
+                    value={branchName}
+                    placeholder={d.branchPlaceholder}
+                    disabled={busy !== null || suggesting}
+                    spellCheck={false}
+                    onChange={e => setBranchName(e.target.value)}
+                    style={{ flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
+                  />
+                  <button
+                    type="button"
+                    disabled={busy !== null || suggesting}
+                    onClick={() => void suggestName()}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12, fontWeight: 600, cursor: suggesting ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
+                  >
+                    {suggesting ? <WorkingSpinner blockId="suggest" size={12} /> : <SparkIcon />} {suggesting ? d.suggesting : d.suggestName}
+                  </button>
+                </div>
+                <span style={{ fontSize: 11, lineHeight: 1.4 }}>{d.branchNameHint}</span>
+              </div>
+            )}
+          </>
+        )}
+
+        {kept && (
+          <div data-testid="kept" style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            {/* Sending, checking and publishing: GitHub's pull request, its checks and a merge the person confirms. */}
+            <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} />
+            {onBranch ? (
               <>
                 <div data-testid="on-branch" style={{ fontSize: 12.5, color: theme.passed, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-                  ✓ {strings.delivery.onBranch(delivery.branch)}
+                  ✓ {d.onBranch(delivery.branch!)}
                 </div>
                 {delivery.returnTo && (
                   <button type="button" disabled={busy !== null} onClick={() => void bring('back')} style={secondaryButton(busy)}>
-                    {busy === 'back' ? <WorkingSpinner blockId="back" size={16} /> : '←'} {strings.delivery.backButton(delivery.returnTo)}
+                    {busy === 'back' ? <WorkingSpinner blockId="back" size={16} /> : '←'} {d.backButton(delivery.returnTo)}
                   </button>
                 )}
               </>
-            ) : merged ? null : (
-              // Once merged, the change is in main itself: opening its own version would show nothing new.
-              <>
-                <button type="button" disabled={busy !== null} onClick={() => void bring('switch')} style={primaryButton(busy)}>
-                  {busy === 'switch' ? <WorkingSpinner blockId="switch" size={16} /> : '⇄'} {strings.delivery.switchButton}
-                </button>
-                <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.switchWhat}</div>
-              </>
-            )}
-            {/* Shipping is GitHub's pull request, its checks and a merge the person confirms. */}
-            <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} />
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
-              <label htmlFor={`branch-name-${runId}`}>{strings.delivery.branchName}</label>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input
-                  id={`branch-name-${runId}`}
-                  value={branchName}
-                  placeholder={strings.delivery.branchPlaceholder}
-                  disabled={busy !== null || suggesting}
-                  spellCheck={false}
-                  onChange={e => setBranchName(e.target.value)}
-                  style={{ flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
-                />
-                <button
-                  type="button"
-                  disabled={busy !== null || suggesting}
-                  onClick={() => void suggestName()}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12, fontWeight: 600, cursor: suggesting ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
-                >
-                  {suggesting ? <WorkingSpinner blockId="suggest" size={12} /> : <SparkIcon />} {suggesting ? strings.delivery.suggesting : strings.delivery.suggestName}
-                </button>
-              </div>
-              <span style={{ fontSize: 11, lineHeight: 1.4 }}>{strings.delivery.branchNameHint}</span>
-            </div>
-            <button
-              type="button"
-              disabled={busy !== null || suggesting}
-              onClick={() => void bring('branch')}
-              style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-            >
-              {busy === 'branch' ? <WorkingSpinner blockId="keep" size={16} /> : '⑂'} {strings.delivery.keepButton}
-            </button>
-            <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.keepWhat}</div>
-          </>
-        )}
-        {delivery.delivered && <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{strings.delivery.done(delivery.files.length)}</div>}
-        {/* The less common moves, together behind one toggle, each in its own small card. Copying the change into what
-            is open is not offered on the kept branch (it is already there); pushing alone only before anything was sent. */}
-        {(() => {
-          // Once a pull request is open, the change is on its way through GitHub: the other ways are not choices any more.
-          if (shipped) return null
-          const canApply = !delivery.delivered && !(delivery.kept && delivery.current === delivery.branch)
-          const canPushOnly = delivery.kept && !delivery.pushed
-          if (!canApply && !canPushOnly) return null
-          return (
-            <div style={{ display: 'grid', gap: 8 }}>
-              <button
-                type="button"
-                aria-expanded={moreOpen}
-                onClick={() => setMoreOpen(o => !o)}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}
-              >
-                {strings.delivery.moreOptions}
-                <span aria-hidden="true" style={{ transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease-out' }}>
-                  ▾
-                </span>
-              </button>
-              {moreOpen && (
-                <div data-testid="more-options" style={{ display: 'grid', gap: 8 }}>
-                  {canPushOnly && (
-                    <div style={optionCard}>
-                      <button type="button" disabled={busy !== null} onClick={() => void bring('push')} style={secondaryButton(busy)}>
-                        {busy === 'push' ? <WorkingSpinner blockId="push" size={16} /> : '↑'} {strings.delivery.pushOnly}
-                      </button>
-                      <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{strings.delivery.pushOnlyWhat}</div>
-                    </div>
-                  )}
-                  {canApply && (
-                    <div style={optionCard}>
-                      <button type="button" disabled={busy !== null} onClick={() => void bring('apply')} style={secondaryButton(busy)}>
-                        {busy === 'apply' ? <WorkingSpinner blockId="apply" size={16} /> : '⤵'} {strings.delivery.applyButton}
-                      </button>
-                      <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{strings.delivery.applyWhat}</div>
-                    </div>
-                  )}
+            ) : (
+              !merged && (
+                // Trying it locally is a side trip, not the next step: it stays quiet next to the main button.
+                <div style={{ display: 'grid', gap: 2 }}>
+                  <button type="button" disabled={busy !== null} onClick={() => void bring('switch')} style={linkButton}>
+                    {busy === 'switch' ? <WorkingSpinner blockId="switch" size={12} /> : <span aria-hidden="true">⇄</span>} {d.switchButton}
+                  </button>
+                  <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{d.switchWhat}</div>
                 </div>
-              )}
-            </div>
-          )
-        })()}
-      </div>
+              )
+            )}
+          </div>
+        )}
+        {delivery.delivered && <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{d.done(delivery.files.length)}</div>}
 
+        {/* Everything a developer may want and nobody else needs: names, hashes, and the less common moves. Closed. */}
+        {(kept || canApply) && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <button type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen(o => !o)} style={{ ...linkButton, color: theme.dim }}>
+              {d.moreOptions}
+              <span aria-hidden="true" style={{ display: 'inline-block', transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease-out' }}>
+                ▾
+              </span>
+            </button>
+            {moreOpen && (
+              <div data-testid="more-options" style={{ display: 'grid', gap: 8 }}>
+                {kept && (
+                  <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.4, overflowWrap: 'anywhere', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                    {d.keptOnBranch(delivery.branch!, delivery.commit ?? '')}
+                  </div>
+                )}
+                {canPushOnly && (
+                  <div style={optionCard}>
+                    <button type="button" disabled={busy !== null} onClick={() => void bring('push')} style={secondaryButton(busy)}>
+                      {busy === 'push' ? <WorkingSpinner blockId="push" size={16} /> : '↑'} {d.pushOnly}
+                    </button>
+                    <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{d.pushOnlyWhat}</div>
+                  </div>
+                )}
+                {canApply && (
+                  <div style={optionCard}>
+                    <button type="button" disabled={busy !== null} onClick={() => void bring('apply')} style={secondaryButton(busy)}>
+                      {busy === 'apply' ? <WorkingSpinner blockId="apply" size={16} /> : '⤵'} {d.applyButton}
+                    </button>
+                    <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{d.applyWhat}</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       <div style={{ display: 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
         <div style={{ fontSize: 12, color: theme.dim }}>{strings.followUp.hint}</div>
         {composer}
@@ -269,6 +289,45 @@ export function ResultSection({
         </div>
       )}
     </>
+  )
+}
+
+type Step = 1 | 2 | 3 | 4
+
+/** Where the change is on its way: Approved, Save, Check, Publish. Done steps are ticked, the current one is lit. */
+function Steps({ current }: { current: Step }) {
+  const names = strings.delivery.steps
+  return (
+    <ol data-testid="steps" aria-label={strings.delivery.stepsLabel} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+      {names.map((name, i) => {
+        const done = i < current || current === 4
+        const now = i === current && current !== 4
+        const colour = done ? theme.passed : now ? '#d6dce6' : theme.skipped
+        return (
+          <li key={name} aria-current={now ? 'step' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 4, flex: i < names.length - 1 ? 1 : 'none', minWidth: 0 }}>
+            <span
+              aria-hidden="true"
+              style={{ width: 18, height: 18, flex: 'none', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 900, background: done ? theme.passed : 'transparent', color: done ? '#07110a' : colour, border: `1.5px solid ${done ? theme.passed : colour}` }}
+            >
+              {done ? '✓' : i + 1}
+            </span>
+            <span style={{ fontSize: 11.5, fontWeight: now ? 800 : 600, color: colour, whiteSpace: 'nowrap' }}>{name}</span>
+            {i < names.length - 1 && <span aria-hidden="true" style={{ flex: 1, height: 1.5, minWidth: 8, background: done && i + 1 <= current ? theme.tint('passed', 0.6) : theme.border }} />}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+const linkButton: CSSProperties = { justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, background: 'none', border: 'none', color: '#93c5fd', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }
+
+/** Save: a tray with an arrow into it. */
+function SaveIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M2.5 10v2.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10" />
+    </svg>
   )
 }
 

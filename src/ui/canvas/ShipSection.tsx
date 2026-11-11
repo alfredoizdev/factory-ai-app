@@ -118,7 +118,7 @@ export function ShipSection({
       )}
       {state.pr && (
         <div style={{ display: 'grid', gap: 6, fontSize: 12.5, lineHeight: 1.4 }}>
-          <a href={state.pr.url} target="_blank" rel="noopener noreferrer" style={{ color: '#93c5fd', fontWeight: 700 }}>
+          <a href={state.pr.url} target="_blank" rel="noopener noreferrer" style={{ color: '#93c5fd', fontWeight: 600, fontSize: 12 }}>
             {strings.ship.pr(state.pr.number)} ↗
           </a>
           {state.pr.state === 'closed' && <span style={{ color: theme.failed }}>{strings.ship.closed}</span>}
