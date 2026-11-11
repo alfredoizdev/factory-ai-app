@@ -169,6 +169,7 @@ export const strings = {
     repoNotSet: 'Set a repository for this project before running Claude.',
     cannotPublish: 'The workflow has problems that must be fixed before it can be published.',
     crossSite: 'That request came from another site, so it was refused.',
+    notLocal: 'This app only answers on this computer (localhost), so the request was refused.',
     invalidBody: 'The request was not in the expected shape.',
   },
   run: {
