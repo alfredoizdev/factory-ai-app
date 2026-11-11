@@ -203,3 +203,13 @@ test('a failed command whose counted tests all passed does not read as a pass', 
   expect(strings.summary.testsFailed(77, 0, 77)).toMatch(/failed, although the 77 tests it counted passed/)
   expect(strings.summary.testsFailed(77, 0, 77)).not.toMatch(/0 failed/)
 })
+
+test('a round the reviewer sent back says so, not that the person did', async () => {
+  const { describeEvent } = await import('@/ui/EventBar')
+  const block = { id: 'build', kind: 'build' as const, label: 'Build', enabled: true, config: {}, position: { x: 0, y: 0 } }
+  const byReviewer = describeEvent({ sequence: 1, type: 'node.reopened', payload: { blockId: 'build', round: 2, note: 'long list', by: 'reviewer' } }, block)
+  expect(byReviewer.text).toBe(strings.events.reopenedByReviewer(2))
+  const review = { ...block, id: 'review', kind: 'review' as const }
+  const verdict = describeEvent({ sequence: 2, type: 'node.reviewed', payload: { blockId: 'review', verdict: 'changes', findings: [{ problem: 'x' }] } }, review)
+  expect(verdict).toEqual({ text: strings.review.problems(1), isClaim: true })
+})

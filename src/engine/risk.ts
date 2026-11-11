@@ -11,7 +11,13 @@ export const MAX_LOW_RISK_FILES = 8
 export const MAX_LOW_RISK_LINES = 300
 
 export type ChangedFile = { path: string; lines: number }
-export type TestFacts = { testsRan: boolean; testsPassed: boolean; testsChanged: boolean }
+export type TestFacts = {
+  testsRan: boolean
+  testsPassed: boolean
+  testsChanged: boolean
+  /** A reviewer's last word was that something must still be fixed. */
+  reviewOpen?: boolean
+}
 export type RiskAssessment = { level: 'low' | 'high'; reasons: string[]; files: string[]; linesChanged: number }
 
 // Areas where a wrong change is expensive. Matched on the path, case-insensitively.
@@ -38,6 +44,7 @@ export function classifyChange(files: readonly ChangedFile[], tests: TestFacts):
   if (!tests.testsRan) reasons.push(strings.risk.noTests)
   else if (!tests.testsPassed) reasons.push(strings.risk.testsFailed)
   if (tests.testsChanged) reasons.push(strings.risk.testsChanged)
+  if (tests.reviewOpen) reasons.push(strings.risk.reviewOpen)
   const level = reasons.length === 0 ? 'low' : 'high'
   return { level, reasons: level === 'low' ? [strings.risk.lowBecause(files.length, linesChanged)] : reasons, files: files.map(f => f.path), linesChanged }
 }

@@ -21,6 +21,22 @@ export const strings = {
     duplicateSingleton: (label: string) => `Only one ${label} block is allowed.`,
     disabledRequired: (label: string) => `The ${label} block is required and cannot be disabled.`,
   },
+  review: {
+    revisionNote: (list: string) => `A code reviewer found these problems in your change. Fix each one, and change nothing else:\n${list}`,
+    found: (where: string, problem: string) => (where ? `Problem at ${where}: ${problem}` : `Problem: ${problem}`),
+    noProblems: 'The reviewer found no problems.',
+    problems: (n: number) => `The reviewer found ${n} ${n === 1 ? 'problem' : 'problems'}.`,
+    sentBack: 'Sent back to Build to fix them.',
+    unreadable: 'The reviewer answered, but not in the form asked for, so its review was not used as a verdict.',
+    reviewerChangedFiles: 'The reviewer changed files in the copy, which a reviewer must never do. Its review was not used.',
+    model: (model: string, buildModel: string) => `Reviewing with ${model}, a different model from Build's ${buildModel}.`,
+    approve: {
+      clean: 'The reviewer found no problems. The final yes is yours.',
+      fixed: (rounds: number) => `The reviewer's problems were sent back to Build ${rounds === 1 ? 'once' : `${rounds} times`}, and the last review found none. The final yes is yours.`,
+      open: 'The reviewer still had problems after the rounds allowed. Look at them before you decide.',
+      none: 'No review ran, so there is nothing to sum up. The final yes is yours.',
+    },
+  },
   history: {
     title: 'Past tasks',
     open: 'Tasks',
@@ -175,6 +191,7 @@ export const strings = {
     noTests: 'No tests were run, so nothing shows it works.',
     testsFailed: 'The tests did not pass.',
     testsChanged: 'It changed its own tests.',
+    reviewOpen: 'the reviewer still had problems it wanted fixed',
     nothingChanged: 'It changed no files.',
     unreadable: 'What it changed could not be read, so it is treated as high risk.',
     lowBecause: (files: number, lines: number) =>
@@ -428,6 +445,7 @@ export const strings = {
     pointItOutAria: (label: string) => `Point it out on the canvas: ${label}`,
     started: 'Started.',
     waiting: 'Stopped and waiting for a person.',
+    reopenedByReviewer: (round: number) => `The reviewer found problems and sent the work back to Build for round ${round}.`,
     reopened: (round: number, note: string | null) => (note ? `Sent back for round ${round}: ${note}` : `Sent back for round ${round}.`),
     assessed: (level: 'low' | 'high', reasons: readonly string[]) =>
       `${level === 'low' ? 'Measured as low risk' : 'Needs you'}: ${reasons.join(' ')}`,
@@ -478,6 +496,29 @@ export const strings = {
           'Do not commit, push or create branches. When you are done, reply with one plain sentence saying what you changed.',
         ].join('\n'),
       runningTests: (command: string) => `Running ${command}`,
+      reviewerRevisePrompt: (request: string, note: string) =>
+        [
+          `The request was: ${request}`,
+          '',
+          'You already made changes for it in this directory; they are still here. A code reviewer looked at them:',
+          note,
+          '',
+          'Work only inside the current directory. Do not commit, push or create branches.',
+          'When you are done, reply with one plain sentence saying what you changed.',
+        ].join('\n'),
+      reviewPrompt: (request: string, baseCommit: string) =>
+        [
+          'You are a code reviewer. Do not change any file: read only.',
+          `Someone asked for this change: ${request}`,
+          `It has been made in this directory. See it with: git diff ${baseCommit} (and git status for new files).`,
+          'Check that it does what was asked, and look for bugs, broken behaviour, missing cases and anything else that was changed without being asked.',
+          'Only report real problems that should be fixed before this is merged; not style preferences.',
+          'End your reply with one JSON object and nothing after it, exactly in this form:',
+          '{"verdict":"ok","findings":[]}',
+          'or, when something must be fixed:',
+          '{"verdict":"changes","findings":[{"file":"path/to/file","line":12,"problem":"what is wrong and how to fix it"}]}',
+        ].join('\n'),
+      noBase: 'This run does not know where its change started, so it cannot be reviewed.',
     },
     demo: {
       steps: {

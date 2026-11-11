@@ -68,7 +68,7 @@ test('tool calls stream out as steps and the result ends the stream', async () =
   ])
   expect(await pending).toEqual([
     { type: 'step', text: 'Editing a.ts' },
-    { type: 'done', summary: 'Changed a.ts.', source: 'provider', usage: { tokens: null } },
+    { type: 'done', summary: 'Changed a.ts.', fullText: 'Changed a.ts.', source: 'provider', usage: { tokens: null } },
   ])
 })
 
@@ -177,8 +177,8 @@ test('the input block records the request without calling any agent', async () =
 
 test('blocks the real agent does not do yet are skipped with a reason, never faked', () => {
   expect(routeFor('plan', {})).toEqual({ mode: 'skip', reason: strings.run.notYet.plan })
-  expect(routeFor('review', {})).toEqual({ mode: 'skip', reason: strings.run.notYet.review })
-  expect(routeFor('approve', {})).toEqual({ mode: 'skip', reason: strings.run.notYet.review })
+  // Review is run by the agent now; Approve is summed up by the executor.
+  expect(routeFor('review', {})).toEqual({ mode: 'execute' })
   expect(routeFor('ship', {})).toEqual({ mode: 'skip', reason: strings.run.notYet.ship })
   expect(routeFor('tests', { testCommand: null })).toEqual({ mode: 'skip', reason: strings.run.notYet.noTestCommand })
   expect(routeFor('tests', { testCommand: '  ' })).toEqual({ mode: 'skip', reason: strings.run.notYet.noTestCommand })
@@ -224,4 +224,60 @@ test.each(['--dangerously-skip-permissions', '-p', 'opus; rm -rf /', 'has space'
 
 test.each(['opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'opus[1m]'])('"%s" is accepted as a model name', name => {
   expect(MODEL_NAME.test(name)).toBe(true)
+})
+
+describe('the reviewer', () => {
+  const review = { blockKind: 'review' as const, request: 'make it blue', workdir: '/wt', baseCommit: 'abc123', model: 'sonnet' }
+
+  test('runs read-only, with its own model, and is told what to review', async () => {
+    const { reviewerArgs } = await import('@/providers/claude')
+    const child = fakeChild()
+    const spawn = vi.fn(() => child)
+    const provider = createClaudeProvider({ spawn: spawn as never, snapshot: () => 'same' })
+    const pending = collect(provider.execute(review, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result: 'Fine. {"verdict":"ok","findings":[]}' }])
+    await pending
+    const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
+    expect(args).toEqual(reviewerArgs(strings.providers.claude.reviewPrompt('make it blue', 'abc123'), 'sonnet'))
+    expect(args).not.toContain('bypassPermissions')
+    expect(args).toContain('--disallowedTools')
+    expect(args[args.indexOf('--model') + 1]).toBe('sonnet')
+  })
+
+  test('its findings become steps, and its verdict travels with the result as its own claim', async () => {
+    const child = fakeChild()
+    const provider = createClaudeProvider({ spawn: (() => child) as never, snapshot: () => 'same' })
+    const pending = collect(provider.execute(review, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result: '{"verdict":"changes","findings":[{"file":"a.tsx","line":4,"problem":"wrong colour"}]}' }])
+    const events = await pending
+    expect(events[0]).toEqual({ type: 'step', text: strings.review.found('a.tsx:4', 'wrong colour') })
+    expect(events[1]).toMatchObject({ type: 'done', source: 'provider', summary: strings.review.problems(1), review: { verdict: 'changes' } })
+  })
+
+  test('a reviewer that changed files is not a review', async () => {
+    const child = fakeChild()
+    let n = 0
+    const provider = createClaudeProvider({ spawn: (() => child) as never, snapshot: () => `v${n++}` })
+    const pending = collect(provider.execute(review, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result: '{"verdict":"ok","findings":[]}' }])
+    expect(await pending).toEqual([{ type: 'error', source: 'system', message: strings.review.reviewerChangedFiles }])
+  })
+
+  test('an answer without a verdict is said plainly and is no verdict', async () => {
+    const child = fakeChild()
+    const provider = createClaudeProvider({ spawn: (() => child) as never, snapshot: () => 'same' })
+    const pending = collect(provider.execute(review, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result: 'Looks great!' }])
+    const events = await pending
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: 'done', source: 'system', summary: strings.review.unreadable })
+    expect((events[0] as { review?: unknown }).review).toBeUndefined()
+  })
+
+  test('without a base commit there is nothing to review against', async () => {
+    const provider = createClaudeProvider({ spawn: vi.fn() as never, snapshot: () => 'same' })
+    expect(await collect(provider.execute({ ...review, baseCommit: undefined }, { signal: signal() }))).toEqual([
+      { type: 'error', source: 'system', message: strings.providers.claude.noBase },
+    ])
+  })
 })

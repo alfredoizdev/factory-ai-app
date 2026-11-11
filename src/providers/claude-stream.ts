@@ -8,6 +8,7 @@ import type { AgentEvent } from '@/providers/types'
 
 const STEP_MAX = 120
 const SUMMARY_MAX = 600
+const FULL_MAX = 20_000
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -73,7 +74,10 @@ export function mapStreamLine(line: unknown, workdir: string): AgentEvent[] {
         : [{ type: 'error', source: 'system', message: `The agent stopped: ${str(line.subtype) || 'error'}.` }]
     }
     // total_cost_usd is deliberately dropped: it is an API-price estimate, not what a subscription pays.
-    return [{ type: 'done', summary: text, source: 'provider', usage: { tokens: reportedTokens(line.usage) } }]
+    // The whole answer rides along for a block that reads structure out of it (the reviewer's verdict); the summary is
+    // the short form every card shows.
+    const fullText = clip(redact(str(line.result).trim()), FULL_MAX)
+    return [{ type: 'done', summary: text, fullText, source: 'provider', usage: { tokens: reportedTokens(line.usage) } }]
   }
   return []
 }

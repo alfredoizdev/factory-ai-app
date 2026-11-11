@@ -512,3 +512,51 @@ test('dependencies are installed once in the copy, before the builder, and the c
   expect(steps[0]).toBe(strings.run.installing('pnpm install --frozen-lockfile --prefer-offline'))
   expect(steps[1]).toBe(strings.run.installed(2))
 })
+
+describe('the reviewer', () => {
+  function reviewingProvider(verdicts: ('ok' | 'changes')[], seen: { kind: string; model?: string; from?: string; note?: string }[]): AgentProvider {
+    let reviews = 0
+    return {
+      id: 'files', isDemo: false, needsWorkspace: true,
+      async *execute(input) {
+        seen.push({ kind: input.blockKind, model: input.model, from: input.revisionFrom, note: input.revisionNote })
+        if (input.blockKind === 'review') {
+          const verdict = verdicts[Math.min(reviews++, verdicts.length - 1)]!
+          const review = verdict === 'ok' ? { verdict, findings: [] } : { verdict, findings: [{ file: 'a.tsx', line: 3, problem: 'wrong colour' }] }
+          yield { type: 'done', summary: verdict, source: 'provider', review }
+          return
+        }
+        yield { type: 'done', summary: 'ok', source: 'system' }
+      },
+    }
+  }
+
+  test('problems go back to Build once, with them, and a clean second review lets Approve say so', async () => {
+    const { strings } = await import('@/ui/strings')
+    const runId = await newRun({ repoPath: '/repo' })
+    const seen: { kind: string; model?: string; from?: string; note?: string }[] = []
+    await drive(runId, reviewingProvider(['changes', 'ok'], seen))
+    const builds = seen.filter(s => s.kind === 'build')
+    expect(builds).toHaveLength(2)
+    expect(builds[1]).toMatchObject({ from: 'reviewer' })
+    expect(builds[1]!.note).toContain('a.tsx:3: wrong colour')
+    // A different model from the builder's default.
+    expect(seen.find(s => s.kind === 'review')!.model).toBe('sonnet')
+    expect(seen.some(s => s.kind === 'approve')).toBe(false) // summed up by the app, not run by the agent
+    const approve = await payloadOf(runId, 'node.completed', 'approve')
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.fixed(1))
+    expect(node(runId, 'human').state).toBe('waiting_approval')
+  })
+
+  test('a reviewer that keeps finding problems sends back at most twice, then the person sees them', async () => {
+    const { strings } = await import('@/ui/strings')
+    const runId = await newRun({ repoPath: '/repo' })
+    const seen: { kind: string }[] = []
+    await drive(runId, reviewingProvider(['changes'], seen))
+    expect(seen.filter(s => s.kind === 'build')).toHaveLength(3)
+    expect(seen.filter(s => s.kind === 'review')).toHaveLength(3)
+    const approve = await payloadOf(runId, 'node.completed', 'approve')
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.open)
+    expect(node(runId, 'human').state).toBe('waiting_approval')
+  })
+})

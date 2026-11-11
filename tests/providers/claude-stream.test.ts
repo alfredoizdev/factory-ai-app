@@ -45,13 +45,13 @@ test('a successful result ends the stream with the model\'s sentence as a claim 
     usage: { input_tokens: 4, output_tokens: 131, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000 },
   }
   expect(mapStreamLine(line, WT)).toEqual([
-    { type: 'done', summary: 'Made the button blue.', source: 'provider', usage: { tokens: 1235 } },
+    { type: 'done', summary: 'Made the button blue.', fullText: 'Made the button blue.', source: 'provider', usage: { tokens: 1235 } },
   ])
 })
 
 test('a result with no usage reports tokens as unknown, not zero, and the dollar estimate is never carried', () => {
   const [ev] = mapStreamLine({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 1 }, WT)
-  expect(ev).toEqual({ type: 'done', summary: 'ok', source: 'provider', usage: { tokens: null } })
+  expect(ev).toEqual({ type: 'done', summary: 'ok', fullText: 'ok', source: 'provider', usage: { tokens: null } })
   expect(JSON.stringify(ev)).not.toContain('cost')
 })
 

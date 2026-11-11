@@ -31,8 +31,15 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
   if (event.type === 'node.started') return { text: strings.events.started, isClaim: false }
   if (event.type === 'node.waiting_approval') return { text: strings.events.waiting, isClaim: false }
   if (event.type === 'node.reopened') {
+    const round = typeof payload.round === 'number' ? payload.round : 2
+    // Sent back by the reviewer: its problems are a model's claim, and are shown on the Review card as such.
+    if (payload.by === 'reviewer') return { text: strings.events.reopenedByReviewer(round), isClaim: false }
     // The note is the person's own words, so it is shown as written: not a claim, not the app's sentence.
-    return { text: strings.events.reopened(typeof payload.round === 'number' ? payload.round : 2, str(payload.note) ?? null), isClaim: false }
+    return { text: strings.events.reopened(round, str(payload.note) ?? null), isClaim: false }
+  }
+  if (event.type === 'node.reviewed') {
+    const n = Array.isArray(payload.findings) ? payload.findings.length : 0
+    return { text: payload.verdict === 'ok' ? strings.review.noProblems : strings.review.problems(n), isClaim: true }
   }
   if (event.type === 'node.assessed') {
     const reasons = Array.isArray(payload.reasons) ? payload.reasons.filter((r): r is string => typeof r === 'string') : []

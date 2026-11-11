@@ -1,5 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
-import { and, eq } from 'drizzle-orm'
+import { defaultReviewerModel, reviewRevisionNote, type Review } from '@/engine/review'
+import { and, desc, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
@@ -90,8 +91,15 @@ type Plan = {
   previousRequest: string | null
 }
 /** What a block's execution may touch: the run's worktree (null for the demo) and the project's test command. */
-type Workspace = { workdir: string | null; testCommand: string | null; baseCommit: string | null; previousRequest?: string | null }
-type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked' }
+type Workspace = {
+  workdir: string | null
+  testCommand: string | null
+  baseCommit: string | null
+  previousRequest?: string | null
+  /** Who asked for this round's changes, when it is a later round. */
+  revisionFrom?: 'person' | 'reviewer'
+}
+type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
 
 const now = () => new Date().toISOString()
 
@@ -205,7 +213,7 @@ function outcomeOf(state: string): Outcome['outcome'] | null {
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined }
+type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review }
 type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
@@ -247,6 +255,7 @@ async function runAttempt(
         testCommand: block.testCommand ?? workspace.testCommand,
         baseCommit: workspace.baseCommit ?? undefined,
         revisionNote: revisionNote ?? undefined,
+        ...(revisionNote ? { revisionFrom: workspace.revisionFrom ?? 'person' } : {}),
         previousRequest: workspace.previousRequest ?? undefined,
         images: images.length > 0 ? [...images] : undefined,
         model: block.model,
@@ -255,7 +264,7 @@ async function runAttempt(
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') onStep(ev.text)
         else if (ev.type === 'evidence') onEvidence(ev.data)
-        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens }
+        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}) }
         else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
       }
       return { kind: 'ended' }
@@ -412,9 +421,13 @@ async function runProviderNode(
         }, { summary: result.summary })
         if (!moved) return false
         recordDoneFacts(tx, node, result)
+        // A reviewer's verdict and findings, on the record: the loop reads it to decide whether Build goes again.
+        if (result.review) {
+          appendEventSync({ runId, nodeRunId: node.id, type: 'node.reviewed', payload: { blockId: block.id, verdict: result.review.verdict, findings: result.review.findings } }, tx)
+        }
         return true
       })
-      return { outcome: done ? 'passed' : 'cancelled' }
+      return done ? { outcome: 'passed', ...(result.review ? { review: result.review } : {}) } : { outcome: 'cancelled' }
     }
 
     const cause =
@@ -545,6 +558,7 @@ function testFactsOf(runId: string): TestFacts {
     testsPassed: runsOfTests.length > 0 && runsOfTests.every(t => t.exitCode === 0 && !t.signal),
     // Unknown (null) counts as changed: what could not be checked is not assumed untouched.
     testsChanged: runsOfTests.some(t => t.changedTestFiles === null || (t.changedTestFiles?.length ?? 0) > 0),
+    reviewOpen: latestReview(runId) === 'changes',
   }
 }
 
@@ -575,6 +589,42 @@ function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): R
 
 // The person chose not to be asked about low-risk changes, and this one measured low: the gate opens on its own,
 // saying so in the app's own words. The assessment that justified it is already on the record (node.assessed).
+/** How many times a reviewer may send the work back to the builder before it goes to the person as it is. */
+const MAX_REVIEW_ROUNDS = 2
+
+/** The latest verdict any reviewer recorded on this run, or null when none did. */
+function latestReview(runId: string): 'ok' | 'changes' | null {
+  const rows = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.reviewed'))).orderBy(desc(events.sequence)).all()
+  const verdict = rows[0] ? (JSON.parse(rows[0].payloadJson) as { verdict?: string }).verdict : null
+  return verdict === 'ok' || verdict === 'changes' ? verdict : null
+}
+
+// Approve, for the real agent: a plain summary, from the record, of what the reviewers concluded. It always passes:
+// the final yes is the person's, at the human check.
+function sumUpReviews(runId: string, block: PlannedBlock, sentBack: number): Outcome {
+  const latest = latestReview(runId)
+  const summary =
+    latest === null
+      ? strings.review.approve.none
+      : latest === 'changes'
+        ? strings.review.approve.open
+        : sentBack > 0
+          ? strings.review.approve.fixed(sentBack)
+          : strings.review.approve.clean
+  return withTx((tx): Outcome => {
+    const node = openNodeIn(tx, runId, block.id)
+    if (!node) return { outcome: 'cancelled' }
+    const settled = outcomeOf(node.state)
+    if (settled) return { outcome: settled }
+    if (node.state === 'queued') {
+      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return { outcome: 'cancelled' }
+      tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+    }
+    const passed = transitionNode(tx, node, 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary })
+    return { outcome: passed ? 'passed' : 'cancelled' }
+  })
+}
+
 function passLowRiskGate(runId: string, block: PlannedBlock): Outcome {
   return withTx((tx): Outcome => {
     const node = openNodeIn(tx, runId, block.id)
@@ -599,9 +649,17 @@ function passLowRiskGate(runId: string, block: PlannedBlock): Outcome {
 // The person asked for changes: every block from the builder to the human check goes back to queued for the next
 // round, in one transaction, each with a node.reopened event carrying the round and the person's note. Blocks that
 // were skipped stay skipped. The run is running again. Nothing in the worktree is touched: the next round builds on it.
-function reopenForRevision(runId: string, blocks: readonly PlannedBlock[], round: number, note: string | null): boolean {
+function reopenForRevision(
+  runId: string,
+  blocks: readonly PlannedBlock[],
+  round: number,
+  note: string | null,
+  by: 'person' | 'reviewer' = 'person',
+): boolean {
   return withTx(tx => {
-    if (runStatusOf(tx, runId) !== 'waiting_approval') return false
+    // The person sends work back from the gate, where the run waits; a reviewer does it while the run is still going.
+    const status = runStatusOf(tx, runId)
+    if (status !== (by === 'person' ? 'waiting_approval' : 'running')) return false
     const clean = note ? clip(redact(note), 500) : null
     for (const block of blocks) {
       const node = tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
@@ -610,10 +668,12 @@ function reopenForRevision(runId: string, blocks: readonly PlannedBlock[], round
         .set({ state: 'queued', attempt: 1, summary: null, failureCause: null, startedAt: null, finishedAt: null })
         .where(eq(nodeRuns.id, node.id))
         .run()
-      appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean } }, tx)
+      appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by } }, tx)
     }
-    tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
-    appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
+    if (by === 'person') {
+      tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
+      appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
+    }
     return true
   })
 }
@@ -755,6 +815,13 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         }),
       }
     : loaded
+  // A reviewer without a model of its own gets one other than the builder's: a second opinion, not an echo.
+  const builderModel = plan.blocks.find(b => b.kind === 'build' && b.enabled)?.model
+  for (const [i, b] of plan.blocks.entries()) {
+    if (b.kind !== 'review') continue
+    const model = b.model ?? defaultReviewerModel(builderModel)
+    plan.blocks[i] = { ...b, model, routeNote: strings.review.model(model, builderModel ?? strings.routing.defaultModel) }
+  }
   const started = await step.run('start', () => startRun(runId))
   if (!started) return // cancelled (or already finished) before it began
 
@@ -774,6 +841,9 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   // Round 1 sees the images sent with the request; a later round sees only those sent with its request for changes.
   let revisionImages: string[] = await step.run('images', () => imagePathsFor(runId))
   let from = 0
+  // Rounds the reviewer sent back, and who asked for the round now being built: the builder is told which.
+  let reviewRounds = 0
+  let revisionFrom: 'person' | 'reviewer' = 'person'
   rounds: while (true) {
   const id = (name: string) => (round === 1 ? name : `${name}-r${round}`)
   for (let index = from; index < plan.blocks.length; index++) {
@@ -784,6 +854,10 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block))
     } else if (route?.mode === 'skip') {
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block, route.reason))
+    } else if (block.kind === 'approve' && provider.needsWorkspace) {
+      // The real agent's Approve is a summary of what the reviewers said, never a yes: that stays the person's.
+      const rounds = reviewRounds
+      result = await step.run(id(`node-${block.id}`), () => sumUpReviews(runId, block, rounds))
     } else if (block.kind === 'human') {
       // A run that changed files is measured before the gate, so the card can say what it would be waved through or
       // stopped for. It passes on its own only when the person turned that on and the measurement says low risk.
@@ -822,6 +896,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           if (!reopened) return // cancelled meanwhile
           round = next
           revisionNote = note
+          revisionFrom = 'person'
           revisionImages = await step.run(id(`images-${block.id}`), () => imagePathsFor(runId, decided!.approvalId))
           from = start
           continue rounds
@@ -832,7 +907,27 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     } else {
       const note = revisionNote
       const images = revisionImages
-      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, note, images))
+      const workspace: Workspace = { ...prepared, revisionFrom }
+      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, workspace, note, images))
+      // The reviewer found problems: back to the builder with them, a bounded number of times. After that the problems
+      // stay on the record for the person, and the run goes on to them.
+      if (block.kind === 'review' && result.outcome === 'passed' && result.review?.verdict === 'changes' && reviewRounds < MAX_REVIEW_ROUNDS) {
+        const builder = plan.blocks.findIndex(b => b.kind === 'build' && b.enabled)
+        if (builder !== -1 && builder < index) {
+          const next = round + 1
+          const findings = result.review.findings
+          const reviewNote = reviewRevisionNote(findings)
+          const reopened = await step.run(id(`reopen-${block.id}`), () => reopenForRevision(runId, plan.blocks.slice(builder, index + 1), next, reviewNote, 'reviewer'))
+          if (!reopened) return
+          round = next
+          reviewRounds += 1
+          revisionNote = reviewNote
+          revisionFrom = 'reviewer'
+          revisionImages = []
+          from = builder
+          continue rounds
+        }
+      }
     }
     if (result.outcome === 'cancelled') return // run.cancelled and node.cancelled were written by cancelRun
     if (result.outcome === 'failed') {

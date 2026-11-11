@@ -1,0 +1,63 @@
+import { strings } from '@/ui/strings'
+
+// What a reviewer says about a change, as data. The reviewer is a model, so all of this is its claim: it is shown as
+// "AI says", never as a measurement. It is read from a small JSON object the reviewer is asked to end with; anything
+// that is not that object is not turned into a verdict.
+
+export type Finding = { file?: string; line?: number; problem: string }
+export type Review = { verdict: 'ok' | 'changes'; findings: Finding[] }
+
+const MAX_FINDINGS = 10
+const MAX_PROBLEM = 300
+
+/** The reviewer's verdict and findings, from the last JSON object in its answer; null when there is none. */
+export function parseReview(text: string): Review | null {
+  const candidates = [...text.matchAll(/\{[\s\S]*?"verdict"[\s\S]*\}/g)].map(m => m[0])
+  for (const raw of candidates.reverse()) {
+    // The greedy match may run past the object's end into later text: try shorter endings until one parses.
+    for (let end = raw.length; end > 0; end = raw.lastIndexOf('}', end - 1)) {
+      try {
+        const value = JSON.parse(raw.slice(0, end + (raw[end] === '}' ? 1 : 0))) as { verdict?: unknown; findings?: unknown }
+        const review = validReview(value)
+        if (review) return review
+      } catch {
+        // not this ending
+      }
+      if (end <= 0) break
+    }
+  }
+  return null
+}
+
+function validReview(value: { verdict?: unknown; findings?: unknown }): Review | null {
+  if (value.verdict !== 'ok' && value.verdict !== 'changes') return null
+  const raw = Array.isArray(value.findings) ? value.findings : []
+  const findings: Finding[] = []
+  for (const f of raw.slice(0, MAX_FINDINGS) as { file?: unknown; line?: unknown; problem?: unknown }[]) {
+    if (typeof f?.problem !== 'string' || f.problem.trim() === '') continue
+    findings.push({
+      problem: f.problem.trim().slice(0, MAX_PROBLEM),
+      ...(typeof f.file === 'string' && f.file.trim() !== '' ? { file: f.file.trim().slice(0, 200) } : {}),
+      ...(typeof f.line === 'number' && Number.isInteger(f.line) && f.line > 0 ? { line: f.line } : {}),
+    })
+  }
+  // "changes" with nothing to change is no verdict at all: there would be nothing to send back.
+  if (value.verdict === 'changes' && findings.length === 0) return null
+  return { verdict: value.verdict, findings: value.verdict === 'ok' ? [] : findings }
+}
+
+/** Where a finding is, as a person reads it: "src/app/page.tsx:15", or nothing. */
+export function whereOf(f: Finding): string {
+  return f.file ? (f.line ? `${f.file}:${f.line}` : f.file) : ''
+}
+
+/** What the builder is told on the round the reviewer sends back. */
+export function reviewRevisionNote(findings: readonly Finding[]): string {
+  const lines = findings.map((f, i) => `${i + 1}. ${whereOf(f) ? `${whereOf(f)}: ` : ''}${f.problem}`)
+  return strings.review.revisionNote(lines.join('\n'))
+}
+
+/** A reviewer other than the builder: a second opinion from the same model tends to agree with itself. */
+export function defaultReviewerModel(buildModel?: string): string {
+  return buildModel?.toLowerCase().includes('sonnet') ? 'opus' : 'sonnet'
+}

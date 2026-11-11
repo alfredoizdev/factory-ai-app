@@ -1,8 +1,10 @@
-import { spawn as nodeSpawn } from 'node:child_process'
+import { execFileSync, spawn as nodeSpawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { dirname } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
+import { parseReview, whereOf } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
 import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
 import { mapStreamLine } from '@/providers/claude-stream'
@@ -45,12 +47,13 @@ export type ClaudeDeps = {
   bin?: string
   runTests?: typeof nodeRunTests
   changedTestFiles?: typeof gitChangedTestFiles
+  /** A fingerprint of the worktree's files (tracked changes and untracked files): the reviewer must leave it unchanged. */
+  snapshot?: (workdir: string) => string
 }
 
+// Approve is summed up by the executor from the reviews, not run by the agent; Ship happens from the result card.
 const SKIPPED: Partial<Record<BlockKind, string>> = {
   plan: strings.run.notYet.plan,
-  review: strings.run.notYet.review,
-  approve: strings.run.notYet.review,
   ship: strings.run.notYet.ship,
 }
 
@@ -73,7 +76,58 @@ export function claudeArgs(prompt: string, imageDir?: string, model?: string): s
   return imageDir ? [...withModel, '--add-dir', imageDir] : withModel
 }
 
-async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
+/** The reviewer's arguments: read-only tools only. Anything else it asks for is refused, since nobody is there to allow it. */
+export function reviewerArgs(prompt: string, model?: string): string[] {
+  const readOnly = ['Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git status:*)', 'Bash(git log:*)', 'Bash(git show:*)']
+  const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'default', '--allowedTools', ...readOnly, '--disallowedTools', 'Edit', 'Write', 'NotebookEdit']
+  return model ? [...args, '--model', model] : args
+}
+
+function gitSnapshot(workdir: string): string {
+  const git = (args: string[]) => execFileSync('git', args, { cwd: workdir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 })
+  return createHash('sha256').update(git(['status', '--porcelain', '--untracked-files=all'])).update(git(['diff', 'HEAD'])).digest('hex')
+}
+
+async function* runReviewer(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
+  if (!input.workdir) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
+    return
+  }
+  if (!input.baseCommit) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noBase }
+    return
+  }
+  if (input.model !== undefined && !MODEL_NAME.test(input.model)) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.badModel(input.model) }
+    return
+  }
+  const workdir = input.workdir
+  const before = deps.snapshot(workdir)
+  for await (const ev of runClaude(deps, workdir, reviewerArgs(strings.providers.claude.reviewPrompt(input.request, input.baseCommit), input.model), controls)) {
+    if (ev.type !== 'done') {
+      yield ev
+      if (ev.type === 'error') return
+      continue
+    }
+    // Read-only is the rule and this is the check: a reviewer that changed anything is not a review.
+    if (deps.snapshot(workdir) !== before) {
+      yield { type: 'error', source: 'system', message: strings.review.reviewerChangedFiles }
+      return
+    }
+    const review = parseReview(ev.fullText ?? ev.summary)
+    if (!review) {
+      yield { type: 'done', source: 'system', summary: strings.review.unreadable, usage: ev.usage }
+      return
+    }
+    for (const f of review.findings) yield { type: 'step', text: strings.review.found(whereOf(f), f.problem) }
+    const summary = review.verdict === 'ok' ? strings.review.noProblems : strings.review.problems(review.findings.length)
+    // The verdict is the reviewer's own claim about the code, so it is marked as the provider's words.
+    yield { type: 'done', source: 'provider', summary, usage: ev.usage, review }
+    return
+  }
+}
+
+async function* runBuilder(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
   if (!input.workdir) {
     yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
     return
@@ -84,16 +138,23 @@ async function* runBuilder(input: AgentExecutionInput, { signal }: ExecutionCont
     yield { type: 'error', source: 'system', message: strings.providers.claude.badModel(input.model) }
     return
   }
+  const prompt = input.revisionNote
+    ? input.revisionFrom === 'reviewer'
+      ? strings.providers.claude.reviewerRevisePrompt(input.request, input.revisionNote)
+      : strings.providers.claude.revisePrompt(input.request, input.revisionNote)
+    : input.previousRequest
+      ? strings.providers.claude.followUpPrompt(input.previousRequest, input.request)
+      : strings.providers.claude.buildPrompt(input.request)
+  const images = input.images ?? []
+  const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
+  yield* runClaude(deps, workdir, claudeArgs(withImages, images.length > 0 ? dirname(images[0]!) : undefined, input.model), controls)
+}
+
+/** Runs the claude CLI in the worktree with the given arguments and turns its stream into agent events. */
+async function* runClaude(deps: Required<ClaudeDeps>, workdir: string, args: string[], { signal }: ExecutionControls): AsyncGenerator<AgentEvent> {
   let child: Child
   try {
-    const prompt = input.revisionNote
-      ? strings.providers.claude.revisePrompt(input.request, input.revisionNote)
-      : input.previousRequest
-        ? strings.providers.claude.followUpPrompt(input.previousRequest, input.request)
-        : strings.providers.claude.buildPrompt(input.request)
-    const images = input.images ?? []
-    const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
-    child = deps.spawn(deps.bin, claudeArgs(withImages, images.length > 0 ? dirname(images[0]!) : undefined, input.model), {
+    child = deps.spawn(deps.bin, args, {
       cwd: workdir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
@@ -189,6 +250,7 @@ export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
     bin: deps.bin ?? 'claude',
     runTests: deps.runTests ?? nodeRunTests,
     changedTestFiles: deps.changedTestFiles ?? gitChangedTestFiles,
+    snapshot: deps.snapshot ?? gitSnapshot,
   }
   return {
     id: CLAUDE_PROVIDER_ID,
@@ -203,6 +265,10 @@ export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
       }
       if (input.blockKind === 'tests') {
         yield* runTests(input, controls, full)
+        return
+      }
+      if (input.blockKind === 'review') {
+        yield* runReviewer(input, controls, full)
         return
       }
       yield* runBuilder(input, controls, full)

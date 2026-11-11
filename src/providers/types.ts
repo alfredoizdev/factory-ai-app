@@ -1,4 +1,5 @@
 import type { BlockKind } from '@/domain/graph'
+import type { Review } from '@/engine/review'
 import type { TestRun } from '@/engine/test-runner'
 
 // The contract every agent provider implements. Nothing here may depend on a specific provider, the
@@ -9,7 +10,9 @@ export type AgentEvent =
   | { type: 'step'; text: string }
   // `source` says who wrote the summary: 'system' only when the app composed it from facts; anything else is a claim.
   // `usage` carries only what the provider itself reported; a figure it did not report is null, never 0.
-  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null } }
+  // `fullText`: the provider's whole final answer, for a block that reads structure from it. `review`: a reviewer's
+  // verdict and findings, read from that answer — still the model's claim, never a measurement.
+  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review }
   // Same rule for a failure: 'system' marks a sentence the app composed from facts. `cause` names a failure the
   // executor must not retry (re-running failing tests twice proves nothing new).
   | { type: 'error'; message: string; source?: 'provider' | 'system'; cause?: 'tests_failed' }
@@ -28,6 +31,8 @@ export type AgentExecutionInput = {
   baseCommit?: string
   /** Set on a later round: what the person asked to change after looking at the previous one. */
   revisionNote?: string
+  /** Who asked for that round's changes: the person, or a reviewer. */
+  revisionFrom?: 'person' | 'reviewer'
   /** Set on a follow-up run: the approved request whose change is already in the folder. */
   previousRequest?: string
   /** Absolute paths of images the person attached for this round, for the agent to look at. */
