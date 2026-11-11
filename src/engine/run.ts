@@ -173,11 +173,12 @@ export async function createRun(input: {
     const project = db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, wf.projectId)).get()
     if (!project?.repoPath) throw new RepoNotSetError()
     // Fixed now, as a commit: the agent's copy starts there even if the person switches branches meanwhile.
-    const branch = input.startFrom?.trim() || defaultBranch(project.repoPath)
+    const main = defaultBranch(project.repoPath)
+    const branch = input.startFrom?.trim() || main
     if (branch) {
-      // The main branch is brought up to date with origin first, so a task never starts behind what was merged there.
-      // A branch the person picked is used exactly as it is in their folder.
-      baseCommit = input.startFrom?.trim() ? branchCommit(project.repoPath, branch) : ((await freshestStart(project.repoPath, branch))?.commit ?? null)
+      // The main branch, asked for by name or by default, is brought up to date with origin first, so a task never
+      // starts behind what was merged there. Any other branch the person picked is used exactly as it is in their folder.
+      baseCommit = branch === main ? ((await freshestStart(project.repoPath, branch))?.commit ?? null) : branchCommit(project.repoPath, branch)
       if (!baseCommit) throw new StartBranchError(branch)
     }
   }
