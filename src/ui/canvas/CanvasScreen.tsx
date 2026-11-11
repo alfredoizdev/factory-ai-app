@@ -2,10 +2,12 @@
 
 import { useRef, useState } from 'react'
 import type { Block, Graph, ValidationIssue } from '@/domain/graph'
-import { DEMO_PROVIDER_ID } from '@/providers/ids'
+import type { ProjectSettings } from '@/engine/project-settings'
+import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { EventBarList } from '@/ui/EventBar'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
+import { AgentSettings } from './AgentSettings'
 import { Canvas } from './Canvas'
 import { useRunStream, type RunStatus } from './useRunStream'
 
@@ -28,8 +30,25 @@ async function readError(res: Response, fallback: string): Promise<string> {
   return typeof body?.error === 'string' ? body.error : fallback
 }
 
-export function CanvasScreen({ workflowId, graph, run: initialRun = null }: { workflowId: string; graph: Graph; run?: RunInfo | null }) {
+type Agent = typeof DEMO_PROVIDER_ID | typeof CLAUDE_PROVIDER_ID
+
+export function CanvasScreen({
+  workflowId,
+  graph,
+  run: initialRun = null,
+  settings: initialSettings = null,
+}: {
+  workflowId: string
+  graph: Graph
+  run?: RunInfo | null
+  /** The project's repository settings. Absent: the agent switch is not offered and every run is the demo. */
+  settings?: ProjectSettings | null
+}) {
   const [run, setRun] = useState<RunInfo | null>(initialRun)
+  const [settings, setSettings] = useState<ProjectSettings | null>(initialSettings)
+  // The demo is the default every time the page opens: a real agent is always chosen on purpose.
+  const [agent, setAgent] = useState<Agent>(DEMO_PROVIDER_ID)
+  const claudeBlocked = agent === CLAUDE_PROVIDER_ID && !settings?.repoPath
   const [request, setRequest] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -61,7 +80,7 @@ export function CanvasScreen({ workflowId, graph, run: initialRun = null }: { wo
       const created = await fetch(`/api/workflows/${workflowId}/runs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ request }),
+        body: JSON.stringify({ request, provider: agent }),
       })
       if (!created.ok) return setMessage(await readError(created, strings.run.startFailed))
       const { runId } = (await created.json()) as { runId: string }
@@ -100,7 +119,25 @@ export function CanvasScreen({ workflowId, graph, run: initialRun = null }: { wo
           onChange={e => setRequest(e.target.value)}
           style={{ flex: 1, maxWidth: 480, padding: '6px 10px', background: theme.card, color: 'inherit', border: `1px solid ${theme.border}`, borderRadius: 6 }}
         />
-        <button type="button" style={headerButton} disabled={busy || live || request.trim() === ''} onClick={startRun}>
+        {settings && (
+          <select
+            aria-label={strings.settings.agentLabel}
+            value={agent}
+            onChange={e => setAgent(e.target.value as Agent)}
+            disabled={live}
+            style={{ ...headerButton, padding: '6px 10px' }}
+          >
+            <option value={DEMO_PROVIDER_ID}>{strings.settings.agentDemo}</option>
+            <option value={CLAUDE_PROVIDER_ID}>{strings.settings.agentClaude}</option>
+          </select>
+        )}
+        <button
+          type="button"
+          style={headerButton}
+          disabled={busy || live || request.trim() === '' || claudeBlocked}
+          title={claudeBlocked ? strings.settings.needsRepo : undefined}
+          onClick={startRun}
+        >
           {busy ? strings.run.starting : strings.run.run}
         </button>
         <button type="button" style={headerButton} disabled={!live} onClick={cancel}>
@@ -125,6 +162,7 @@ export function CanvasScreen({ workflowId, graph, run: initialRun = null }: { wo
           </span>
         )}
       </header>
+      {settings && agent === CLAUDE_PROVIDER_ID && <AgentSettings settings={settings} onSaved={setSettings} />}
       <div style={{ flex: 1, minHeight: 0 }}>
         <Canvas
           graph={graph}

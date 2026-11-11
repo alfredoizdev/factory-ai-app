@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { desc, eq, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { runs, workflowVersions, workflows } from '@/db/schema'
+import { projects, runs, workflowVersions, workflows } from '@/db/schema'
 import type { Graph } from '@/domain/graph'
 import { CanvasScreen, type RunInfo } from '@/ui/canvas/CanvasScreen'
 
@@ -22,5 +22,8 @@ export default async function CanvasPage({ params }: { params: Promise<{ workflo
       ? { runId: latest.id, providerId: latest.providerId, blocks: (JSON.parse(version.graphJson) as Graph).blocks }
       : null
 
-  return <CanvasScreen workflowId={workflowId} graph={graph} run={run} />
+  const project = db.select().from(projects).where(eq(projects.id, wf.projectId)).get()
+  const settings = { projectId: wf.projectId, repoPath: project?.repoPath ?? null, testCommand: project?.testCommand ?? null }
+
+  return <CanvasScreen workflowId={workflowId} graph={graph} run={run} settings={settings} />
 }
