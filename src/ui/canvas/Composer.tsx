@@ -1,9 +1,12 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
+
+const BOX_MIN = 170
+const BOX_MAX = 380
 
 export type ComposerImage = {
   key: string
@@ -56,6 +59,14 @@ export function Composer({
   const [dragging, setDragging] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const picker = useRef<HTMLInputElement | null>(null)
+  // The box starts tall enough to read a real request, and grows with the text up to a limit, then scrolls.
+  const box = useRef<HTMLTextAreaElement | null>(null)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, BOX_MIN), BOX_MAX)}px`
+  }, [text])
 
   function add(files: readonly File[]) {
     setNotice(null)
@@ -178,12 +189,13 @@ export function Composer({
           </div>
         )}
         <textarea
+          ref={box}
           id={inputId}
           aria-label={label}
           placeholder={dragging ? strings.attachments.dropHere : placeholder}
           value={text}
           disabled={disabled}
-          rows={4}
+          rows={8}
           onChange={e => onText(e.target.value)}
           onPaste={e => {
             const files = [...e.clipboardData.files]
@@ -202,7 +214,8 @@ export function Composer({
             width: '100%',
             boxSizing: 'border-box',
             resize: 'vertical',
-            minHeight: 84,
+            minHeight: BOX_MIN,
+            maxHeight: BOX_MAX,
             padding: 4,
             background: 'transparent',
             color: 'inherit',
