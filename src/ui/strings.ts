@@ -106,6 +106,11 @@ export const strings = {
     },
     stateAria: (label: string) => `State: ${label}`,
     claimMarker: 'AI says',
+    evidence: 'Evidence',
+    evidenceCounts: (passed: number, failed: number, total: number) =>
+      failed > 0 ? `${passed} of ${total} passed, ${failed} failed` : `${passed} of ${total} passed`,
+    exitCode: 'exit',
+    took: 'took',
     claimTitle: 'This sentence was written by an AI. It has not been verified.',
     cost: 'Cost',
     tokens: 'Tokens',
@@ -215,6 +220,10 @@ export const strings = {
     pointItOutAria: (label: string) => `Point it out on the canvas: ${label}`,
     started: 'Started.',
     waiting: 'Stopped and waiting for a person.',
+    measured: (counts: string | null, exitCode: number | null) => {
+      const head = counts ? `Tests measured: ${counts}.` : 'Tests measured.'
+      return exitCode === null ? head : `${head} Exit code ${exitCode}.`
+    },
   },
   demo: {
     projectName: 'Demo project',
