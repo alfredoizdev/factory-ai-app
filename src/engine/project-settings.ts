@@ -55,7 +55,7 @@ function branchOf(repo: string | null): string | null {
   }
 }
 
-function validRepoRoot(path: string): string {
+export function validRepoRoot(path: string): string {
   if (!isAbsolute(path)) throw new ProjectSettingsError(strings.settings.notAbsolute)
   if (!existsSync(path) || !statSync(path).isDirectory()) throw new ProjectSettingsError(strings.settings.missing)
   const real = realpathSync(path)
