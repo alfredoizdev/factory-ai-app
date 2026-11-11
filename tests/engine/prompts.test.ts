@@ -35,3 +35,20 @@ test('what was asked on a task, in order and by whom, with a reopened round coun
     ['reviewer', 'fix the null check'],
   ])
 })
+
+test('a follow-up carries what was asked on the tasks it continues from, marked as earlier', async () => {
+  const { runs } = await import('@/db/schema')
+  const projectId = ulid()
+  const workflowId = ulid()
+  db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: now() }).run()
+  db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: now(), updatedAt: now() }).run()
+  await saveDraft(workflowId, defaultGraph())
+  await publishVersion(workflowId)
+  const first = await createRun({ workflowId, request: 'add a ring' })
+  const second = await createRun({ workflowId, request: 'make it 5px' })
+  db.update(runs).set({ parentRunId: first.runId }).where(eq(runs.id, second.runId)).run()
+  expect(promptsOf(second.runId).map(p => [p.kind, p.text, p.earlier ?? false])).toEqual([
+    ['request', 'add a ring', true],
+    ['followUp', 'make it 5px', false],
+  ])
+})

@@ -66,10 +66,13 @@ export function AskedStrip({ prompts }: { prompts: readonly Prompt[] }) {
           type="button"
           onClick={() => setOpen(p)}
           title={strings.prompts.open}
-          style={{ textAlign: 'left', display: 'grid', gap: 3, padding: '7px 9px', borderRadius: 8, border: `1px solid ${theme.border}`, borderLeft: `3px solid ${TONE[p.kind]}`, background: '#0d1118', color: '#d6dce6', cursor: 'pointer' }}
+          style={{ textAlign: 'left', display: 'grid', gap: 3, padding: '7px 9px', borderRadius: 8, border: `1px solid ${theme.border}`, borderLeft: `3px solid ${TONE[p.kind]}`, background: '#0d1118', color: '#d6dce6', cursor: 'pointer', opacity: p.earlier ? 0.75 : 1 }}
         >
           <span style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 9.5, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: TONE[p.kind] }}>
-            <span>{strings.prompts.kind[p.kind]}</span>
+            <span>
+              {p.earlier ? `${strings.prompts.earlier} · ` : ''}
+              {strings.prompts.kind[p.kind]}
+            </span>
             <span style={{ fontWeight: 600, letterSpacing: 0, textTransform: 'none', color: theme.dim }}>{whenText(p.at)}</span>
           </span>
           <span style={{ fontSize: 12.5, lineHeight: 1.4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>{p.text}</span>

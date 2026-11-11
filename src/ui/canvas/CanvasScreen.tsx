@@ -166,7 +166,8 @@ export function CanvasScreen({
     const out = { ...base }
     for (const kind of ['input', 'plan', 'review', 'human'] as const) {
       const block = run.blocks.find(b => b.kind === kind && b.enabled)
-      const asked = prompts.filter(p => PROMPT_BLOCK[p.kind] === kind)
+      // What was asked on earlier tasks is where this one starts: on Input.
+      const asked = prompts.filter(p => (p.earlier ? 'input' : PROMPT_BLOCK[p.kind]) === kind)
       if (block && out[block.id] && asked.length > 0) out[block.id] = { ...out[block.id]!, asked }
     }
     return out

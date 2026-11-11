@@ -6,9 +6,27 @@ import { approvals, events, runs } from '@/db/schema'
 // person asked for, and what a reviewer sent back. Each says who asked. What a decision said goes with it too.
 
 export type PromptKind = 'request' | 'followUp' | 'replan' | 'changes' | 'reviewer' | 'approvedNote' | 'rejectedNote'
-export type Prompt = { kind: PromptKind; text: string; at: string }
+export type Prompt = {
+  kind: PromptKind
+  text: string
+  at: string
+  /** Asked on an earlier task this one continues from: context for this one, shown where it starts. */
+  earlier?: boolean
+}
 
+/** Everything asked on this task and, before it, on each earlier task it continues from (oldest first). */
 export function promptsOf(runId: string): Prompt[] {
+  const own = promptsOfOne(runId)
+  const earlier: Prompt[] = []
+  let parent = db.select({ p: runs.parentRunId }).from(runs).where(eq(runs.id, runId)).get()?.p ?? null
+  for (let depth = 0; parent && depth < 20; depth++) {
+    earlier.unshift(...promptsOfOne(parent).map(p => ({ ...p, earlier: true })))
+    parent = db.select({ p: runs.parentRunId }).from(runs).where(eq(runs.id, parent)).get()?.p ?? null
+  }
+  return [...earlier, ...own]
+}
+
+function promptsOfOne(runId: string): Prompt[] {
   const run = db.select().from(runs).where(eq(runs.id, runId)).get()
   if (!run) return []
   const out: Prompt[] = [{ kind: run.parentRunId ? 'followUp' : 'request', text: run.request, at: run.createdAt }]

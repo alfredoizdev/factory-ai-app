@@ -455,6 +455,7 @@ export const strings = {
   },
   prompts: {
     title: 'What was asked',
+    earlier: 'Earlier task',
     open: 'Read all of it',
     close: 'Close',
     kind: {
