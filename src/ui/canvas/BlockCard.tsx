@@ -50,6 +50,8 @@ export const EXPANDED_CARD_WIDTH = 400
  * nothing to say yet does not shrink to a label. Quiet space is the point, not a gap to fill.
  */
 export const CARD_MIN_HEIGHT = 304
+/** A block far from the focus keeps a column this wide: enough for its mark, name, state and glyph. */
+export const SPINE_WIDTH = 80
 /** The step list is what the agent is doing now, not a log: only the latest few are shown. */
 const MAX_STEPS = 6
 
@@ -75,11 +77,17 @@ export function BlockCard({
   issues = [],
   breadcrumb,
   onCollapse,
+  collapseLabel = strings.canvas.collapse,
+  width,
 }: {
   block: Block
   view: CardView
   expanded?: boolean
   selected?: boolean
+  /** Overrides the width the expanded flag would choose; the fisheye keeps every panel the same width. */
+  width?: number
+  /** What the button that undoes the expansion says. */
+  collapseLabel?: string
   /** Validation messages for this block, shown on the card they belong to. */
   issues?: string[]
   /** Labels of the chain leading to this block; shown only while expanded. */
@@ -107,7 +115,7 @@ export function BlockCard({
       data-testid={`block-card-${block.id}`}
       style={{
         position: 'relative',
-        width: expanded ? EXPANDED_CARD_WIDTH : CARD_WIDTH,
+        width: width ?? (expanded ? EXPANDED_CARD_WIDTH : CARD_WIDTH),
         minWidth: 220,
         minHeight: CARD_MIN_HEIGHT,
         display: 'flex',
@@ -221,7 +229,7 @@ export function BlockCard({
                 padding: '3px 8px',
               }}
             >
-              {strings.canvas.collapse}
+              {collapseLabel}
             </button>
           )}
         </span>
@@ -399,6 +407,80 @@ export function NotInRunCard({ block, selected = false, issues = [] }: { block: 
           {message}
         </p>
       ))}
+    </div>
+  )
+}
+
+/** What a spine shows instead of the state word, so a collapsed block never reads by colour alone. */
+const SPINE_GLYPH: Record<NodeState, string> = {
+  queued: '·',
+  running: '▸',
+  waiting_approval: '!',
+  passed: '✓',
+  failed: '✕',
+  cancelled: '·',
+  skipped: '·',
+  blocked: '!',
+}
+
+/**
+ * A block far from the focus, compressed to a column. It keeps everything needed to find it again — its
+ * drawing, its name, its state colour and a glyph for that state — and drops everything that needs width.
+ * Clicking it makes it the focus, which is how its detail comes back.
+ */
+export function SpineCard({ block, view, selected = false }: { block: Block; view: CardView | null; selected?: boolean }) {
+  const visual = view ? visualStateOf(view.state) : 'skipped'
+  const accent = theme[visual]
+  const stateLabel = view ? strings.canvas.stateLabel[view.state] : strings.canvas.notInRun
+  return (
+    <div
+      data-testid={`block-card-${block.id}`}
+      title={`${block.label} — ${stateLabel}`}
+      style={{
+        position: 'relative',
+        width: SPINE_WIDTH,
+        minHeight: CARD_MIN_HEIGHT,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 12,
+        padding: '14px 0 16px',
+        background: 'linear-gradient(180deg, #141a24, #10151d)',
+        borderStyle: 'solid',
+        borderWidth: 1,
+        borderTopWidth: 3,
+        borderTopColor: accent,
+        borderRightColor: selected ? theme.running : theme.border,
+        borderBottomColor: selected ? theme.running : theme.border,
+        borderLeftColor: selected ? theme.running : theme.border,
+        borderRadius: 12,
+        cursor: 'pointer',
+        opacity: block.enabled ? 1 : 0.55,
+      }}
+    >
+      <TypeMark kind={block.kind} colour={accent} size={26} />
+      <span style={{ writingMode: 'vertical-rl', fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', color: '#aeb7c6' }}>
+        {block.label}
+      </span>
+      <span
+        aria-label={strings.canvas.stateAria(stateLabel)}
+        style={{
+          marginTop: 'auto',
+          width: 22,
+          height: 22,
+          borderRadius: '50%',
+          display: 'grid',
+          placeItems: 'center',
+          background: view ? accent : 'transparent',
+          border: view ? 'none' : `1px dashed ${theme.skipped}`,
+          color: view ? '#07090d' : theme.skipped,
+          fontSize: 11,
+          fontWeight: 800,
+          lineHeight: 1,
+        }}
+      >
+        {view ? SPINE_GLYPH[view.state] : '·'}
+      </span>
     </div>
   )
 }

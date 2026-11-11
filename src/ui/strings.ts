@@ -114,6 +114,7 @@ export const strings = {
     steps: 'Steps',
     earlierStepsHidden: (n: number) => `${n} earlier ${n === 1 ? 'step is' : 'steps are'} not shown`,
     collapse: 'Collapse',
+    followWork: 'Follow the work',
     breadcrumbAria: 'Where this block sits in the flow',
     breadcrumbSeparator: ' › ',
     returnEdge: 'Sends work back to Build',

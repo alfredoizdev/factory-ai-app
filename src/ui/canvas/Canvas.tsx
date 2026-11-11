@@ -3,7 +3,7 @@
 import { Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance, ViewportPortal } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { derivedEdges, type Block, type Graph, type ValidationIssue } from '@/domain/graph'
+import { derivedEdges, STAGE_ORDER, type Block, type Graph, type ValidationIssue } from '@/domain/graph'
 import { summarize } from '@/domain/summary'
 import { BlockInspector } from './BlockInspector'
 import { addBlock, addableKinds, canDisable, canRemove, chainTo, moveBlock, removeBlock, updateBlock } from './editing'
@@ -12,7 +12,8 @@ import { strings } from '@/ui/strings'
 import { Depth } from './Depth'
 import { ParticleLayer, type Cable } from './FlowParticles'
 import { useReducedMotion } from './useReducedMotion'
-import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, type NodeRunView } from './BlockCard'
+import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, SpineCard, type NodeRunView } from './BlockCard'
+import { autoFocus, fisheyeLayout } from './fisheye'
 
 export type { NodeRunView }
 
@@ -28,7 +29,12 @@ type CardData = {
   selected: boolean
   issues: string[]
   breadcrumb: string[]
-  onCollapse: () => void
+  /** True when the fisheye has pushed this block away from the focus, so it is drawn as a spine. */
+  collapsed: boolean
+  /** Set while the fisheye is laying out, so every panel in the lane is the same width. */
+  cardWidth?: number
+  collapseLabel?: string
+  onCollapse?: () => void
 }
 type CardNode = Node<CardData, 'block'>
 
@@ -54,7 +60,9 @@ function BlockNode({ data }: NodeProps<CardNode>) {
       }}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      {data.view ? (
+      {data.collapsed ? (
+        <SpineCard block={data.block} view={data.view} selected={data.selected} />
+      ) : data.view ? (
         <BlockCard
           block={data.block}
           view={data.view}
@@ -63,6 +71,8 @@ function BlockNode({ data }: NodeProps<CardNode>) {
           issues={data.issues}
           breadcrumb={data.breadcrumb}
           onCollapse={data.onCollapse}
+          collapseLabel={data.collapseLabel}
+          width={data.cardWidth}
         />
       ) : (
         <NotInRunCard block={data.block} selected={data.selected} issues={data.issues} />
@@ -148,6 +158,8 @@ export function Canvas({
   // Expansion is a view state only: it never enters the graph and so is never saved.
   const [expandedId, setExpandedId] = useState<string | null>(initialExpandedId)
   const [issues, setIssues] = useState<ValidationIssue[]>([])
+  // Null means the canvas follows the work by itself; a value means a person chose a block and it stays open.
+  const [focusOverride, setFocusOverride] = useState<string | null>(null)
   const [saveFailed, setSaveFailed] = useState(false)
 
   const graphRef = useRef(initialGraph)
@@ -231,7 +243,10 @@ export function Canvas({
     if (floorRef.current) floorRef.current.style.translate = `${vp.x * PARALLAX}px ${vp.y * PARALLAX}px`
   }, [])
   useEffect(() => {
-    if (highlightedId) void flow.current?.fitView({ nodes: [{ id: highlightedId }], duration: 300, maxZoom: 1 })
+    if (!highlightedId) return
+    // Pointing at a block from the event bar is a request to see it, so it also becomes the focus.
+    setFocusOverride(highlightedId)
+    void flow.current?.fitView({ nodes: [{ id: highlightedId }], duration: 300, maxZoom: 1 })
   }, [highlightedId])
 
   // The queued default is only true when there is no run. Once a run exists, a block it has no view for is
@@ -249,41 +264,77 @@ export function Canvas({
   const draftIds = new Set(graph.blocks.map(b => b.id))
   const removedFromDraft = (runBlocks ?? []).filter(b => !draftIds.has(b.id))
   const presented: Graph = { blocks: [...graph.blocks.map(b => ({ ...b, ...pick(frozenOf(b)) })), ...removedFromDraft] }
+
+  // While a run is on screen the canvas lays the lane out itself, around whatever is happening: the focus and
+  // its two neighbours stay full panels and the rest collapse, so every block fits without anything hiding.
+  // Dragging is off meanwhile, because a card cannot both be placed by hand and move on its own.
+  const ordered = STAGE_ORDER.flatMap(kind => presented.blocks.filter(b => b.kind === kind))
+  const focusId = hasRun
+    ? (focusOverride ?? autoFocus(ordered.map(b => ({ id: b.id, state: runById.get(b.id)?.state ?? null }))))
+    : null
+  // Two kinds of block never collapse, because a spine has nowhere to say what is wrong with them: one
+  // carrying a validation message, and one the run does not contain at all.
+  const mustStayFull = new Set(
+    ordered.filter(b => issuesFor(b.id).length > 0 || (hasRun && draftIds.has(b.id) && !inRun(b))).map(b => b.id),
+  )
+  const layout = hasRun ? fisheyeLayout(ordered, focusId, mustStayFull) : null
+
+  // The lane is re-laid-out whenever the focus moves, so the view has to be re-fitted or the far end falls
+  // off the screen. Under reduced motion it jumps instead of gliding: a glide is movement.
+  const fisheyeFocus = hasRun ? focusId : null
+  useEffect(() => {
+    if (fisheyeFocus === null) return
+    void flow.current?.fitView({ duration: reducedMotion ? 0 : 300, maxZoom: 1 })
+  }, [fisheyeFocus, reducedMotion])
+
+  const placementOf = (block: Block) => layout?.get(block.id)
+  const unpin = focusOverride === null ? undefined : () => setFocusOverride(null)
+
   const nodes: CardNode[] = [
     ...graph.blocks.map(block => {
       // No run: honestly queued. In a run: the stream's view, or queued when the run holds the block but has said nothing yet.
       // Not in the run: no view at all, drawn as such.
       const view = !hasRun ? queuedView(block) : inRun(block) ? (runById.get(block.id) ?? queuedView(block)) : null
+      const placed = placementOf(block)
       return {
         id: block.id,
         type: 'block' as const,
-        position: { x: block.position.x + expansionOffsetX(graph, expandedId, block), y: block.position.y },
+        position: placed
+          ? { x: placed.x, y: placed.y }
+          : { x: block.position.x + expansionOffsetX(graph, expandedId, block), y: block.position.y },
         data: {
           block: view ? (frozenOf(block) ?? block) : block,
           view,
           highlighted: highlightedId === block.id,
-          expanded: expandedId === block.id,
+          expanded: hasRun ? block.id === focusId : expandedId === block.id,
           selected: selectedId === block.id,
           issues: issuesFor(block.id),
-          breadcrumb: chainTo(graph, block.id),
-          onCollapse: () => setExpandedId(null),
+          // Under the fisheye the lane itself is the breadcrumb: every block is on screen.
+          breadcrumb: hasRun ? [] : chainTo(graph, block.id),
+          collapsed: placed?.collapsed ?? false,
+          cardWidth: hasRun ? CARD_WIDTH : undefined,
+          collapseLabel: hasRun ? strings.canvas.followWork : strings.canvas.collapse,
+          onCollapse: hasRun ? unpin : () => setExpandedId(null),
         },
       }
     }),
     ...removedFromDraft.map(block => ({
       id: block.id,
       type: 'block' as const,
-      position: { x: block.position.x, y: block.position.y },
+      position: placementOf(block) ?? { x: block.position.x, y: block.position.y },
       draggable: false,
       data: {
         block,
         view: runById.get(block.id) ?? queuedView(block),
         highlighted: highlightedId === block.id,
-        expanded: expandedId === block.id,
+        expanded: hasRun ? block.id === focusId : expandedId === block.id,
         selected: false,
         issues: [],
-        breadcrumb: chainTo({ blocks: [...(runBlocks ?? [])] }, block.id),
-        onCollapse: () => setExpandedId(null),
+        breadcrumb: hasRun ? [] : chainTo({ blocks: [...(runBlocks ?? [])] }, block.id),
+        collapsed: placementOf(block)?.collapsed ?? false,
+        cardWidth: hasRun ? CARD_WIDTH : undefined,
+        collapseLabel: hasRun ? strings.canvas.followWork : strings.canvas.collapse,
+        onCollapse: hasRun ? unpin : () => setExpandedId(null),
       },
     })),
   ]
@@ -415,7 +466,9 @@ export function Canvas({
           }}
           onNodeClick={(_, node) => {
             setSelectedId(node.id)
-            setExpandedId(current => (current === node.id ? null : node.id))
+            // Under the fisheye a click chooses the focus; clicking the open block hands the follow back.
+            if (hasRun) setFocusOverride(current => (current === node.id ? null : node.id))
+            else setExpandedId(current => (current === node.id ? null : node.id))
           }}
           onNodesChange={changes => {
             // Follow the pointer while dragging; nothing is saved until the drag ends.
@@ -431,7 +484,7 @@ export function Canvas({
             const stored = toStored(node.id, node.position)
             edit(g => moveBlock(g, node.id, stored))
           }}
-          nodesDraggable
+          nodesDraggable={!hasRun}
           nodesConnectable={false}
           deleteKeyCode={null}
           fitView

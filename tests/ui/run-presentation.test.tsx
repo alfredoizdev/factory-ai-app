@@ -118,8 +118,9 @@ test('a rename in the draft does not rename the card of the run being watched', 
 test('the card shows the model the run used, not the one typed into the draft afterwards', () => {
   const run = base.blocks.map(b => (b.kind === 'build' ? { ...b, config: { model: 'run-model' } } : b))
   page({ blocks: run }, run)
-  expect(screen.getByTestId('block-model-build')).toHaveTextContent('run-model')
+  // The fisheye opens on how far the run got, so Build is opened first to read its chip.
   fireEvent.click(within(node('build')).getByText(strings.blocks.build))
+  expect(screen.getByTestId('block-model-build')).toHaveTextContent('run-model')
   fireEvent.change(screen.getByLabelText(strings.editing.model), { target: { value: 'draft-model' } })
   expect(screen.getByTestId('block-model-build')).toHaveTextContent('run-model')
 })
