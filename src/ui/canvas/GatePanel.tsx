@@ -3,6 +3,7 @@
 import { forwardRef, useEffect, useState } from 'react'
 import type { ChangeUnderReview } from '@/engine/approvals'
 import { strings } from '@/ui/strings'
+import { PreviewButton } from './PreviewButton'
 import { theme } from '@/ui/theme'
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
@@ -153,6 +154,9 @@ export const GatePanel = forwardRef<HTMLElement, { runId: string; risk?: { level
           )}
         </div>
       )}
+
+      {/* Only a run that changed files has something to preview. */}
+      {review && review.files.length > 0 && !decided && <PreviewButton runId={runId} />}
 
       {!decided && (
         <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>

@@ -7,6 +7,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { approvals, nodeRuns, runs } from '@/db/schema'
+import { stopPreview } from '@/engine/preview'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
 
@@ -119,6 +120,8 @@ export async function decideGate(runId: string, input: { decision: Decision; rea
     db.delete(approvals).where(eq(approvals.id, row.id)).run()
     throw new GateError(strings.gate.notDelivered, 409)
   }
+  // The decision is made; a preview of the change has nothing left to inform.
+  stopPreview(runId)
   return row
 }
 
