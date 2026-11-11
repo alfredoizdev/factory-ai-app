@@ -96,3 +96,18 @@ test('deleting a project cascades and removes its runs and their children, delib
   expect(await db.select().from(nodeRuns).where(eq(nodeRuns.id, chain.nodeRunId))).toHaveLength(0)
   expect(await db.select().from(usageRecords).where(eq(usageRecords.id, usage.id))).toHaveLength(0)
 })
+
+// M3a: a project knows its repository and test command; a run knows the worktree it works in.
+test('repository settings and run workspace columns default to null and accept values', async () => {
+  const chain = await createNodeRunChain()
+  const project = db.select().from(projects).where(eq(projects.id, chain.projectId)).get()!
+  expect(project.repoPath).toBeNull()
+  expect(project.testCommand).toBeNull()
+  const run = db.select().from(runs).where(eq(runs.id, chain.runId)).get()!
+  expect([run.worktreePath, run.branch, run.baseCommit]).toEqual([null, null, null])
+
+  db.update(projects).set({ repoPath: '/repo', testCommand: 'npm test' }).where(eq(projects.id, chain.projectId)).run()
+  db.update(runs).set({ worktreePath: '/wt', branch: 'factory/x', baseCommit: 'abc' }).where(eq(runs.id, chain.runId)).run()
+  expect(db.select().from(projects).where(eq(projects.id, chain.projectId)).get()!.repoPath).toBe('/repo')
+  expect(db.select().from(runs).where(eq(runs.id, chain.runId)).get()!.branch).toBe('factory/x')
+})
