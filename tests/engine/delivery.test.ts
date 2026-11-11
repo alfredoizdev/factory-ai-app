@@ -8,7 +8,7 @@ import { db, migrateDb } from '@/db/client'
 import { approvals, nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
-import { deliverToProject, DeliveryError, deliveryState, switchBack, switchToBranch } from '@/engine/delivery'
+import { deliverToProject, DeliveryError, deliveryState, githubPullUrl, pushBranch, switchBack, switchToBranch } from '@/engine/delivery'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import { createRunWorktree } from '@/engine/worktree'
 import { POST } from '@/app/api/runs/[runId]/delivery/route'
@@ -347,5 +347,60 @@ describe('naming the kept branch', () => {
     git(repo, 'branch', 'taken')
     expect(() => keepOnBranch(runId, { name: 'taken' })).toThrow(strings.delivery.branchExists('taken'))
     expect(deliveryState(runId).kept).toBe(false)
+  })
+})
+
+describe('pushing the kept branch', () => {
+  async function withOrigin() {
+    const r = await finishedRun()
+    const origin = mkdtempSync(join(tmpdir(), 'factory-origin-'))
+    git(origin, 'init', '-q', '--bare')
+    git(r.repo, 'remote', 'add', 'origin', origin)
+    return { ...r, origin }
+  }
+
+  test('sends only the kept branch to origin, and says so', async () => {
+    const { runId, origin } = await withOrigin()
+    const kept = keepOnBranch(runId, { name: 'ai/outline-buttons-x1' })
+    const pushed = await pushBranch(runId)
+    expect(pushed.pushed).toBe(true)
+    expect(git(origin, 'rev-parse', 'ai/outline-buttons-x1')).toBe(git(origin, 'rev-parse', kept.commit!))
+    expect(git(origin, 'branch', '--list', 'main')).toBe('') // their main was not sent
+    expect((await eventsSince(runId, 0)).some(e => e.type === 'run.pushed')).toBe(true)
+  })
+
+  test('refuses before the change is kept, and without an origin', async () => {
+    const { runId } = await finishedRun()
+    await expect(pushBranch(runId)).rejects.toThrow(strings.delivery.keepFirst)
+    keepOnBranch(runId)
+    await expect(pushBranch(runId)).rejects.toThrow(strings.delivery.noRemote)
+  })
+
+  test('a push git refuses is reported, never forced', async () => {
+    const { runId, repo, origin } = await withOrigin()
+    keepOnBranch(runId, { name: 'ai/taken-remotely' })
+    // Someone else's commit is already on that branch name at origin.
+    const other = mkdtempSync(join(tmpdir(), 'factory-other-'))
+    git(other, 'clone', '-q', origin, '.')
+    git(other, 'config', 'user.email', 'o@example.com')
+    git(other, 'config', 'user.name', 'o')
+    git(other, 'checkout', '-q', '--orphan', 'ai/taken-remotely')
+    writeFileSync(join(other, 'x.txt'), 'theirs\n')
+    git(other, 'add', '.')
+    git(other, 'commit', '-q', '-m', 'theirs')
+    git(other, 'push', '-q', 'origin', 'ai/taken-remotely')
+    const before = git(origin, 'rev-parse', 'ai/taken-remotely')
+    await expect(pushBranch(runId)).rejects.toThrow(DeliveryError)
+    expect(git(origin, 'rev-parse', 'ai/taken-remotely')).toBe(before)
+    expect(deliveryState(runId).pushed).toBe(false)
+    expect(repo).toBeTruthy()
+  })
+
+  test('a GitHub remote gives a pull-request link, without any credentials in it', () => {
+    expect(githubPullUrl('https://github.com/alice/shop.git', 'ai/x-1')).toBe('https://github.com/alice/shop/pull/new/ai/x-1')
+    expect(githubPullUrl('git@github.com:alice/shop.git', 'ai/x-1')).toBe('https://github.com/alice/shop/pull/new/ai/x-1')
+    expect(githubPullUrl('https://alice:ghp_secret@github.com/alice/shop', 'b')).toBe('https://github.com/alice/shop/pull/new/b')
+    expect(githubPullUrl('https://gitlab.com/alice/shop.git', 'b')).toBeNull()
+    expect(githubPullUrl('/tmp/bare', 'b')).toBeNull()
   })
 })

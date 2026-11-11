@@ -16,6 +16,7 @@ export type RunEventType =
   | 'run.delivered'
   | 'run.switched'
   | 'run.switched_back'
+  | 'run.pushed'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'
   | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'

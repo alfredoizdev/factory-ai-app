@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +6,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { approvals, events, projects, runs } from '@/db/schema'
 import { appendEventSync } from '@/engine/events'
-import { clip } from '@/engine/redact'
+import { clip, redact } from '@/engine/redact'
 import { branchFromWords, fallbackWords } from '@/engine/branch-name'
 import { branchNameFor } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
@@ -31,6 +31,10 @@ export type Delivery = {
   current: string | null
   /** Where "Back" would return the project to: the branch it was on before this run switched it. */
   returnTo: string | null
+  /** Sent to the project's origin. */
+  pushed: boolean
+  /** Where to open a pull request for it, when origin is on GitHub. */
+  pullRequestUrl: string | null
 }
 
 export class DeliveryError extends Error {
@@ -50,10 +54,10 @@ function approvedAndFinished(runId: string) {
   return { run, eligible: run.status === 'completed' && !!approved && !!run.worktreePath && !!run.baseCommit }
 }
 
-type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string }
+type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string; pullRequestUrl?: string | null }
 
 /** The latest record of this kind for this run, if there was one. A keep or a delivery happens once; a switch may repeat. */
-function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched'): Record_ | null {
+function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed'): Record_ | null {
   const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)).get()
   return row ? (JSON.parse(row.payloadJson) as Record_) : null
 }
@@ -78,6 +82,7 @@ export function deliveryState(runId: string): Delivery {
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   const kept = recordOf(runId, 'run.kept')
   const done = deliveredRecord(runId)
+  const pushedRecord = recordOf(runId, 'run.pushed')
   return {
     eligible: found.eligible,
     kept: !!kept,
@@ -88,6 +93,8 @@ export function deliveryState(runId: string): Delivery {
     appliedTo: done?.appliedTo ?? null,
     current: currentBranch(repoOf(found.run.projectId)),
     returnTo: recordOf(runId, 'run.switched')?.from ?? null,
+    pushed: pushedRecord !== null && pushedRecord.branch === (kept?.branch ?? found.run.branch),
+    pullRequestUrl: pushedRecord?.pullRequestUrl ?? null,
   }
 }
 
@@ -286,5 +293,57 @@ export function switchBack(runId: string): Delivery {
     checkoutIn(repo, switched.from)
     db.transaction(tx => void appendEventSync({ runId, type: 'run.switched_back', payload: { branch: switched.from } }, tx), { behavior: 'immediate' })
   }
+  return deliveryState(runId)
+}
+
+/**
+ * The page where GitHub opens a pull request for a branch, from the remote's address. Only owner and repository are
+ * read from it, so a token written into the remote URL can never reach the page. Null for anything not on github.com.
+ */
+export function githubPullUrl(remote: string, branch: string): string | null {
+  const m = /^(?:https?:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(remote.trim())
+  return m ? `https://github.com/${m[1]}/${m[2]}/pull/new/${branch}` : null
+}
+
+const gitAsync = (cwd: string, args: string[]) =>
+  new Promise<string>((resolve, reject) => {
+    // Never waits for a password prompt: the person's saved credentials work, or the push fails and says so.
+    execFile('git', args, { cwd, timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, stdout, stderr) =>
+      err ? reject(new Error(String(stderr || err.message))) : resolve(String(stdout).trim()),
+    )
+  })
+
+/**
+ * Sends the kept branch — that branch only, never forced — to the project's origin, with the person's own git
+ * credentials. Their other branches are not sent. Refused before the change is kept, or with no origin.
+ */
+export async function pushBranch(runId: string): Promise<Delivery> {
+  const found = approvedAndFinished(runId)
+  if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
+  const kept = recordOf(runId, 'run.kept')
+  if (!kept?.branch) throw new DeliveryError(strings.delivery.keepFirst, 409)
+  const branch = kept.branch
+  const repo = repoOf(found.run.projectId)
+  if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
+  let remote: string
+  try {
+    remote = git(repo, ['remote', 'get-url', 'origin'])
+  } catch {
+    throw new DeliveryError(strings.delivery.noRemote, 409)
+  }
+  try {
+    await gitAsync(repo, ['push', '--porcelain', 'origin', `refs/heads/${branch}:refs/heads/${branch}`])
+  } catch (e) {
+    // git's own words, minus anything secret and any address that could carry a token.
+    const said = redact(String((e as Error).message)).replace(/[a-z]+:\/\/[^\s]*@/gi, '').trim().split('\n').filter(Boolean).slice(-2).join(' ')
+    throw new DeliveryError(strings.delivery.pushFailed(clip(said, 240)), 409)
+  }
+  try {
+    git(repo, ['branch', '--set-upstream-to', `origin/${branch}`, branch])
+  } catch {
+    // Upstream tracking is a convenience; the push itself succeeded.
+  }
+  const pullRequestUrl = githubPullUrl(remote, branch)
+  db.transaction(tx => void appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx), { behavior: 'immediate' })
   return deliveryState(runId)
 }

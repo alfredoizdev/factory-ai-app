@@ -10,7 +10,7 @@ import { WorkingSpinner } from './BlockCard'
  * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
  * on top of it. Bringing it over writes into the person's folder, so the button says exactly what it will do.
  */
-type Mode = 'branch' | 'apply' | 'switch' | 'back'
+type Mode = 'branch' | 'apply' | 'switch' | 'back' | 'push'
 
 export function ResultSection({
   runId,
@@ -135,6 +135,23 @@ export function ResultSection({
                   {busy === 'switch' ? <WorkingSpinner blockId="switch" size={16} /> : '⇄'} {strings.delivery.switchButton}
                 </button>
                 <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.switchWhat}</div>
+              </>
+            )}
+            {delivery.pushed ? (
+              <div data-testid="pushed" style={{ display: 'grid', gap: 4, fontSize: 12.5, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
+                <span style={{ color: theme.passed }}>✓ {strings.delivery.pushed(delivery.branch)}</span>
+                {delivery.pullRequestUrl && (
+                  <a href={delivery.pullRequestUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#93c5fd', fontWeight: 700 }}>
+                    {strings.delivery.openPullRequest} ↗
+                  </a>
+                )}
+              </div>
+            ) : (
+              <>
+                <button type="button" disabled={busy !== null} onClick={() => void bring('push')} style={secondaryButton(busy)}>
+                  {busy === 'push' ? <WorkingSpinner blockId="push" size={16} /> : '↑'} {strings.delivery.pushButton}
+                </button>
+                <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4, marginTop: -2 }}>{strings.delivery.pushWhat}</div>
               </>
             )}
           </div>

@@ -107,7 +107,7 @@ test('there is one box to write in, whatever the moment', () => {
   expect(screen.getByText(strings.card.working)).toBeInTheDocument()
 })
 
-const approved = { eligible: true, kept: false, delivered: false, branch: 'ai/outline-buttons-abc123', commit: null, files: [], appliedTo: null, current: 'main', returnTo: null }
+const approved = { eligible: true, kept: false, delivered: false, branch: 'ai/outline-buttons-abc123', commit: null, files: [], appliedTo: null, current: 'main', returnTo: null, pushed: false, pullRequestUrl: null }
 
 test('done: the branch name is suggested and editable, keeping uses it, and the project can be switched there and back', async () => {
   let state: Record<string, unknown> = approved
@@ -118,6 +118,7 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
       if (mode === 'branch' || mode === 'apply') state = { ...state, kept: true, branch: name, commit: '1234567abc', files: ['src/app/page.tsx'], delivered: mode === 'apply' }
       if (mode === 'switch') state = { ...state, current: state.branch, returnTo: 'main' }
       if (mode === 'back') state = { ...state, current: 'main' }
+      if (mode === 'push') state = { ...state, pushed: true, pullRequestUrl: 'https://github.com/a/b/pull/new/feature/my-name' }
       return new Response(JSON.stringify(state))
     }
     return new Response(JSON.stringify(state))
@@ -141,4 +142,8 @@ test('done: the branch name is suggested and editable, keeping uses it, and the 
   expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.applyButton) })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.backButton('main')) }))
   expect(await screen.findByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeInTheDocument()
+  // Push, then the pull-request link.
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.pushButton) }))
+  expect(await screen.findByTestId('pushed')).toHaveTextContent(strings.delivery.pushed('feature/my-name'))
+  expect(screen.getByRole('link', { name: new RegExp(strings.delivery.openPullRequest) })).toHaveAttribute('href', 'https://github.com/a/b/pull/new/feature/my-name')
 })

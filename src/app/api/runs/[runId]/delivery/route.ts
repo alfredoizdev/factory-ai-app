@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { branchFromWords, suggestBranchWords } from '@/engine/branch-name'
-import { changedFiles, deliverToProject, DeliveryError, deliveryState, keepOnBranch, requestOf, switchBack, switchToBranch } from '@/engine/delivery'
+import { changedFiles, deliverToProject, DeliveryError, deliveryState, keepOnBranch, pushBranch, requestOf, switchBack, switchToBranch } from '@/engine/delivery'
 import { requireOwnPage } from '@/engine/same-origin'
 
 type Ctx = { params: Promise<{ runId: string }> }
@@ -26,15 +26,17 @@ export async function POST(req: Request, ctx: Ctx) {
   const { runId } = await ctx.params
   // 'branch': commit it on its own branch only. 'apply': also put it, uncommitted, into the current checkout.
   // 'switch': move the project onto the kept branch. 'back': return it to the branch it was on before.
+  // 'push': send the kept branch, only that one, to origin.
   // `name`: the branch name the person chose; without one, a short model names it from what changed.
   const body = z
-    .object({ mode: z.enum(['branch', 'apply', 'switch', 'back']).default('apply'), name: z.string().max(200).optional() })
+    .object({ mode: z.enum(['branch', 'apply', 'switch', 'back', 'push']).default('apply'), name: z.string().max(200).optional() })
     .safeParse(await req.json().catch(() => ({})))
   const mode = body.success ? body.data.mode : 'apply'
   const name = body.success ? (body.data.name?.trim() ?? '') : ''
   try {
     if (mode === 'switch') return Response.json(switchToBranch(runId))
     if (mode === 'back') return Response.json(switchBack(runId))
+    if (mode === 'push') return Response.json(await pushBranch(runId))
     const fallbackName = name === '' && !deliveryState(runId).kept ? await suggestedName(runId) : null
     const options = { name: name || null, fallbackName }
     return Response.json(mode === 'branch' ? keepOnBranch(runId, options) : deliverToProject(runId, options))
