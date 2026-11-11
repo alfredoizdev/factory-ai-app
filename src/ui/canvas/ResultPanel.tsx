@@ -7,6 +7,7 @@ import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
 import { ShipSection } from './ShipSection'
+import type { ComposerSend } from './Composer'
 
 /**
  * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
@@ -28,7 +29,8 @@ export function ResultSection({
   note: string
   imageIds: string[]
   imagesBusy: boolean
-  composer: ReactNode
+  /** The shared composer; its send arrow (and Enter) continues from this change with what is written in it. */
+  composer: (send?: ComposerSend) => ReactNode
   onFollowUp: (runId: string) => void
   onShipState?: (state: ShipState) => void
 }) {
@@ -126,7 +128,7 @@ export function ResultSection({
   }
 
   // Not (yet) known to be an approved, finished run: only the composer, for a fresh request from the top bar.
-  if (!delivery?.eligible) return <>{composer}</>
+  if (!delivery?.eligible) return <>{composer()}</>
 
   const kept = delivery.kept && delivery.branch !== null
   const checksOk = ship?.pr?.state === 'open' && ship.checksDone && !ship.checksFailed && !ship.pr.conflicts
@@ -264,23 +266,12 @@ export function ResultSection({
       </div>
       <div style={{ display: 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
         <div style={{ fontSize: 12, color: theme.dim }}>{strings.followUp.hint}</div>
-        {composer}
-        <button
-          type="button"
-          disabled={busy !== null || imagesBusy || note.trim() === ''}
-          onClick={() => void followUp()}
-          style={{
-            padding: '9px 12px',
-            borderRadius: 8,
-            border: `1px solid ${theme.running}`,
-            background: note.trim() ? theme.tint('running', 0.16) : 'transparent',
-            color: note.trim() ? '#cfe0ff' : theme.skipped,
-            fontWeight: 700,
-            cursor: busy !== null || note.trim() === '' ? 'not-allowed' : 'pointer',
-          }}
-        >
-          ↺ {busy === 'follow' ? strings.followUp.starting : strings.followUp.start}
-        </button>
+        {composer({
+          label: strings.followUp.start,
+          onSend: () => void followUp(),
+          enabled: busy === null && !imagesBusy && note.trim() !== '',
+          busy: busy === 'follow',
+        })}
       </div>
 
       {error && (

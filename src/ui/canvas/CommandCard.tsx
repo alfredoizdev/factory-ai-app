@@ -55,7 +55,7 @@ export const CommandCard = forwardRef<
   const withSend = (send?: ComposerSend) => (
     <Composer
       send={send}
-      minHeight={mode === 'waiting' ? 96 : undefined}
+      minHeight={mode === 'waiting' || mode === 'done' ? 96 : undefined}
       inputId={RUN_INPUT_ID}
       label={label}
       placeholder={placeholder}
@@ -157,7 +157,7 @@ export const CommandCard = forwardRef<
           note={text}
           imageIds={readyImageIds(images)}
           imagesBusy={imagesBusy(images)}
-          composer={composer}
+          composer={withSend}
           onFollowUp={id => {
             onSent()
             onFollowUp(id)
