@@ -6,7 +6,7 @@ import { db } from '@/db/client'
 import { projectNotes, projects, runs } from '@/db/schema'
 import { appendEventSync, type DbHandle, lockRun } from '@/engine/events'
 import { projectHere } from '@/engine/machine'
-import { SENSITIVE, insideCoreArea } from '@/engine/risk'
+import { SENSITIVE, insideCoreArea, type DecisionPaths } from '@/engine/risk'
 import { strings } from '@/ui/strings'
 
 // The project's numbered register: the short rules the person taught, the decisions made on earlier tasks, the core
@@ -117,6 +117,18 @@ export async function standingFor(projectId: string, h: DbHandle = db): Promise<
 /** The path patterns of the core areas that are switched on. */
 export async function corePaths(projectId: string, h: DbHandle = db): Promise<string[]> {
   return (await standingFor(projectId, h)).filter(s => s.kind === 'core').flatMap(s => s.paths)
+}
+
+/**
+ * What a finished change is measured against besides its size: the core areas and the decisions that name files. The one
+ * place both the final check and the review depth read it from, so they cannot disagree about the same change.
+ */
+export async function gateInputs(projectId: string, h: DbHandle = db): Promise<{ core: string[]; decisions: DecisionPaths[] }> {
+  const standing = await standingFor(projectId, h)
+  return {
+    core: standing.filter(s => s.kind === 'core').flatMap(s => s.paths),
+    decisions: standing.filter(s => s.kind === 'decision' && s.paths.length > 0).map(s => ({ text: s.text, paths: s.paths })),
+  }
 }
 
 /** Sensitive areas the changed files touch, as candidates for the person to mark as core. First matching area per file. */

@@ -6,7 +6,7 @@ import { appendEventSync } from '@/engine/events'
 import { bySeverity, citedPath, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, type FindingRow } from '@/engine/findings'
 import { QUESTION_ANSWERED } from '@/engine/inngest/client'
 import { LEAVE, askPerson, consumeAnswer, type Question } from '@/engine/questions'
-import { addEntry, corePaths, standingFor, touchesCore } from '@/engine/register'
+import { addEntry, corePaths, gateInputs, standingFor, touchesCore } from '@/engine/register'
 import { corrected, makeCopy as realMakeCopy, removeCopy, reproduced, runRepro as realRunRepro, type NoRepro, type Repro, type ReproRun } from '@/engine/repro'
 import {
   APPROVAL_WAIT,
@@ -544,15 +544,15 @@ async function sinceOf(tree: string, workspace: Workspace, deps: ExecutorDeps): 
   }
 }
 
-async function depthOf(runId: string, workspace: Workspace, since?: Since): Promise<'low' | 'high'> {
+export async function depthOf(runId: string, workspace: Workspace, since?: Since): Promise<'low' | 'high'> {
   // A change that cannot be measured is read as carefully as a risky one.
   if (!workspace.workdir || !workspace.baseCommit) return 'high'
   const tests = await testFactsOf(runId)
   const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
-  const core = projectId ? await corePaths(projectId) : []
+  const { core, decisions } = projectId ? await gateInputs(projectId) : { core: [], decisions: [] }
   // The same rules, on the files changed since the first review. More files than were carried is far past the limit already.
-  if (since) return since.more > 0 ? 'high' : classifyChange(since.files, tests, core).level
-  return assessRisk(workspace.workdir, workspace.baseCommit, tests, core).level
+  if (since) return since.more > 0 ? 'high' : classifyChange(since.files, tests, core, decisions).level
+  return assessRisk(workspace.workdir, workspace.baseCommit, tests, core, decisions).level
 }
 
 /** What the builder said it did, from the build node's stored sentence. */

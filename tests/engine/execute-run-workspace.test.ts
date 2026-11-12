@@ -11,6 +11,7 @@ import { eventsSince } from '@/engine/events'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
 import { recordDecision } from '@/engine/approvals'
 import { addEntry } from '@/engine/register'
+import { depthOf } from '@/engine/inngest/review-stage'
 import { createProject } from '@/engine/projects'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { TestRun } from '@/engine/test-runner'
@@ -277,10 +278,16 @@ test('a change on files one of the person\'s decisions names stops for them in t
   await addEntry(projectId, { kind: 'decision', text: 'Prices round down', paths: ['src/rounding/'], source: 'question' })
   const { runId } = await createRun({ workflowId, request: 'do it' })
   await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))
-  await drive(runId, withTests(), realWorktree({ 'src/rounding/round.ts': 'floor()\n' }))
+  const worktree = realWorktree({ 'src/rounding/round.ts': 'floor()\n' })
+  await drive(runId, withTests(), worktree)
   expect((await node(runId, 'human')).state).toBe('waiting_approval')
   const [assessed] = await payloadOf(runId, 'node.assessed', 'human')
   expect(assessed!.level).toBe('high')
+  // The review depth reads the same register the gate does, so the two say the same about the same change.
+  const made = worktree!('', runId)
+  const workspace = { workdir: made.path, baseCommit: made.baseCommit } as Parameters<typeof depthOf>[1]
+  expect(await depthOf(runId, workspace)).toBe('high')
+  expect(await depthOf(runId, workspace, { paths: ['src/rounding/round.ts'], diff: '', files: [{ path: 'src/rounding/round.ts', lines: 1 }], more: 0 })).toBe('high')
   expect(assessed!.reasons).toEqual([strings.risk.onDecision('src/rounding/round.ts', 'Prices round down')])
   expect(await payloadOf(runId, 'node.completed', 'human')).toEqual([])
 })
