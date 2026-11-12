@@ -1,6 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { events, nodeRuns } from '@/db/schema'
+import { events, nodeRuns, questions } from '@/db/schema'
 import { appendEventSync, lockRun } from '@/engine/events'
 import { jsonObjectsFromEnd } from '@/engine/json-objects'
 import { clip, redact } from '@/engine/redact'
@@ -144,6 +144,8 @@ export async function decidePlan(runId: string, decision: { action: 'build'; job
         }
       }
       if (!node) throw new PlanError(strings.plan.notWaiting)
+      // While the planner's question waits, the node waits on that answer, not on a word about an earlier plan.
+      if ((await tx.select({ id: questions.id }).from(questions).where(and(eq(questions.nodeRunId, node.id), eq(questions.state, 'open'))))[0]) throw new PlanError(strings.plan.notWaiting)
       if (decision.action === 'build') {
         const jobs = cleanJobs(decision.jobs)
         if (!jobs) throw new PlanError(strings.plan.needAJob)

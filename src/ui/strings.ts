@@ -83,6 +83,9 @@ const sinceLines = (since: { paths: readonly string[]; diff: string; more?: numb
 /** "a", "a and b", "a, b and c". */
 const list = (items: readonly string[]): string => (items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`)
 
+// The planner's prompt line for the person's answer to its own question: an answer, not a request to change a plan.
+const answerLine = (note: string) => `Before this plan, you asked the person a question. ${note} That question is settled: do not ask it again.`
+
 export const strings = {
   app: {
     name: 'AI Factory',
@@ -1257,9 +1260,20 @@ export const strings = {
           'Do not commit, push or create branches. Leave the changes in the working tree.',
           'When you are done, reply with one plain sentence saying what you changed.',
         ].join('\n'),
-      // The person's answer to the planner's question, handed to the planner as the note for its next plan.
-      answerNote: (q: string, chose: string | null, words: string | null) =>
-        `The person answered your question "${q}": ${chose ? `they chose "${chose}".` : 'they left it to you.'}${words ? ` In their words: ${words}` : ''} Plan the work with that.`,
+      // The person's answer to the planner's question, handed to the planner for its next plan: what they chose, or that
+      // they left it to the planner, or (with no option chosen) their own words, which are then the whole answer.
+      answerNote: (q: string, a: { option: 'chosen'; label: string } | { option: 'leave' } | { option: 'own' }, words: string | null) => {
+        const added = words ? ` They added, in their own words: ${words}` : ''
+        const answer =
+          a.option === 'chosen'
+            ? `The person answered your question "${q}": they chose "${a.label}".${added}`
+            : a.option === 'leave'
+              ? `The person answered your question "${q}": they left it to you: choose what you think is best.${added}`
+              : `The person answered your question "${q}" in their own words: ${words ?? ''}`
+        return `${answer} Plan the work with that.`
+      },
+      // The answer in the planner's prompt: an answer to its own question, not a request to change a plan nobody saw.
+      answerLine: (note: string) => answerLine(note),
       notFound: 'The claude command was not found on this computer.',
       badModel: (model: string) => `"${model.slice(0, 40)}" is not a model name, so the agent was not started. Fix it in the block's settings.`,
       noWorkdir: 'This run has no working copy, so the agent was not started.',
@@ -1391,12 +1405,13 @@ export const strings = {
       rulesNote: (notes: readonly string[]) =>
         ['The person set these rules for this project on earlier tasks. Follow them unless this request says otherwise:', ...notes.map(n => `- ${n}`)].join('\n'),
       workListNote: (list: string) => ['The person checked this plan. Work through it, job by job:', list].join('\n'),
-      planPrompt: (request: string, previous?: string, note?: string) =>
+      // `from`: 'answer' when the note is the person's answer to the planner's own question (see answerNote).
+      planPrompt: (request: string, previous?: string, note?: string, from?: 'person' | 'reviewer' | 'answer') =>
         [
           'You are planning a change. Do not change any file: read only.',
           ...(previous ? [`An earlier change was already made and approved in this directory: ${previous}`] : []),
           `The person asked for this: ${request}`,
-          ...(note ? ['', `They looked at an earlier plan and asked for this instead: ${note}`] : []),
+          ...(note ? ['', from === 'answer' ? answerLine(note) : `They looked at an earlier plan and asked for this instead: ${note}`] : []),
           '',
           'Read the parts of the project this touches, then split the work into as few jobs as it really needs (one is fine for a small change, at most 8).',
           'Each job is one thing a builder does, named plainly so a person who does not program understands it, with one to three short checks that tell it is done.',

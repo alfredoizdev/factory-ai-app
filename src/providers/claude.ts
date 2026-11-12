@@ -264,7 +264,7 @@ async function* runPlanner(input: AgentExecutionInput, controls: ExecutionContro
   }
   const workdir = input.workdir
   const before = deps.snapshot(workdir)
-  const prompt = withAgreed(strings.providers.claude.planPrompt(input.request, input.previousRequest, input.revisionNote), input)
+  const prompt = withAgreed(strings.providers.claude.planPrompt(input.request, input.previousRequest, input.revisionNote, input.revisionFrom), input)
   const images = input.images ?? []
   const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
   const args = reviewerArgs(withImages, input.model)

@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -21,6 +23,7 @@ import { createRunWorktree } from '@/engine/worktree'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { TestRun } from '@/engine/test-runner'
 import type { AgentEvent, AgentProvider, BlockRoute } from '@/providers/types'
+import { createClaudeProvider } from '@/providers/claude'
 import { strings } from '@/ui/strings'
 
 // M3a: a provider that works on files gets the run's worktree first; what it reports is stored by kind —
@@ -807,6 +810,95 @@ describe('the plan follows the project\'s ask mode', () => {
     expect(provider.built).toEqual([footer])
   })
 
+  describe('what the real planner is told after the person answers', () => {
+    const asks = JSON.stringify({ jobs: footer, question })
+    const plain = JSON.stringify({ jobs: footer })
+    /** The claude provider's own planner, on a stand-in CLI that answers in turn; every prompt it was given is kept. */
+    function claudePlanner(answers: string[]): AgentProvider & { prompts: string[] } {
+      const prompts: string[] = []
+      let i = 0
+      const spawn = (_bin: string, args: string[]) => {
+        prompts.push(args[args.indexOf('-p') + 1]!)
+        const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true, exitCode: null as number | null, signalCode: null })
+        const result = answers[Math.min(i++, answers.length - 1)]!
+        setTimeout(() => {
+          child.stdout.end(`${JSON.stringify({ type: 'result', is_error: false, result })}\n`)
+          child.exitCode = 0
+          setTimeout(() => child.emit('close', 0), 5)
+        }, 1)
+        return child
+      }
+      const claude = createClaudeProvider({ spawn: spawn as never, snapshot: () => 'same', readCopyFile: () => null })
+      const rest = planner([{ jobs: footer }])
+      return {
+        id: 'files', isDemo: false, needsWorkspace: true, prompts,
+        execute: (input, controls) => (input.blockKind === 'plan' ? claude.execute(input, controls) : rest.execute(input, controls)),
+      }
+    }
+    async function answered(a: { option: string; text?: string }) {
+      const { runId } = await projectRun()
+      const s = recordingStep(async event => {
+        if (event !== QUESTION_ANSWERED) return false
+        await answerQuestion((await openQuestion(runId))!.id, a, { send: async () => undefined })
+        return true
+      })
+      const provider = claudePlanner([asks, plain])
+      await go(runId, provider, s)
+      expect(provider.prompts).toHaveLength(2)
+      return provider.prompts[1]!
+    }
+    const said = (note: string) => strings.providers.claude.planPrompt('add a footer', undefined, note, 'answer')
+
+    test('an option chosen', async () => {
+      const prompt = await answered({ option: 'a' })
+      const note = strings.providers.claude.answerNote(question.text, { option: 'chosen', label: 'Use username' }, null)
+      expect(prompt).toContain(`\n\n${strings.providers.claude.answerLine(note)}\n\n`)
+      expect(said(note)).toContain(strings.providers.claude.answerLine(note))
+      expect(prompt).toContain('they chose "Use username". Plan the work with that.')
+      expect(prompt).toContain('That question is settled: do not ask it again.')
+      expect(prompt).not.toContain('They looked at an earlier plan')
+      expect(prompt).not.toContain('left it to you')
+    })
+
+    test('an option chosen, with the person\'s words', async () => {
+      const prompt = await answered({ option: 'a', text: 'only for new accounts' })
+      expect(prompt).toContain(strings.providers.claude.answerNote(question.text, { option: 'chosen', label: 'Use username' }, 'only for new accounts'))
+      expect(prompt).toContain('they chose "Use username". They added, in their own words: only for new accounts')
+      expect(prompt).not.toContain('They looked at an earlier plan')
+    })
+
+    test('the person\'s own words only: the words are the answer', async () => {
+      const prompt = await answered({ option: 'other', text: 'use both, email first' })
+      expect(prompt).toContain(strings.providers.claude.answerNote(question.text, { option: 'own' }, 'use both, email first'))
+      expect(prompt).toContain(`The person answered your question "${question.text}" in their own words: use both, email first`)
+      expect(prompt).not.toContain('left it to you')
+      expect(prompt).not.toContain('They looked at an earlier plan')
+    })
+
+    test('left to the planner, with or without words', async () => {
+      const bare = await answered({ option: 'leave' })
+      expect(bare).toContain(strings.providers.claude.answerNote(question.text, { option: 'leave' }, null))
+      expect(bare).toContain('they left it to you: choose what you think is best.')
+      const withWords = await answered({ option: 'leave', text: 'whatever is simplest' })
+      expect(withWords).toContain(strings.providers.claude.answerNote(question.text, { option: 'leave' }, 'whatever is simplest'))
+      expect(withWords).toContain('They added, in their own words: whatever is simplest')
+      expect(withWords).not.toContain('They looked at an earlier plan')
+    })
+
+    test('asking for another plan is still said as before', async () => {
+      const { runId } = await projectRun({ askMode: 'everything' })
+      const s = recordingStep(async event => {
+        if (event !== PLAN_DECIDED) return false
+        await decidePlan(runId, { action: 'replan', note: 'do it in one job' })
+        return true
+      })
+      const provider = claudePlanner([plain])
+      await go(runId, provider, s)
+      expect(provider.prompts[1]).toContain('\n\nThey looked at an earlier plan and asked for this instead: do it in one job\n\n')
+      expect(provider.prompts[1]).not.toContain('settled')
+    })
+  })
+
   test('the planner\'s question is asked, and the answer goes to the next plan', async () => {
     const { runId } = await projectRun()
     let asked: Question | null = null
@@ -814,18 +906,22 @@ describe('the plan follows the project\'s ask mode', () => {
       if (event !== QUESTION_ANSWERED) return false
       asked = await openQuestion(runId)
       expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('waiting_approval')
+      // A word on a plan is not taken while the planner's question waits.
+      await expect(decidePlan(runId, { action: 'build', jobs: footer })).rejects.toThrow(strings.plan.notWaiting)
       await answerQuestion(asked!.id, { option: 'a' }, { send: async () => undefined })
       return true
     })
     const provider = planner([{ jobs: footer, question }, { jobs: footer }])
     await go(runId, provider, s)
     expect(asked).toMatchObject({ kind: 'plan', findingId: null, text: question.text, why: strings.plan.questionWhy })
+    expect((await measured(runId))[0]).toMatchObject({ question: { text: question.text } })
+    expect('question' in (await measured(runId))[1]!).toBe(false)
     expect(asked!.options.map(o => o.id)).toEqual(['a', 'b', 'leave'])
     expect(asked!.options.at(-1)).toEqual({ id: 'leave', label: strings.plan.leaveLabel, means: strings.plan.leaveMeans })
     expect(await payloadOf(runId, 'node.question_asked', 'plan')).toMatchObject([{ kind: 'plan', questionId: asked!.id }])
     const planned = (await eventsSince(runId, 0)).filter(e => ['node.planned', 'node.question_asked'].includes(e.type)).map(e => e.type)
     expect(planned.slice(0, 2)).toEqual(['node.planned', 'node.question_asked'])
-    expect(provider.notes).toEqual([undefined, strings.providers.claude.answerNote(question.text, 'Use username', null)])
+    expect(provider.notes).toEqual([undefined, strings.providers.claude.answerNote(question.text, { option: 'chosen', label: 'Use username' }, null)])
     // Taken once, and the next plan, with no question and simple, starts on its own.
     expect((await db.select().from(questions).where(eq(questions.id, asked!.id)))[0]!.consumedAt).not.toBeNull()
     expect((await node(runId, 'plan')).state).toBe('passed')
@@ -845,7 +941,7 @@ describe('the plan follows the project\'s ask mode', () => {
     })
     const provider = planner([{ jobs: footer, question }, { jobs: footer }])
     await go(runId, provider, s)
-    expect(provider.notes[1]).toBe(strings.providers.claude.answerNote(question.text, null, 'whatever is simplest'))
+    expect(provider.notes[1]).toBe(strings.providers.claude.answerNote(question.text, { option: 'leave' }, 'whatever is simplest'))
   })
 
   test('a question on the last plan allowed is not asked: the plan stops and says the planner needs the person', async () => {

@@ -45,8 +45,9 @@ export type AgentExecutionInput = {
   baseCommit?: string
   /** Set on a later round: what the person asked to change after looking at the previous one. */
   revisionNote?: string
-  /** Who asked for that round's changes: the person, or a reviewer. */
-  revisionFrom?: 'person' | 'reviewer'
+  /** Who asked for that round's changes: the person, or a reviewer. 'answer': for the planner, the note is the person's
+   *  answer to its own question, not a request to change an earlier plan. */
+  revisionFrom?: 'person' | 'reviewer' | 'answer'
   /** Set on a follow-up run: the approved request whose change is already in the folder. */
   previousRequest?: string
   /** Absolute paths of images the person attached for this round, for the agent to look at. */

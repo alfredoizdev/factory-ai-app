@@ -486,6 +486,19 @@ describe('the planner\'s question', () => {
     expect(decision!.text).toContain('Use username')
   })
 
+  test('the database refuses a second plan question not yet taken on a node, and keeps taken ones beside a new one', async () => {
+    const { runId, nodeRunId } = await runningRun('plan')
+    for (const text of ['One?', 'Two?']) {
+      const q = await askPerson(runId, nodeRunId, planAsk({ text }))
+      await answerQuestion(q.id, { option: 'a' }, deps)
+      await consumeAnswer(q.id)
+    }
+    const third = await askPerson(runId, nodeRunId, planAsk({ text: 'Three?' }))
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(3)
+    const row = (await db.select().from(questions).where(eq(questions.id, third.id)))[0]!
+    await expect(db.insert(questions).values({ ...row, id: ulid(), state: 'answered' })).rejects.toThrow()
+  })
+
   test('a question of another kind keeps no paths', async () => {
     const { runId, nodeRunId } = await runningRun()
     const q = await askPerson(runId, nodeRunId, ask())

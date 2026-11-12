@@ -8,7 +8,7 @@ import { markWaiting } from '@/engine/relay'
 import { currentPlan, planDecision, type Job, type PlanDecision, type PlanQuestion } from '@/engine/plan'
 import { measurePlan } from '@/engine/plan-measure'
 import { askModeOf, passesLowRisk, shipsOnItsOwn, type AskMode } from '@/domain/ask-mode'
-import { LEAVE, askPerson, type Question } from '@/engine/questions'
+import { LEAVE, OTHER, askPerson, type Question } from '@/engine/questions'
 import { waitForAnswer } from '@/engine/inngest/answers'
 import { and, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
@@ -131,8 +131,8 @@ export type Workspace = {
   testCommand: string | null
   baseCommit: string | null
   previousRequest?: string | null
-  /** Who asked for this round's changes, when it is a later round. */
-  revisionFrom?: 'person' | 'reviewer'
+  /** Who asked for this round's changes, when it is a later round ('answer': the person answered the planner's question). */
+  revisionFrom?: 'person' | 'reviewer' | 'answer'
   /** The plan the person checked, for the builder. */
   jobs?: Job[]
   /** The project's rules this task was given when it started. */
@@ -542,7 +542,7 @@ async function runProviderNode(
           // When the setting stops every plan, that is said first; what was measured follows.
           const said = strings.plan.reasons
           const reasons = allowed ? measured.reasons : [stopForMe ? said.stopForMe : mode === 'everything' ? said.everything : said.smallChanges, ...measured.reasons]
-          await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_measured', payload: { blockId: block.id, simple: measured.simple, reasons: reasons.map(r => clip(r, 300)), entries: measured.entries, mode, stopForMe } }, tx)
+          await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_measured', payload: { blockId: block.id, simple: measured.simple, reasons: reasons.map(r => clip(r, 300)), entries: measured.entries, mode, stopForMe, ...(question ? { question: { text: clip(question.text, 300) } } : {}) } }, tx)
           startsOnItsOwn = measured.simple && allowed
         }
         await appendEventSync({ runId, nodeRunId: node.id, type: 'node.planned', payload: { blockId: block.id, jobs, by: 'planner' } }, tx)
@@ -1166,15 +1166,19 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     } else if (block.kind === 'plan' && provider.needsWorkspace) {
       // The planner proposes; the person checks, edits, and says build it — or asks for another plan with a note.
       let note: string | null = null
+      // Whether `note` is the person's answer to the planner's question (true) or their request for another plan.
+      let answered = false
       let images = revisionImages
       result = { outcome: 'cancelled' }
       for (let k = 0; k <= MAX_REPLANS; k++) {
         const pid = (name: string) => id(k === 0 ? name : `${name}-plan${k}`)
         const n = note
         const imgs = images
+        // The planner is told whether its note answers its own question or asks for a different plan.
+        const ws: Workspace = answered ? { ...prepared, revisionFrom: 'answer' } : prepared
         // The last plan allowed may not ask: it stops for the person instead, and says the planner needs them.
         const canAsk = k < MAX_REPLANS
-        result = await step.run(pid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, n, imgs, { canAsk }))
+        result = await step.run(pid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, ws, n, imgs, { canAsk }))
         if (result.outcome === 'asking' && result.question) {
           // The planner's question, in the question window. Its answer becomes the note for the next plan, made in the
           // same node (it is running again once answered), and that plan is measured again.
@@ -1183,8 +1187,11 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           if (asked === null) return // cancelled meanwhile
           const answer = await waitForAnswer(step, pid, runId, asked, 'plan-')
           if (answer === 'parked' || answer === 'cancelled') return
-          const chose = answer.answerOption && answer.answerOption !== LEAVE ? (answer.options.find(o => o.id === answer.answerOption)?.label ?? null) : null
-          note = strings.providers.claude.answerNote(q.text, chose, answer.answerText)
+          // Chosen (with or without words), left to the planner, or answered only in the person's own words.
+          const label = answer.answerOption === OTHER || answer.answerOption === LEAVE ? undefined : answer.options.find(o => o.id === answer.answerOption)?.label
+          const how = answer.answerOption === LEAVE ? { option: 'leave' as const } : label !== undefined ? { option: 'chosen' as const, label } : { option: 'own' as const }
+          note = strings.providers.claude.answerNote(q.text, how, answer.answerText)
+          answered = true
           images = []
           continue
         }
@@ -1209,6 +1216,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         const reopened = await step.run(pid(`replan-${block.id}`), () => reopenForRevision(runId, [block], k + 2, again))
         if (!reopened) return
         note = again
+        answered = false
         images = []
       }
     } else if (block.kind === 'approve' && provider.needsWorkspace) {
