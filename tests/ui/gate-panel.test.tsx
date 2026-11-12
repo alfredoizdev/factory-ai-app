@@ -319,5 +319,7 @@ test('done: a project with no GitHub repository is connected from the card, by c
   fireEvent.click(screen.getByRole('button', { name: strings.delivery.connect.public }))
   await waitFor(() => expect(screen.queryByTestId('not-connected')).toBeNull())
   expect(asked[1]).toEqual({ create: 'public' })
+  // The card says it happened, by name.
+  expect(screen.getByTestId('connected')).toHaveTextContent(strings.delivery.connect.done('me/p'))
   expect(screen.getByTestId('next-step')).toHaveTextContent(strings.delivery.nowSend)
 })

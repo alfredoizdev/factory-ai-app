@@ -32,7 +32,7 @@ const choice = (busy: boolean): CSSProperties => ({ display: 'grid', gap: 3, jus
  * Connecting a project to GitHub: a new repository, private or public, or one the person already has, by its link.
  * `endpoint` is where the choice is posted; `onConnected` runs once GitHub has the project.
  */
-export function GithubConnect({ endpoint, onConnected }: { endpoint: string; onConnected: () => void | Promise<void> }) {
+export function GithubConnect({ endpoint, onConnected }: { endpoint: string; onConnected: (url: string | null) => void | Promise<void> }) {
   const [busy, setBusy] = useState<'private' | 'public' | 'url' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [link, setLink] = useState('')
@@ -43,14 +43,28 @@ export function GithubConnect({ endpoint, onConnected }: { endpoint: string; onC
     setError(null)
     try {
       const res = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(how) })
-      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      const body = (await res.json().catch(() => null)) as { error?: string; url?: string | null } | null
       if (!res.ok) return setError(body?.error ?? c.failed(''))
-      await onConnected()
+      await onConnected(body?.url ?? null)
     } catch {
       setError(c.failed(''))
     } finally {
       setBusy(null)
     }
+  }
+
+  // While it works, the choices give way to one plain line saying so: nothing else can be pressed meanwhile.
+  if (busy) {
+    return (
+      <div role="status" data-testid="connecting" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 12px', borderRadius: 10, border: `1px solid ${theme.running}`, background: theme.tint('running', 0.1), fontSize: 14, color: '#e6e9ef', lineHeight: 1.45 }}>
+        <WorkingSpinner blockId="connecting" size={18} />
+        <span>
+          <strong>{busy === 'url' ? c.workingLink : c.workingCreate}</strong>
+          <br />
+          <span style={{ fontSize: 12.5, color: theme.dim }}>{c.workingHint}</span>
+        </span>
+      </div>
+    )
   }
 
   return (
@@ -60,7 +74,7 @@ export function GithubConnect({ endpoint, onConnected }: { endpoint: string; onC
         {(['private', 'public'] as const).map(kind => (
           <button key={kind} type="button" aria-label={c[kind]} disabled={busy !== null} onClick={() => void connect({ create: kind })} style={choice(busy !== null)}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 700, color: '#e6e9ef' }}>
-              {busy === kind ? <WorkingSpinner blockId={`connect-${kind}`} size={15} /> : <RepoIcon kind={kind} />} {c[kind]}
+              <RepoIcon kind={kind} /> {c[kind]}
             </span>
             <span style={{ fontSize: 12.5, color: theme.dim }}>{c[`${kind}Help`]}</span>
           </button>
@@ -91,15 +105,10 @@ export function GithubConnect({ endpoint, onConnected }: { endpoint: string; onC
               onClick={() => void connect({ url: link })}
               style={{ flex: 'none', padding: '8px 14px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: link.trim() === '' ? 0.5 : 1 }}
             >
-              {busy === 'url' ? <WorkingSpinner blockId="connect-url" size={16} /> : null} {c.use}
+              {c.use}
             </button>
           </div>
         </>
-      )}
-      {busy && (
-        <span role="status" style={{ color: '#cfe0ff' }}>
-          {c.working}
-        </span>
       )}
       {error && (
         <span role="alert" style={{ color: theme.failed }}>
@@ -149,7 +158,7 @@ export function ProjectGithub({ projectId }: { projectId: string }) {
       ) : (
         <>
           <span style={{ fontSize: 13, color: theme.dim, lineHeight: 1.45 }}>{c.why}</span>
-          <GithubConnect endpoint={`/api/projects/${projectId}/github`} onConnected={read} />
+          <GithubConnect endpoint={`/api/projects/${projectId}/github`} onConnected={() => read()} />
         </>
       )}
     </section>

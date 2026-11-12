@@ -64,9 +64,14 @@ export function ResultSection({
   )
 
   // Read again once the project is connected, so the notice gives way to sending.
-  async function recheckRemote() {
-    const res = await fetch(`/api/runs/${runId}/delivery`)
-    if (res.ok) setDelivery((await res.json()) as Delivery)
+  // The repository just connected from this card, so the card can say so: the notice leaving is not enough to tell.
+  const [connected, setConnected] = useState<string | null>(null)
+  async function recheckRemote(url: string | null) {
+    setConnected((url ?? '').replace(/^https:\/\/github\.com\/|^git@github\.com:/, '').replace(/\.git$/, ''))
+    // Known already: GitHub has it. Reading the rest again must not be what makes the notice leave.
+    setDelivery(now => now && { ...now, hasRemote: true })
+    const res = await fetch(`/api/runs/${runId}/delivery`).catch(() => null)
+    if (res?.ok) setDelivery((await res.json()) as Delivery)
   }
 
   useEffect(() => {
@@ -228,7 +233,17 @@ export function ResultSection({
                 <GithubConnect endpoint={`/api/runs/${runId}/connect-github`} onConnected={recheckRemote} />
               </div>
             ) : (
+              <>
+              {connected !== null && !shipped && (
+                <div role="status" data-testid="connected" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px', borderRadius: 8, border: `1px solid ${theme.tint('passed', 0.5)}`, background: theme.tint('passed', 0.1), fontSize: 13, color: '#d7f5e0', lineHeight: 1.4 }}>
+                  <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke={theme.passed} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: 'none' }}>
+                    <path d="M5 12.5l4.5 4.5L19 7.5" />
+                  </svg>
+                  {d.connect.done(connected)}
+                </div>
+              )}
               <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} canOpen={!away} onRecorded={onRecorded} />
+              </>
             )}
             {onBranch ? (
               <>
