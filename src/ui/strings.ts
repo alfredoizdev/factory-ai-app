@@ -846,8 +846,11 @@ export const strings = {
       outside: 'Write the folder or file as it is inside the project, for example src/app. Not a full path from your computer.',
       notFound: 'That folder or file is not in the project. Check the name and try again.',
       already: 'That is already marked as a core area.',
-      entryText: (path: string) => `Ask me before changing ${path}`,
-      areaText: (area: string) => `Ask me before changing anything to do with ${area}`,
+      // What the app does there, said as it is: the change is made, and the task then stops for the person's yes.
+      entryText: (path: string) => `A change to ${path} always stops for your yes.`,
+      areaText: (area: string) => `These files deal with ${area}. A change to them always stops for your yes.`,
+      // The app's own sentence for a core area, in the words used now or in the words entries were stored with before.
+      isAppText: (text: string, path: string) => text === `A change to ${path} always stops for your yes.` || text === `Ask me before changing ${path}`,
     },
     source: {
       question: 'Decided when you answered a question',

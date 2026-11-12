@@ -93,6 +93,19 @@ describe('core areas', () => {
     expect(e.number).toBe(1)
     expect(await corePaths(p)).toEqual(['src/app/'])
   })
+  test('the sentence a new core area is stored with says what the app does: a change there stops for the person\'s yes', async () => {
+    const p = await project()
+    const e = await addCoreArea(p, { path: 'src/app' })
+    expect(e.text).toBe('A change to src/app/ always stops for your yes.')
+    expect(e.text).not.toMatch(/Ask me before/)
+    const s = await addCoreArea(p, { paths: ['package.json'], area: 'the settings of the project' })
+    expect(s.text).toBe('These files deal with the settings of the project. A change to them always stops for your yes.')
+  })
+  test('an entry stored with the old sentence still follows a move, in the new words', async () => {
+    const p = await project()
+    const old = (await addEntry(p, { kind: 'core', text: 'Ask me before changing src/app/', paths: ['src/app/'], source: 'person' }))!
+    expect((await updateNote(p, old.id, { path: 'package.json' }))!.text).toBe(strings.memory.core.entryText('package.json'))
+  })
   test('a path that is not in this computer\'s folder for the project is refused', async () => {
     const p = await project()
     await expect(addCoreArea(p, { path: 'does/not/exist' })).rejects.toThrow(strings.memory.core.notFound)

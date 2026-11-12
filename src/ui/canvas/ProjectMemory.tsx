@@ -114,7 +114,7 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
   const primary = (on: boolean) => ({ flex: 'none', padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: on ? theme.running : 'transparent', color: on ? '#fff' : theme.skipped, fontWeight: 700, cursor: on ? 'pointer' : 'not-allowed' }) as const
   const all = entries ?? []
   const log = all.filter(e => e.kind === 'finding')
-  const sentence = (e: Entry) => (e.kind === 'core' && e.text === strings.memory.core.entryText(e.paths.join(', ')) ? null : e.text)
+  const sentence = (e: Entry) => (e.kind === 'core' && strings.memory.core.isAppText(e.text, e.paths.join(', ')) ? null : e.text)
 
   function row(e: Entry & { kind: Editable }) {
     const isCore = e.kind === 'core'

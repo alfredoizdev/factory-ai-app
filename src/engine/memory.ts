@@ -67,7 +67,7 @@ export async function updateNote(projectId: string, id: string, change: { text?:
     const before = (JSON.parse(current.paths ?? '[]') as string[]).join(', ')
     set.paths = JSON.stringify([n.path])
     // The sentence the app wrote for the old place follows the entry to the new one; the person's own words stay.
-    if (set.text === undefined && current.text === strings.memory.core.entryText(before)) set.text = strings.memory.core.entryText(n.path)
+    if (set.text === undefined && strings.memory.core.isAppText(current.text, before)) set.text = strings.memory.core.entryText(n.path)
   }
   if (Object.keys(set).length > 0) await db.update(projectNotes).set(set).where(where)
   const row = (await db.select().from(projectNotes).where(where))[0]
