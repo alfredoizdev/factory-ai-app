@@ -686,7 +686,7 @@ export function CanvasScreen({
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
         {run && detailsOf && (
-          <BlockDetailsDialog key={`${run.runId}-${detailsOf}`} runId={run.runId} blockId={detailsOf} label={run.blocks.find(b => b.id === detailsOf)?.label ?? detailsOf} view={withShip[detailsOf]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} onClose={() => setDetailsOf(null)} />
+          <BlockDetailsDialog key={`details-${run.runId}-${detailsOf}`} runId={run.runId} blockId={detailsOf} label={run.blocks.find(b => b.id === detailsOf)?.label ?? detailsOf} view={withShip[detailsOf]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} onClose={() => setDetailsOf(null)} />
         )}
       </div>
     </div>
