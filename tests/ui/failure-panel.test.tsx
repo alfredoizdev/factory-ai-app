@@ -41,15 +41,13 @@ async function openWindow(fetchMock: ReturnType<typeof mockFetch>, onFollowUp = 
   return { dialog: await screen.findByTestId('failure-dialog'), onFollowUp }
 }
 
-test('the window says what happened in plain words first, and keeps the command output folded away', async () => {
+test('the window says what happened in plain words first, with the command output beside it', async () => {
   const { dialog } = await openWindow(mockFetch('The page could not be put together because one piece is missing its title.'))
   // Its own sentence stands until the model's arrives.
   expect(screen.getByTestId('failure-plain').textContent).toBeTruthy()
   await waitFor(() => expect(screen.getByTestId('failure-plain')).toHaveTextContent('one piece is missing its title'))
   expect(dialog).toHaveTextContent(strings.failure.safe)
-  expect(screen.queryByTestId('failure-output')).toBeNull()
-
-  fireEvent.click(screen.getByRole('button', { name: strings.failure.details }))
+  // The command and what it printed sit beside it, already open.
   expect(dialog).toHaveTextContent('npm run build')
   expect(dialog).toHaveTextContent(strings.failure.ended(1, null))
   expect(screen.getByTestId('failure-output')).toHaveTextContent('Type error: missing prop "title"')

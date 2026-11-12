@@ -211,7 +211,7 @@ function Choice({ icon, label, help, badge, primary, onClick }: { icon: ReactNod
         columnGap: 12,
         rowGap: 3,
         alignItems: 'center',
-        padding: primary ? '14px 16px' : '11px 16px',
+        padding: primary ? '16px 18px' : '13px 18px',
         borderRadius: 10,
         border: `1px solid ${primary ? theme.running : theme.border}`,
         background: primary ? theme.running : '#0f141c',
@@ -221,11 +221,11 @@ function Choice({ icon, label, help, badge, primary, onClick }: { icon: ReactNod
       }}
     >
       <span style={{ gridRow: '1 / span 2', display: 'grid', placeItems: 'center' }}>{icon}</span>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: primary ? 16 : 14.5, fontWeight: 700 }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: primary ? 17.5 : 15.5, fontWeight: 700 }}>
         {label}
         {badge && <span style={{ padding: '1px 8px', borderRadius: 999, background: 'rgba(255,255,255,0.22)', fontSize: 11.5, fontWeight: 700 }}>{badge}</span>}
       </span>
-      <span style={{ fontSize: 13, lineHeight: 1.4, color: primary ? 'rgba(255,255,255,0.88)' : theme.dim }}>{help}</span>
+      <span style={{ fontSize: 14, lineHeight: 1.4, color: primary ? 'rgba(255,255,255,0.88)' : theme.dim }}>{help}</span>
     </button>
   )
 }
@@ -254,7 +254,6 @@ export function FailureDialog({
   onAgain: () => void
   onOwn: () => void
 }) {
-  const [details, setDetails] = useState(false)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -273,24 +272,25 @@ export function FailureDialog({
         aria-label={f.title}
         data-testid="failure-dialog"
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(680px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.tint('failed', 0.5)}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14 }}
+        style={{ width: `min(${technical.length > 0 ? 1240 : 720}px, calc(100% - 32px))`, maxHeight: 'calc(100% - 48px)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.tint('failed', 0.5)}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14 }}
       >
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '16px 22px', borderBottom: `1px solid ${theme.border}` }}>
-          <h2 className="factory-display" style={{ margin: 0, fontSize: 22 }}>
+        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 26px', borderBottom: `1px solid ${theme.border}` }}>
+          <h2 className="factory-display" style={{ margin: 0, fontSize: 25 }}>
             {f.title}
           </h2>
           <button type="button" aria-label={f.close} onClick={onClose} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 18 }}>
             ✕
           </button>
         </header>
-        <div style={{ overflowY: 'auto', padding: '18px 22px 22px', display: 'grid', gap: 20, scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
+        <div style={{ overflowY: 'auto', padding: '22px 26px 26px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', alignItems: 'start', gap: 28, scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
           {!failure ? (
             <div style={{ color: theme.dim }}>{f.unreadable}</div>
           ) : (
             <>
-              <section style={{ display: 'grid', gap: 8 }}>
-                <strong style={{ fontSize: 15 }}>{f.happened}</strong>
-                <p data-testid="failure-plain" style={{ margin: 0, fontSize: 15.5, lineHeight: 1.55, color: '#e6e9ef' }}>
+              <div style={{ display: 'grid', gap: 22, minWidth: 0 }}>
+              <section style={{ display: 'grid', gap: 10 }}>
+                <strong style={{ fontSize: 17 }}>{f.happened}</strong>
+                <p data-testid="failure-plain" style={{ margin: 0, fontSize: 16.5, lineHeight: 1.55, color: '#e6e9ef' }}>
                   {explanation ?? (first ? f.plain(first.label) : f.plainUnknown)}
                 </p>
                 {explaining && (
@@ -298,11 +298,11 @@ export function FailureDialog({
                     <WorkingSpinner blockId="explain" size={14} /> {f.explaining}
                   </div>
                 )}
-                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.5, color: theme.passed }}>{f.safe}</p>
+                <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.5, color: theme.passed }}>{f.safe}</p>
               </section>
 
               <section style={{ display: 'grid', gap: 10 }}>
-                <strong style={{ fontSize: 15 }}>{f.whatNow}</strong>
+                <strong style={{ fontSize: 17 }}>{f.whatNow}</strong>
                 {canContinue ? (
                   <div style={{ display: 'grid', gap: 8 }}>
                     <Choice primary icon={<WrenchIcon />} label={f.actions.fix.label} help={f.actions.fix.help} badge={f.actions.fix.badge} onClick={onFix} />
@@ -314,16 +314,11 @@ export function FailureDialog({
                 )}
               </section>
 
+              </div>
               {technical.length > 0 && (
-                <section style={{ display: 'grid', gap: 12, paddingTop: 14, borderTop: `1px solid ${theme.border}` }}>
-                  <button type="button" aria-expanded={details} onClick={() => setDetails(d => !d)} style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, background: 'none', border: 'none', color: theme.dim, fontSize: 13, cursor: 'pointer' }}>
-                    <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: details ? 'rotate(90deg)' : 'none' }}>
-                      <path d="M9 6l6 6-6 6" />
-                    </svg>
-                    {details ? f.hideDetails : f.details}
-                  </button>
-                  {details &&
-                    technical.map(b => (
+                <section style={{ display: 'grid', gap: 12, minWidth: 0 }}>
+                  <strong style={{ fontSize: 17 }}>{f.details}</strong>
+                  {technical.map(b => (
                       <div key={b.blockId} data-testid="failed-block" style={{ display: 'grid', gap: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
                           <strong style={{ color: theme.failed }}>{b.label}</strong>
@@ -343,13 +338,13 @@ export function FailureDialog({
                               ref={el => {
                                 if (el) el.scrollTop = el.scrollHeight
                               }}
-                              style={{ margin: 0, maxHeight: 260, overflow: 'auto', padding: 12, borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
+                              style={{ margin: 0, maxHeight: 'min(50vh, 460px)', overflow: 'auto', padding: 12, borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
                               {b.output ?? f.noOutput}
                             </pre>
                           </>
                         )}
                       </div>
-                    ))}
+                  ))}
                 </section>
               )}
             </>

@@ -654,8 +654,7 @@ export const strings = {
     safe: 'Your project was not changed. The work the agents did is kept, so it can be fixed from where it stopped.',
     explaining: 'Reading the error to explain it in plain words…',
     whatNow: 'What do you want to do?',
-    details: 'Show technical details',
-    hideDetails: 'Hide technical details',
+    details: 'The error itself',
     fixing: 'The agents are fixing it…',
     actions: {
       fix: { label: 'Fix it for me', help: 'The agents read the error, correct it and run the check again.', badge: 'Recommended' },
