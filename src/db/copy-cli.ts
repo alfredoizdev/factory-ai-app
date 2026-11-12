@@ -8,6 +8,8 @@ import { storage } from '@/engine/storage'
 
 async function main() {
   const folder = resolve(process.argv[2] ?? '.factory')
+  // The computer whose data this is: its identity lives in that same folder, where the app will read it.
+  process.env.FACTORY_MACHINE_FILE ??= join(folder, 'machine.json')
   const store = storage()
   if (!store) console.log('R2 is not configured in .env.local: rows only, no pictures.')
   await registerMachine()

@@ -13,7 +13,8 @@ import { strings } from '@/ui/strings'
 
 export type Machine = { id: string; name: string }
 
-const FILE = () => join(process.cwd(), '.factory', 'machine.json')
+// FACTORY_MACHINE_FILE: the copy command writes the identity of the computer whose data it copies (its .factory).
+const FILE = () => process.env.FACTORY_MACHINE_FILE ?? join(process.cwd(), '.factory', 'machine.json')
 const g = globalThis as { __factoryMachine?: Machine; __factoryMachineSaved?: boolean }
 
 /** This computer: from FACTORY_MACHINE_ID when set (tests), else from .factory/machine.json, made on first use. */
