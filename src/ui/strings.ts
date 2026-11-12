@@ -1190,7 +1190,7 @@ export const strings = {
         focus?: 'logic' | 'security' | 'effects'
         jobs?: readonly { title: string }[]
         builderSummary?: string
-        standing?: readonly { number: number; text: string }[]
+        standing?: readonly { number: number; text: string; kind?: 'rule' | 'decision' | 'core'; paths?: readonly string[] }[]
         since?: { paths: readonly string[]; diff: string; more?: number }
       }) =>
         [
@@ -1199,7 +1199,15 @@ export const strings = {
           ...(o.jobs && o.jobs.length > 0 ? ['The plan they approved:', ...o.jobs.map((j, i) => `${i + 1}. ${j.title}`)] : []),
           ...(o.builderSummary ? [`The builder says: ${o.builderSummary}`] : []),
           ...(o.standing && o.standing.length > 0
-            ? ['What was agreed for this project:', ...o.standing.map(e => (e.number > 0 ? `D-${String(e.number).padStart(2, '0')}: ${e.text}` : `- ${e.text}`))]
+            ? [
+                'What was agreed for this project:',
+                ...o.standing.map(e => {
+                  if (e.number <= 0) return `- ${e.text}`
+                  const n = `D-${String(e.number).padStart(2, '0')}`
+                  // A core area is where the person wants care, not a rule to check: the app itself stops for their yes there.
+                  return e.kind === 'core' ? `${n} (core area: ${(e.paths ?? []).join(', ')}): sensitive. Change it only as far as the task needs.` : `${n}: ${e.text}`
+                }),
+              ]
             : []),
           `It has been made in this directory. See it with: git diff ${o.baseCommit} (and git status for new files).`,
           ...(o.since ? sinceLines(o.since) : []),
@@ -1207,6 +1215,7 @@ export const strings = {
           ...(o.focus ? [strings.review.focus[o.focus]] : []),
           'Open the files that use what was changed, not only the changed files.',
           'Only report real problems that should be fixed before this is merged; not style preferences.',
+          'Do not report that permission was not asked or given: the app asks the person itself. Report only what is wrong in the change.',
           'When a problem goes against something that was agreed, put its number (the 7 of D-07) in "decisions".',
           'End your reply with one JSON object and nothing after it, exactly in this form:',
           '{"verdict":"ok","findings":[]}',
