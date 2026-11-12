@@ -52,13 +52,15 @@ export const CommandCard = forwardRef<
     onStartFrom?: (branch: string) => void
     /** The task is still loading: placeholders instead of a card that would change under the person's eyes. */
     loading?: boolean
+    /** Something was recorded about a run that had ended (kept, sent, merged): the canvas listens again. */
+    onRecorded?: () => void
     /** Set when the open run's working copy is on another computer: what needs it is not offered here. */
     away?: { machine: string | null } | null
     /** The name for a new task, optional. Absent: no field. */
     taskName?: string
     onTaskName?: (v: string) => void
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null }, ref) {
+>(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
@@ -179,6 +181,7 @@ export const CommandCard = forwardRef<
       {!loading && mode === 'done' && runId && (
         <ResultSection
           away={away}
+          onRecorded={onRecorded}
           onShipState={onShipState}
           runId={runId}
           note={text}

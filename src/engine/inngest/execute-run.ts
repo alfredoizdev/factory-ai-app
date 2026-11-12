@@ -1,6 +1,7 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { defaultReviewerModel, reviewRevisionNote, type Review } from '@/engine/review'
 import { giveRules } from '@/engine/memory'
+import { markWaiting } from '@/engine/relay'
 import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
 import { and, desc, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
@@ -12,7 +13,7 @@ import { canReopen, canTransition, rollUpRunStatus, type NodeState, type RunStat
 import { appendEventSync, lockRun, type DbHandle, type EventType } from '@/engine/events'
 import { APPROVAL_DECIDED, PLAN_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { clip, redact } from '@/engine/redact'
-import { MAX_REVISIONS, takeRecordedDecision, type Decision } from '@/engine/approvals'
+import { changeUnderReview, MAX_REVISIONS, NO_CHANGE, takeRecordedDecision, type Decision } from '@/engine/approvals'
 import { imagePathsFor } from '@/engine/attachments'
 import { assessRisk, type RiskAssessment, type TestFacts } from '@/engine/risk'
 import { copyBaseInto, type BaseCopy } from '@/engine/base'
@@ -616,6 +617,8 @@ async function testFactsOf(runId: string): Promise<TestFacts> {
 
 async function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): Promise<RiskAssessment | null> {
   if (!workspace.workdir || !workspace.baseCommit) return null
+  // The change as it stands now, recorded for any computer that shows the gate (and binds a decision to its hash).
+  await changeUnderReview(runId).catch(() => null) // unreadable now: the gate reads it again when shown
   const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)))
   await withTx(runId, async tx => {
     const node = (await openNodeIn(tx, runId, block.id))
@@ -737,12 +740,22 @@ async function readRecordedDecision(runId: string, block: PlannedBlock): Promise
   const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
   if (!node) return null
   const decided = (await takeRecordedDecision(runId, node.id))
-  if (decided === null) {
-    await withTx(runId, async tx => {
-      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, text: strings.gate.ignoredEvent } }, tx)
+  const note = async (text: string) =>
+    withTx(runId, async tx => {
+      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, text } }, tx)
     })
+  if (decided === null) {
+    await note(strings.gate.ignoredEvent)
+    return null
   }
-  return decided
+  // Checked here, against the working copy itself: a decision about a change other than the one there now (made on
+  // another computer, on an older view) decides nothing, and the gate keeps waiting.
+  const live = (await changeUnderReview(runId))?.hash ?? NO_CHANGE
+  if (decided.diffHash !== null && decided.diffHash !== live) {
+    await note(strings.gate.staleDecision)
+    return null
+  }
+  return { decision: decided.decision, note: decided.note, approvalId: decided.approvalId }
 }
 
 // A human block never calls a provider: it records that it is waiting and the function parks.
@@ -950,6 +963,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         const imgs = images
         result = await step.run(pid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, n, imgs))
         if (result.outcome !== 'parked') break // passed without a readable plan (Build works from the request), failed or cancelled
+        markWaiting(runId) // the relay watches for a word made on another computer
         let decided: PlanDecision | null = null
         for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && decided === null; attempt++) {
           const arrived = await step.waitForEvent(pid(`plan-decided-${block.id}-${attempt}`), { event: PLAN_DECIDED, timeout: APPROVAL_WAIT, match: 'data.runId' })
@@ -984,6 +998,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         result = await step.run(id(`node-${block.id}`), () => parkHumanNode(runId, block))
       }
       if (result.outcome === 'parked') {
+        markWaiting(runId) // the relay watches for a decision made on another computer
         // The event only says "look": what was decided is read from the approvals table, where the app records the
         // person's decision before sending it. An event with no record behind it (sent by anything else) is noted
         // and ignored, and the gate keeps waiting.

@@ -12,5 +12,7 @@ test('when the database cannot be reached the page says so, and offers to try ag
 test('Next\'s own signals (not found, redirect) are not database failures', () => {
   expect(isDbFailure(Object.assign(new Error('x'), { digest: 'NEXT_NOT_FOUND' }))).toBe(false)
   expect(isDbFailure(Object.assign(new Error('x'), { digest: 'NEXT_REDIRECT;replace;/x;307;' }))).toBe(false)
-  expect(isDbFailure(new Error('connect ETIMEDOUT'))).toBe(true)
+  expect(isDbFailure(Object.assign(new Error('Failed query'), { cause: Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }) }))).toBe(true)
+  // A bug is not dressed up as an outage.
+  expect(isDbFailure(new SyntaxError('Unexpected token'))).toBe(false)
 })

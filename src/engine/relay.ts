@@ -11,6 +11,38 @@ import { thisMachine } from '@/engine/machine'
 
 export const RELAY_EVERY_MS = 5000
 
+// The runs of this computer that wait on a person, kept in memory so the relay asks the database nothing while there
+// are none (an idle app must let Neon sleep). Filled once at start, added to when a run parks here, and pruned after
+// each pass to those still waiting.
+const g = globalThis as { __factoryWaiting?: Set<string>; __factoryWaitingSeeded?: boolean }
+const waiting = (g.__factoryWaiting ??= new Set())
+
+/** A run of this computer started waiting on a person (its gate or its plan). */
+export function markWaiting(runId: string): void {
+  waiting.add(runId)
+}
+
+/** Which of this computer's runs wait, read once when the app starts (runs that parked before a restart). */
+export async function seedWaiting(): Promise<void> {
+  if (g.__factoryWaitingSeeded) return
+  const rows = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.machineId, thisMachine().id), eq(runs.status, 'waiting_approval')))
+  for (const r of rows) waiting.add(r.id)
+  g.__factoryWaitingSeeded = true
+}
+
+/** One relay pass: nothing at all when no run of this computer waits; otherwise deliver, then forget runs that moved. */
+export async function relayTick(send: Send, approvalEvent: string, planEvent: string): Promise<number> {
+  if (waiting.size === 0) return 0
+  const told = await deliverPending(send, approvalEvent, planEvent)
+  const ids = [...waiting]
+  const still = await db.select({ id: runs.id }).from(runs).where(and(inArray(runs.id, ids), eq(runs.status, 'waiting_approval')))
+  const keep = new Set(still.map(r => r.id))
+  for (const id of ids) if (!keep.has(id)) waiting.delete(id)
+  return told
+}
+
+export const waitingCount = () => waiting.size
+
 export type Send = (event: { name: string; data: Record<string, unknown> }) => Promise<unknown>
 
 const now = () => new Date().toISOString()

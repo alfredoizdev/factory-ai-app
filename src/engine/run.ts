@@ -108,7 +108,8 @@ export async function saveDraftVersioned(workflowId: string, graph: Graph, base?
   await requireWorkflow(workflowId)
   const updatedAt = (await db.transaction(
     async tx => {
-      const row = (await tx.select().from(workflows).where(eq(workflows.id, workflowId)))[0]!
+      // Locked until this save commits: two saves of one flow take turns, so the second sees the first and is refused.
+      const row = (await tx.select().from(workflows).where(eq(workflows.id, workflowId)).for('update'))[0]!
       if (base !== undefined && row.updatedAt !== base) throw new DraftConflictError()
       // Strictly later than the version replaced, even within the same millisecond, so versions never repeat.
       let stamp = now()
@@ -123,7 +124,8 @@ export async function saveDraftVersioned(workflowId: string, graph: Graph, base?
 export async function publishVersion(workflowId: string): Promise<{ versionId: string; hash: string }> {
   return db.transaction(
     async tx => {
-      const wf = (await tx.select().from(workflows).where(eq(workflows.id, workflowId)))[0]
+      // One publish of a flow at a time, so two at once cannot both mint a version of the same draft.
+      const wf = (await tx.select().from(workflows).where(eq(workflows.id, workflowId)).for('update'))[0]
       if (!wf) throw new WorkflowNotFoundError(workflowId)
 
       const graph = JSON.parse(wf.draftJson) as Graph
@@ -267,6 +269,7 @@ export async function cancelRun(runId: string): Promise<void> {
 export async function failUnstartedRun(runId: string): Promise<void> {
   (await db.transaction(
     async tx => {
+      await lockRun(tx, runId)
       const run = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
       if (!run || run.status !== 'queued') return
       await tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId))

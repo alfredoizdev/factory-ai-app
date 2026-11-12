@@ -50,7 +50,10 @@ export function ShipSection({
   button,
   onState,
   canOpen = true,
+  onRecorded,
 }: {
+  /** Told after an action GitHub accepted, so the canvas picks up what was recorded. */
+  onRecorded?: () => void
   /** False on a computer without the run's working copy: sending it for checks happens there. */
   canOpen?: boolean
   runId: string
@@ -101,6 +104,7 @@ export function ShipSection({
       if (!res.ok || !body) return setError(body?.error ?? strings.run.startFailed)
       setState(body)
       setConfirming(false)
+      onRecorded?.()
     } catch {
       setError(strings.run.startFailed)
     } finally {

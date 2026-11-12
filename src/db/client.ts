@@ -28,6 +28,9 @@ function connect(): { db: Db; migrate: () => Promise<void> } {
   const url = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL
   if (!url) throw new Error('DATABASE_URL_UNPOOLED is not set. Run `neon env pull` to write it into .env.local.')
   const pool = new Pool({ connectionString: url, max: 5 })
+  // An idle connection dropped by the server (a restart, a network blip) must not take the app down with it: the pool
+  // replaces it on the next query. The message is logged without the connection string.
+  pool.on('error', e => console.warn('Database connection dropped:', String(e.message).replace(/postgres(ql)?:\/\/\S+/g, '<url>')))
   const db = drizzlePg(pool, { schema }) as unknown as Db
   return { db, migrate: () => migratePg(drizzlePg(pool, { schema }), { migrationsFolder: './drizzle-pg' }) }
 }

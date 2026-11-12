@@ -98,7 +98,7 @@ export function CanvasScreen({
   }
 
   // The blocks are always passed: without them the hook cannot say what a block did in its own words.
-  const { views, events, runStatus, connected, loaded } = useRunStream(run?.runId ?? null, run?.blocks)
+  const { views, events, runStatus, connected, loaded, reopen } = useRunStream(run?.runId ?? null, run?.blocks)
 
   // Saves go one at a time, each naming the draft version it builds on, so a page left open from earlier can never
   // overwrite a newer flow: the server refuses, and the page says to reload. keepalive lets a save started as the
@@ -510,6 +510,7 @@ export function CanvasScreen({
           startOptions={agent === CLAUDE_PROVIDER_ID ? startOptions : []}
           startFrom={startFrom}
           onStartFrom={setStartFrom}
+          onRecorded={reopen}
           away={run && run.here === false ? { machine: run.machine ?? null } : null}
           taskName={taskName}
           onTaskName={setTaskName}

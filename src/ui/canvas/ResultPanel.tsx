@@ -25,7 +25,9 @@ export function ResultSection({
   onFollowUp,
   onShipState,
   away = null,
+  onRecorded,
 }: {
+  onRecorded?: () => void
   /** The run's working copy is on another computer: saving, trying and sending it happen there. */
   away?: { machine: string | null } | null
   runId: string
@@ -106,6 +108,7 @@ export function ResultSection({
       const body = (await res.json().catch(() => null)) as (Delivery & { error?: string }) | null
       if (!res.ok || !body) return setError(body?.error ?? strings.run.startFailed)
       setDelivery(body)
+      onRecorded?.()
     } catch {
       setError(strings.run.startFailed)
     } finally {
@@ -207,7 +210,7 @@ export function ResultSection({
         {kept && (
           <div data-testid="kept" style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
             {/* Sending, checking and publishing: GitHub's pull request, its checks and a merge the person confirms. */}
-            <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} canOpen={!away} />
+            <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} canOpen={!away} onRecorded={onRecorded} />
             {onBranch ? (
               <>
                 <div data-testid="on-branch" style={{ fontSize: 12.5, color: theme.passed, lineHeight: 1.4, overflowWrap: 'anywhere' }}>

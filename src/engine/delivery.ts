@@ -12,6 +12,7 @@ import { branchNameFor } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
 import { elsewhere, runPlace } from '@/engine/machine'
+import { serialized } from '@/engine/serial'
 
 // Bringing an approved change into the person's own project. Two things, both local, nothing pushed anywhere:
 // the change is committed on the run's own branch (factory/<run>), so it is kept and can be merged or pushed later;
@@ -191,38 +192,40 @@ export async function requestOf(runId: string): Promise<string | null> {
 export type KeepOptions = { name?: string | null; fallbackName?: string | null; message?: CommitMessage | null }
 
 export async function keepOnBranch(runId: string, options: KeepOptions = {}): Promise<Delivery> {
-  const away = await elsewhere(runId)
-  if (away) throw new DeliveryError(away, 409)
-  const found = (await approvedAndFinished(runId))
-  if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
-  if ((await recordOf(runId, 'run.kept'))) return deliveryState(runId)
-  const { run } = found
-  const wt = run.worktreePath!
-  const own = options.name?.trim() || null
-  if (own !== null && !validBranchName(own)) throw new DeliveryError(strings.delivery.badBranchName, 400)
-  let branch = run.branch ?? git(wt, ['rev-parse', '--abbrev-ref', 'HEAD'])
-  const exists = (name: string) => git(wt, ['branch', '--list', name]) !== ''
-  if (own !== null && own !== branch && exists(own)) throw new DeliveryError(strings.delivery.branchExists(own), 409)
-  const commit = keepCommit(run, options.message)
-  const from = run.deliveryBase ?? run.baseCommit!
-  const files = git(wt, ['diff', '--name-only', from, commit]).split('\n').filter(Boolean)
-  if (files.length === 0) throw new DeliveryError(strings.delivery.nothing, 409)
-  // Only a name the app made up is replaced; a branch the person named is theirs.
-  const automatic = branch.startsWith('factory/') || branch === branchNameFor(run.id, run.request)
-  const wanted =
-    own ?? (automatic ? (options.fallbackName ?? branchFromWords(run.id, fallbackWords(run.request) ?? 'change')) : branch)
-  if (wanted !== branch && (own !== null || !exists(wanted))) {
-    git(wt, ['branch', '-m', wanted])
-    await db.update(runs).set({ branch: wanted }).where(eq(runs.id, run.id))
-    branch = wanted
-  }
-  await db.transaction(
-    async tx => {
-      await appendEventSync({ runId, type: 'run.kept', payload: { branch, commit, files } }, tx)
-    },
-  )
-  return deliveryState(runId)
+  return serialized(runId, async () => {
+    const away = await elsewhere(runId)
+    if (away) throw new DeliveryError(away, 409)
+    const found = (await approvedAndFinished(runId))
+    if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
+    if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
+    if ((await recordOf(runId, 'run.kept'))) return deliveryState(runId)
+    const { run } = found
+    const wt = run.worktreePath!
+    const own = options.name?.trim() || null
+    if (own !== null && !validBranchName(own)) throw new DeliveryError(strings.delivery.badBranchName, 400)
+    let branch = run.branch ?? git(wt, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    const exists = (name: string) => git(wt, ['branch', '--list', name]) !== ''
+    if (own !== null && own !== branch && exists(own)) throw new DeliveryError(strings.delivery.branchExists(own), 409)
+    const commit = keepCommit(run, options.message)
+    const from = run.deliveryBase ?? run.baseCommit!
+    const files = git(wt, ['diff', '--name-only', from, commit]).split('\n').filter(Boolean)
+    if (files.length === 0) throw new DeliveryError(strings.delivery.nothing, 409)
+    // Only a name the app made up is replaced; a branch the person named is theirs.
+    const automatic = branch.startsWith('factory/') || branch === branchNameFor(run.id, run.request)
+    const wanted =
+      own ?? (automatic ? (options.fallbackName ?? branchFromWords(run.id, fallbackWords(run.request) ?? 'change')) : branch)
+    if (wanted !== branch && (own !== null || !exists(wanted))) {
+      git(wt, ['branch', '-m', wanted])
+      await db.update(runs).set({ branch: wanted }).where(eq(runs.id, run.id))
+      branch = wanted
+    }
+    await db.transaction(
+      async tx => {
+        await appendEventSync({ runId, type: 'run.kept', payload: { branch, commit, files } }, tx)
+      },
+    )
+    return deliveryState(runId)
+  })
 }
 
 /**
@@ -230,51 +233,53 @@ export async function keepOnBranch(runId: string, options: KeepOptions = {}): Pr
  * it on its own branch. Once. Refused, with nothing changed, when their checkout has unsaved work.
  */
 export async function deliverToProject(runId: string, options: KeepOptions = {}): Promise<Delivery> {
-  const away = await elsewhere(runId)
-  if (away) throw new DeliveryError(away, 409)
-  const found = (await approvedAndFinished(runId))
-  if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
-  if (await deliveredRecord(runId)) return deliveryState(runId)
-  const project = await projectHere(found.run.projectId)
-  const repo = project?.repoPath
-  if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
+  return serialized(runId, async () => {
+    const away = await elsewhere(runId)
+    if (away) throw new DeliveryError(away, 409)
+    const found = (await approvedAndFinished(runId))
+    if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
+    if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
+    if (await deliveredRecord(runId)) return deliveryState(runId)
+    const project = await projectHere(found.run.projectId)
+    const repo = project?.repoPath
+    if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
 
-  // Their unsaved work is theirs: nothing is applied over it, and nothing else happens either.
-  if (git(repo, ['status', '--porcelain']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
+    // Their unsaved work is theirs: nothing is applied over it, and nothing else happens either.
+    if (git(repo, ['status', '--porcelain']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
 
-  // 1. Keep it on its own branch first, so the change exists as a commit before it is copied anywhere.
-  const kept = (await keepOnBranch(runId, options))
-  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!
-  const wt = run.worktreePath!
-  // A follow-up whose parent was never brought over starts from the parent's base, so both changes travel together.
-  const from = run.deliveryBase ?? run.baseCommit!
-  const commit = kept.commit!
-  const files = kept.files
+    // 1. Keep it on its own branch first, so the change exists as a commit before it is copied anywhere.
+    const kept = (await keepOnBranch(runId, options))
+    const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!
+    const wt = run.worktreePath!
+    // A follow-up whose parent was never brought over starts from the parent's base, so both changes travel together.
+    const from = run.deliveryBase ?? run.baseCommit!
+    const commit = kept.commit!
+    const files = kept.files
 
-  // 2. Bring it over: the whole change since the base, applied to their checkout, unstaged. Checked first, so a
-  // change that no longer fits (they edited the same lines since) is refused whole, never half-applied.
-  const patch = git(wt, ['diff', '--binary', from, commit])
-  const dir = mkdtempSync(join(tmpdir(), 'factory-delivery-'))
-  const file = join(dir, 'change.patch')
-  try {
-    writeFileSync(file, patch.endsWith('\n') ? patch : `${patch}\n`)
+    // 2. Bring it over: the whole change since the base, applied to their checkout, unstaged. Checked first, so a
+    // change that no longer fits (they edited the same lines since) is refused whole, never half-applied.
+    const patch = git(wt, ['diff', '--binary', from, commit])
+    const dir = mkdtempSync(join(tmpdir(), 'factory-delivery-'))
+    const file = join(dir, 'change.patch')
     try {
-      git(repo, ['apply', '--check', '--whitespace=nowarn', file])
-    } catch {
-      throw new DeliveryError(strings.delivery.conflict(run.branch ?? ''), 409)
+      writeFileSync(file, patch.endsWith('\n') ? patch : `${patch}\n`)
+      try {
+        git(repo, ['apply', '--check', '--whitespace=nowarn', file])
+      } catch {
+        throw new DeliveryError(strings.delivery.conflict(run.branch ?? ''), 409)
+      }
+      git(repo, ['apply', '--whitespace=nowarn', file])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
-    git(repo, ['apply', '--whitespace=nowarn', file])
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
 
-  await db.transaction(
-    async tx => {
-      await appendEventSync({ runId, type: 'run.delivered', payload: { branch: kept.branch, commit, files, appliedTo: repo } }, tx)
-    },
-  )
-  return deliveryState(runId)
+    await db.transaction(
+      async tx => {
+        await appendEventSync({ runId, type: 'run.delivered', payload: { branch: kept.branch, commit, files, appliedTo: repo } }, tx)
+      },
+    )
+    return deliveryState(runId)
+  })
 }
 
 /** Moves the person's checkout to a branch, refusing — with nothing changed — over unsaved work. */
@@ -293,48 +298,52 @@ function checkoutIn(repo: string, branch: string): void {
  * Remembers the branch it was on, for switchBack. Refused while the change is not kept yet, or over unsaved work.
  */
 export async function switchToBranch(runId: string): Promise<Delivery> {
-  const away = await elsewhere(runId)
-  if (away) throw new DeliveryError(away, 409)
-  const found = (await approvedAndFinished(runId))
-  if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  const kept = (await recordOf(runId, 'run.kept'))
-  if (!kept?.branch) throw new DeliveryError(strings.delivery.keepFirst, 409)
-  const repo = (await repoOf(found.run.projectId))
-  if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
-  const from = currentBranch(repo)
-  if (from === kept.branch) return deliveryState(runId)
-  if (!from) throw new DeliveryError(strings.delivery.notOnBranch, 409)
-  if (git(repo, ['status', '--porcelain', '--untracked-files=no']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
-  // A branch can be checked out in one place only, and the agent's copy still holds it: let go of it there first.
-  // The commit stays where it is; the agent's copy just stops being "on" the branch.
-  const wt = found.run.worktreePath
-  if (wt) {
-    try {
-      git(wt, ['checkout', '-q', '--detach'])
-    } catch {
-      // The agent's copy is gone or already detached: nothing holds the branch.
+  return serialized(runId, async () => {
+    const away = await elsewhere(runId)
+    if (away) throw new DeliveryError(away, 409)
+    const found = (await approvedAndFinished(runId))
+    if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
+    const kept = (await recordOf(runId, 'run.kept'))
+    if (!kept?.branch) throw new DeliveryError(strings.delivery.keepFirst, 409)
+    const repo = (await repoOf(found.run.projectId))
+    if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
+    const from = currentBranch(repo)
+    if (from === kept.branch) return deliveryState(runId)
+    if (!from) throw new DeliveryError(strings.delivery.notOnBranch, 409)
+    if (git(repo, ['status', '--porcelain', '--untracked-files=no']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
+    // A branch can be checked out in one place only, and the agent's copy still holds it: let go of it there first.
+    // The commit stays where it is; the agent's copy just stops being "on" the branch.
+    const wt = found.run.worktreePath
+    if (wt) {
+      try {
+        git(wt, ['checkout', '-q', '--detach'])
+      } catch {
+        // The agent's copy is gone or already detached: nothing holds the branch.
+      }
     }
-  }
-  checkoutIn(repo, kept.branch)
-  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.switched', payload: { branch: kept.branch, from } }, tx)))
-  return deliveryState(runId)
+    checkoutIn(repo, kept.branch)
+    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.switched', payload: { branch: kept.branch, from } }, tx)))
+    return deliveryState(runId)
+  })
 }
 
 /** Returns the person's project to the branch it was on before switchToBranch. Refused over unsaved work. */
 export async function switchBack(runId: string): Promise<Delivery> {
-  const away = await elsewhere(runId)
-  if (away) throw new DeliveryError(away, 409)
-  const found = (await approvedAndFinished(runId))
-  if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  const switched = (await recordOf(runId, 'run.switched'))
-  if (!switched?.from) throw new DeliveryError(strings.delivery.neverSwitched, 409)
-  const repo = (await repoOf(found.run.projectId))
-  if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
-  if (currentBranch(repo) !== switched.from) {
-    checkoutIn(repo, switched.from)
-    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.switched_back', payload: { branch: switched.from } }, tx)))
-  }
-  return deliveryState(runId)
+  return serialized(runId, async () => {
+    const away = await elsewhere(runId)
+    if (away) throw new DeliveryError(away, 409)
+    const found = (await approvedAndFinished(runId))
+    if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
+    const switched = (await recordOf(runId, 'run.switched'))
+    if (!switched?.from) throw new DeliveryError(strings.delivery.neverSwitched, 409)
+    const repo = (await repoOf(found.run.projectId))
+    if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
+    if (currentBranch(repo) !== switched.from) {
+      checkoutIn(repo, switched.from)
+      await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.switched_back', payload: { branch: switched.from } }, tx)))
+    }
+    return deliveryState(runId)
+  })
 }
 
 /**
@@ -359,34 +368,36 @@ const gitAsync = (cwd: string, args: string[]) =>
  * credentials. Their other branches are not sent. Refused before the change is kept, or with no origin.
  */
 export async function pushBranch(runId: string): Promise<Delivery> {
-  const away = await elsewhere(runId)
-  if (away) throw new DeliveryError(away, 409)
-  const found = (await approvedAndFinished(runId))
-  if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  const kept = (await recordOf(runId, 'run.kept'))
-  if (!kept?.branch) throw new DeliveryError(strings.delivery.keepFirst, 409)
-  const branch = kept.branch
-  const repo = (await repoOf(found.run.projectId))
-  if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
-  let remote: string
-  try {
-    remote = git(repo, ['remote', 'get-url', 'origin'])
-  } catch {
-    throw new DeliveryError(strings.delivery.noRemote, 409)
-  }
-  try {
-    await gitAsync(repo, ['push', '--porcelain', 'origin', `refs/heads/${branch}:refs/heads/${branch}`])
-  } catch (e) {
-    // git's own words, minus anything secret and any address that could carry a token.
-    const said = redact(String((e as Error).message)).replace(/[a-z]+:\/\/[^\s]*@/gi, '').trim().split('\n').filter(Boolean).slice(-2).join(' ')
-    throw new DeliveryError(strings.delivery.pushFailed(clip(said, 240)), 409)
-  }
-  try {
-    git(repo, ['branch', '--set-upstream-to', `origin/${branch}`, branch])
-  } catch {
-    // Upstream tracking is a convenience; the push itself succeeded.
-  }
-  const pullRequestUrl = githubPullUrl(remote, branch)
-  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx)))
-  return deliveryState(runId)
+  return serialized(runId, async () => {
+    const away = await elsewhere(runId)
+    if (away) throw new DeliveryError(away, 409)
+    const found = (await approvedAndFinished(runId))
+    if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
+    const kept = (await recordOf(runId, 'run.kept'))
+    if (!kept?.branch) throw new DeliveryError(strings.delivery.keepFirst, 409)
+    const branch = kept.branch
+    const repo = (await repoOf(found.run.projectId))
+    if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
+    let remote: string
+    try {
+      remote = git(repo, ['remote', 'get-url', 'origin'])
+    } catch {
+      throw new DeliveryError(strings.delivery.noRemote, 409)
+    }
+    try {
+      await gitAsync(repo, ['push', '--porcelain', 'origin', `refs/heads/${branch}:refs/heads/${branch}`])
+    } catch (e) {
+      // git's own words, minus anything secret and any address that could carry a token.
+      const said = redact(String((e as Error).message)).replace(/[a-z]+:\/\/[^\s]*@/gi, '').trim().split('\n').filter(Boolean).slice(-2).join(' ')
+      throw new DeliveryError(strings.delivery.pushFailed(clip(said, 240)), 409)
+    }
+    try {
+      git(repo, ['branch', '--set-upstream-to', `origin/${branch}`, branch])
+    } catch {
+      // Upstream tracking is a convenience; the push itself succeeded.
+    }
+    const pullRequestUrl = githubPullUrl(remote, branch)
+    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx)))
+    return deliveryState(runId)
+  })
 }

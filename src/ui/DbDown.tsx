@@ -21,8 +21,18 @@ export function DbDown() {
   )
 }
 
-/** True for a failure to reach or use the database, as opposed to Next's own not-found or redirect signals. */
+const UNREACHABLE = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'EHOSTUNREACH', '57P01', '57P03', '08000', '08001', '08003', '08006'])
+
+/**
+ * True when the database could not be reached (a connection error, or a server that is shutting down or not
+ * accepting connections). Anything else, a bug included, is not hidden behind this page.
+ */
 export function isDbFailure(e: unknown): boolean {
-  const digest = (e as { digest?: unknown })?.digest
-  return !(typeof digest === 'string' && digest.startsWith('NEXT_'))
+  for (let cur: unknown = e, depth = 0; cur && depth < 5; cur = (cur as { cause?: unknown }).cause, depth++) {
+    const code = (cur as { code?: unknown }).code
+    if (typeof code === 'string' && UNREACHABLE.has(code)) return true
+    const message = String((cur as { message?: unknown }).message ?? '')
+    if (/connection terminated|timeout expired|could not connect|Connection terminated unexpectedly/i.test(message)) return true
+  }
+  return false
 }

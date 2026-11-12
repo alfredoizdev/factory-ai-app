@@ -143,6 +143,9 @@ export async function decideGate(
     const rounds = (await db.select().from(approvals).where(and(eq(approvals.runId, runId), eq(approvals.decision, 'changes')))).length
     if (rounds >= MAX_REVISIONS) throw new GateError(strings.gate.tooManyRounds(MAX_REVISIONS), 409)
   }
+  // From another computer, a decision can only be about the change its own computer has shown: none recorded yet
+  // means there is nothing to decide on from here.
+  if (run.machineId !== thisMachine().id && run.worktreePath && !run.reviewJson) throw new GateError(strings.gate.notShownYet, 409)
   // Bound to what was shown: approving a change nobody looked at is the gate being bypassed by timing.
   const current = (await changeUnderReview(runId))?.hash ?? NO_CHANGE
   if (input.diffHash !== current) throw new GateError(strings.gate.changedSinceSeen, 409)
@@ -172,7 +175,7 @@ const DECISIONS: ReadonlySet<string> = new Set<Decision>(['approved', 'rejected'
  * The decision recorded for this human check that the run has not acted on yet, newest first, and marks it acted on.
  * Null when there is none. What the executor acts on — never the event. Each round of a run needs its own decision.
  */
-export async function takeRecordedDecision(runId: string, nodeRunId: string): Promise<{ decision: Decision; note: string | null; approvalId: string } | null> {
+export async function takeRecordedDecision(runId: string, nodeRunId: string): Promise<{ decision: Decision; note: string | null; approvalId: string; diffHash: string | null } | null> {
   return db.transaction(
     async tx => {
       await lockRun(tx, runId)
@@ -184,7 +187,7 @@ export async function takeRecordedDecision(runId: string, nodeRunId: string): Pr
         )[0]
       if (!row || !DECISIONS.has(row.decision)) return null
       await tx.update(approvals).set({ consumedAt: new Date().toISOString() }).where(eq(approvals.id, row.id))
-      return { decision: row.decision as Decision, note: row.reason, approvalId: row.id }
+      return { decision: row.decision as Decision, note: row.reason, approvalId: row.id, diffHash: row.diffHash }
     },
   )
 }

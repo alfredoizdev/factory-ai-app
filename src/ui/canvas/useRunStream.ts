@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { canTransition, type NodeState } from '@/domain/states'
 import { claimUsed, summarize, type SummaryInput } from '@/domain/summary'
 import type { Block, BlockKind } from '@/domain/graph'
@@ -260,12 +260,16 @@ export function useRunStream(
   /** Null: there is no run to watch, so nothing connects and nothing is shown. */
   runId: string | null,
   blocks?: readonly Block[],
-): { views: Record<string, NodeRunView>; lastSequence: number; connected: boolean; events: readonly Wire[]; runStatus: RunStatus | null; loaded: boolean } {
+): { views: Record<string, NodeRunView>; lastSequence: number; connected: boolean; events: readonly Wire[]; runStatus: RunStatus | null; loaded: boolean; reopen: () => void } {
   const [state, dispatch] = useReducer(reducer, null, () => nothingHeld(runId))
   const held = state.runId === runId ? state : nothingHeld(runId)
   const { stream, log } = held
   const [connected, setConnected] = useReducer((_: boolean, v: boolean) => v, false)
   const cursor = useRef(0)
+  // Reopens a stream the server closed because the run had ended, from where it was: something recorded since (sent to
+  // GitHub, merged) comes in, then it closes again.
+  const reopenRef = useRef<(() => void) | null>(null)
+  const reopen = useCallback(() => reopenRef.current?.(), [])
   // The run whose recorded events have all arrived: until then the page shows placeholders, not a run assembling itself.
   const [loadedFor, setLoadedFor] = useReducer((_: string | null, v: string | null) => v, null)
 
@@ -332,6 +336,11 @@ export function useRunStream(
       }
     }
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
+    reopenRef.current = () => {
+      if (disposed || !ended) return
+      ended = false
+      connect()
+    }
     connect()
     // Never stuck on placeholders: if the end of the replay is not heard of, the run is shown anyway.
     const fallback = setTimeout(() => setLoadedFor(runId), 2500)
@@ -346,5 +355,5 @@ export function useRunStream(
   }, [runId])
 
   const views = useMemo(() => toViews(stream.nodes, blocks, stream.shipped), [stream.nodes, blocks, stream.shipped])
-  return { views, lastSequence: stream.lastSequence, connected, events: log.events, runStatus: log.runStatus, loaded: runId !== null && loadedFor === runId }
+  return { views, lastSequence: stream.lastSequence, connected, events: log.events, runStatus: log.runStatus, loaded: runId !== null && loadedFor === runId, reopen }
 }

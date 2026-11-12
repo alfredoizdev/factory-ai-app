@@ -74,3 +74,31 @@ test('a decision whose telling fails is told again on the next pass', async () =
   const sent: unknown[] = []
   expect(await deliverPending(async e => void sent.push(e), 'approval', 'plan')).toBe(1)
 })
+
+test('the relay asks nothing while no run of this computer waits', async () => {
+  const { relayTick, waitingCount, markWaiting } = await import('@/engine/relay')
+  const select = vi.spyOn(db, 'select')
+  const update = vi.spyOn(db, 'update')
+  if (waitingCount() === 0) {
+    expect(await relayTick(async () => undefined, 'a', 'p')).toBe(0)
+    expect(select).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+  }
+  // A run that is not waiting is forgotten after one pass.
+  const { runId } = await aRun()
+  markWaiting(runId)
+  await relayTick(async () => undefined, 'a', 'p')
+  expect(waitingCount()).toBe(0)
+  select.mockRestore()
+  update.mockRestore()
+})
+
+test('from another computer, a change nobody has read on the task\'s computer cannot be decided on', async () => {
+  const { decideGate } = await import('@/engine/approvals')
+  const { runId } = await aRun()
+  const human = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === 'human')!
+  await db.update(nodeRuns).set({ state: 'waiting_approval' }).where(eq(nodeRuns.id, human.id))
+  await db.update(runs).set({ status: 'waiting_approval', machineId: 'other', worktreePath: '/elsewhere/wt' }).where(eq(runs.id, runId))
+  await expect(decideGate(runId, { decision: 'approved', diffHash: 'no-change' }, { send: async () => undefined })).rejects.toThrow(strings.gate.notShownYet)
+  expect(await db.select().from(approvals).where(eq(approvals.runId, runId))).toEqual([])
+})

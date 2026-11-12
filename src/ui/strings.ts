@@ -353,6 +353,8 @@ export const strings = {
     browserOnly: 'Decisions can only be made from the app in your browser.',
     actor: (name: string) => `${name}, at this computer`,
     ignoredEvent: 'A decision arrived with no record behind it, so it was ignored.',
+    staleDecision: 'A decision arrived for an earlier version of the change, so it was set aside. Look again and decide on this one.',
+    notShownYet: 'The change has not been read on the task\'s own computer yet, so there is nothing to decide on from here. Try again in a moment.',
     goToGate: 'Go to the decision',
   },
   preview: {
