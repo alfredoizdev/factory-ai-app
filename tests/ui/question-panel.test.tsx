@@ -70,14 +70,49 @@ test('a click answers with the chosen option once; a double click while sending 
   await act(async () => release())
 })
 
-test('the person\'s own words are sent as "other"', async () => {
+test('words with a chosen option are sent with that option', async () => {
   const onAnswer = vi.fn(async () => undefined)
   render(<QuestionPanel question={question} onAnswer={onAnswer} />)
+  fireEvent.click(screen.getByRole('radio', { name: /Leave it as it is/ }))
+  fireEvent.change(screen.getByLabelText(strings.question.noteLabel), { target: { value: '  the rounding is on purpose ' } })
+  expect(screen.getByRole('radio', { name: /Leave it as it is/ })).toBeChecked() // typing keeps the chosen option
+  fireEvent.click(confirm())
+  await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('leave', 'the rounding is on purpose'))
+})
+
+test('choosing an option after typing keeps the words, and the box says they go with the choice', async () => {
+  const onAnswer = vi.fn(async () => undefined)
+  render(<QuestionPanel question={question} onAnswer={onAnswer} />)
+  fireEvent.change(screen.getByLabelText(strings.question.ownWordsLabel), { target: { value: 'the rounding is on purpose' } })
+  fireEvent.click(screen.getByRole('radio', { name: /Leave it as it is/ }))
+  const box = screen.getByLabelText(strings.question.noteLabel)
+  expect(box).toHaveValue('the rounding is on purpose')
   fireEvent.click(screen.getByRole('radio', { name: /Fix it/ }))
+  expect(box).toHaveValue('the rounding is on purpose')
+  fireEvent.click(confirm())
+  await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('fix', 'the rounding is on purpose'))
+})
+
+test('the person\'s own words with no option chosen are sent as "other"', async () => {
+  const onAnswer = vi.fn(async () => undefined)
+  render(<QuestionPanel question={question} onAnswer={onAnswer} />)
   fireEvent.change(screen.getByLabelText(strings.question.ownWordsLabel), { target: { value: '  only change the log line ' } })
-  expect(screen.getByRole('radio', { name: /Fix it/ })).not.toBeChecked() // the words are the choice now
+  for (const o of question.options) expect(screen.getByRole('radio', { name: new RegExp(o.label) })).not.toBeChecked()
   fireEvent.click(confirm())
   await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('other', 'only change the log line'))
+})
+
+test('a chosen option with no words sends no words, and Enter in the box does not send', async () => {
+  const onAnswer = vi.fn(async () => undefined)
+  render(<QuestionPanel question={question} onAnswer={onAnswer} />)
+  fireEvent.click(screen.getByRole('radio', { name: /Leave it as it is/ }))
+  const box = screen.getByLabelText(strings.question.noteLabel)
+  fireEvent.change(box, { target: { value: 'a reason' } })
+  fireEvent.keyDown(box, { key: 'Enter' })
+  expect(onAnswer).not.toHaveBeenCalled()
+  fireEvent.change(box, { target: { value: '   ' } })
+  fireEvent.click(confirm())
+  await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('leave', undefined))
 })
 
 test('an error from the server is shown as the sentence it sent, and the buttons work again', async () => {
@@ -115,7 +150,7 @@ test('no details button when the question has none', () => {
 test('typing only spaces does not take a chosen option away', () => {
   render(<QuestionPanel question={question} onAnswer={async () => undefined} />)
   fireEvent.click(screen.getByRole('radio', { name: /Fix it/ }))
-  fireEvent.change(screen.getByLabelText(strings.question.ownWordsLabel), { target: { value: '   ' } })
+  fireEvent.change(screen.getByLabelText(strings.question.noteLabel), { target: { value: '   ' } })
   expect(screen.getByRole('radio', { name: /Fix it/ })).toBeChecked()
   expect(confirm()).toBeEnabled()
 })

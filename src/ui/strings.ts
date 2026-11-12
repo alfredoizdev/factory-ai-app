@@ -358,6 +358,9 @@ export const strings = {
     recommended: 'Recommended',
     ownWordsLabel: 'Or say what you want in your own words',
     ownWordsPlaceholder: 'Write what you would like the app to do.',
+    // The same box once a choice is made: the words go with that choice.
+    noteLabel: 'Add a note (optional). It is kept, so later tasks know why you chose this.',
+    notePlaceholder: 'For example: the price is rounded down on purpose.',
     confirm: 'Confirm my answer',
     sending: 'Sending your answer…',
     sent: 'Answer sent. The task goes on.',

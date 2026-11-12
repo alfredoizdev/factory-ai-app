@@ -554,7 +554,8 @@ describe('a finding is verified, then fixed or asked about', () => {
     expect(row).toMatchObject({ state: 'discarded', reason: 'not now' })
     expect(s.calls.some(c => c.role === 'fixer')).toBe(false)
     const register = await listRegister(projectId)
-    expect(register.filter(e => e.kind === 'decision')).toHaveLength(1)
+    // What it was about, what they chose and their words: the next task knows why it was left.
+    expect(register.filter(e => e.kind === 'decision').map(e => e.text)).toEqual(['About a problem with what the change does in a.tsx: you chose to leave it as it is. In your words: not now'])
     expect(register.find(e => e.kind === 'finding')).toMatchObject({ number: row!.entryNumber, outcome: 'asked_no', reason: 'not now' })
     expect((await node(runId, 'review')).state).toBe('passed')
     expect((await node(runId, 'approve')).state).toBe('passed')

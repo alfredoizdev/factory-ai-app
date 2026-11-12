@@ -20,7 +20,8 @@ const cut = (text: string) => (text.length > SAID_MAX ? `${text.slice(0, SAID_MA
 
 /**
  * A question the review cannot answer for the person: one plain sentence, why it asks, a few choices each saying what
- * it means, the recommended one marked, and a box for their own words. One button answers it, once.
+ * it means, the recommended one marked, and a box for their own words: a note that goes with the chosen option, or
+ * the whole answer when none is chosen. One button answers it, once.
  */
 export function QuestionPanel({
   question,
@@ -49,7 +50,9 @@ export function QuestionPanel({
   const name = useId()
   const detailId = useId()
 
-  const ready = choice !== null && (choice !== OTHER || words.trim() !== '')
+  // Words go with whichever option is chosen; with none chosen, the words alone are the answer ("other").
+  const answer = choice ?? (words.trim() !== '' ? OTHER : null)
+  const ready = answer !== null
   const locked = sending || sent
 
   async function confirm() {
@@ -58,7 +61,7 @@ export function QuestionPanel({
     setSending(true)
     setError(null)
     try {
-      await onAnswer(choice!, choice === OTHER ? words.trim() : undefined)
+      await onAnswer(answer!, words.trim() !== '' ? words.trim() : undefined)
       setSent(true)
     } catch (e) {
       setError(e instanceof Error && e.message ? e.message : strings.question.failed)
@@ -161,10 +164,7 @@ export function QuestionPanel({
                 name={name}
                 value={o.id}
                 checked={chosen}
-                onChange={() => {
-                  setChoice(o.id)
-                  setWords('')
-                }}
+                onChange={() => setChoice(o.id)}
                 style={{ flex: 'none', marginTop: 3, accentColor: theme.waiting }}
               />
               <span style={{ display: 'grid', gap: 3, minWidth: 0 }}>
@@ -180,17 +180,13 @@ export function QuestionPanel({
           )
         })}
         <label style={{ display: 'grid', gap: 4, fontSize: 12.5, fontWeight: 600, color: theme.dim }}>
-          {strings.question.ownWordsLabel}
+          {choice === null ? strings.question.ownWordsLabel : strings.question.noteLabel}
           <textarea
             value={words}
             rows={3}
-            placeholder={strings.question.ownWordsPlaceholder}
-            onChange={e => {
-              setWords(e.target.value)
-              // Words make the choice; only spaces neither make it nor take a chosen option away.
-              if (e.target.value.trim() !== '') setChoice(OTHER)
-              else if (choice === OTHER) setChoice(null)
-            }}
+            placeholder={choice === null ? strings.question.ownWordsPlaceholder : strings.question.notePlaceholder}
+            // Typing never changes a chosen option; the words are sent with it.
+            onChange={e => setWords(e.target.value)}
             style={{ font: 'inherit', fontSize: 13, fontWeight: 400, padding: '8px 10px', boxSizing: 'border-box', width: '100%', resize: 'vertical', background: '#0b0e14', color: '#e6e9ef', border: `1px solid ${theme.border}`, borderRadius: 8 }}
           />
         </label>
