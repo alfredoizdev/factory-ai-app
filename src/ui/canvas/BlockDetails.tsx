@@ -222,13 +222,13 @@ function Pictures({ runId }: { runId: string }) {
           )
         })}
       </div>
-      {large && <LargePicture src={src(large)} label={`${strings.snapshots[large.startsWith('before') ? 'before' : 'after']} · ${strings.snapshots[large.endsWith('mobile') ? 'mobile' : 'desktop']}`} onClose={() => setLarge(null)} />}
+      {large && <LargePicture src={src(large)} label={`${strings.snapshots[large.startsWith('before') ? 'before' : 'after']} · ${strings.snapshots[large.endsWith('mobile') ? 'mobile' : 'desktop']}`} phone={large.endsWith('mobile')} onClose={() => setLarge(null)} />}
     </div>
   )
 }
 
 /** One picture over the whole screen, at its real size or as large as fits: scrolls when the page is long. */
-function LargePicture({ src, label, onClose }: { src: string; label: string; onClose: () => void }) {
+function LargePicture({ src, label, phone, onClose }: { src: string; label: string; phone: boolean; onClose: () => void }) {
   useEffect(() => {
     // Escape closes the picture only, not the window under it.
     const onKey = (e: KeyboardEvent) => {
@@ -261,7 +261,9 @@ function LargePicture({ src, label, onClose }: { src: string; label: string; onC
       </header>
       <div style={{ overflow: 'auto', display: 'grid', justifyItems: 'center', alignItems: 'start', padding: '0 20px 24px', ...thin }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} alt={label} onClick={e => e.stopPropagation()} style={{ display: 'block', maxWidth: '100%', borderRadius: 8, border: `1px solid ${theme.border}`, cursor: 'default' }} />
+        <img src={src} alt={label} onClick={e => e.stopPropagation()} // A phone picture is taken at twice its size for sharpness: shown at a phone's own width, not doubled.
+          style={{ display: 'block', width: phone ? 'min(100%, 420px)' : undefined, maxWidth: '100%', borderRadius: 8, border: `1px solid ${theme.border}`, cursor: 'default' }}
+        />
       </div>
     </div>,
     document.body,
