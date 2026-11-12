@@ -171,6 +171,8 @@ export async function createRun(input: {
   startFrom?: string
   /** The person's name for the task. Absent: none, until they give one. */
   title?: string
+  /** The person asked to be stopped for this task whatever the project's ask mode says. Absent: no. */
+  stopForMe?: boolean
 }): Promise<{ runId: string; versionId: string }> {
   const wf = (await requireWorkflow(input.workflowId))
   const providerId = input.providerId ?? DEMO_PROVIDER_ID
@@ -216,6 +218,7 @@ export async function createRun(input: {
           request: input.request,
           title: input.title ? cleanTitle(input.title) : null,
           titleByPerson: !!(input.title && cleanTitle(input.title)),
+          stopForMe: input.stopForMe === true,
           providerId,
           // The run executes here: its working copy and its Inngest are on this computer.
           machineId: thisMachine().id,

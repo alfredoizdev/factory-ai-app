@@ -1,6 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
+import type { AskMode } from '@/domain/ask-mode'
 import { projectMachines, projects, workflows } from '@/db/schema'
 import { defaultGraph, LANE_SPACING, STAGE_ORDER, type Block } from '@/domain/graph'
 import { ProjectSettingsError, validRepoRoot } from '@/engine/project-settings'
@@ -45,8 +46,8 @@ export async function createProject(input: {
   name: string
   testCommand: string | null
   checks: readonly ExtraCheck[]
-  /** The person's own choice at setup; off unless they turn it on. */
-  autoApproveLowRisk?: boolean
+  /** When the app stops for the person. Absent: only about what matters. */
+  askMode?: AskMode
 }): Promise<{ projectId: string; workflowId: string }> {
   const repoPath = validRepoRoot(input.path.trim())
   const name = input.name.trim()
@@ -59,6 +60,7 @@ export async function createProject(input: {
   if (testCommand && !COMMAND.test(testCommand)) throw new ProjectSettingsError(strings.projects.badCommand)
   for (const c of input.checks) if (!COMMAND.test(c.command.trim()) || !NAME.test(c.label.trim())) throw new ProjectSettingsError(strings.projects.badCommand)
 
+  const askMode = input.askMode ?? 'what_matters'
   const projectId = ulid()
   const workflowId = ulid()
   const now = new Date().toISOString()
@@ -73,7 +75,7 @@ export async function createProject(input: {
     position: { x: testsColumn, y: (i + 1) * 340 },
   }))
   await db.transaction(async tx => {
-    await tx.insert(projects).values({ id: projectId, projectId, name, testCommand, autoApproveLowRisk: input.autoApproveLowRisk === true, createdAt: now })
+    await tx.insert(projects).values({ id: projectId, projectId, name, testCommand, askMode, autoApproveLowRisk: askMode !== 'everything', createdAt: now })
     await setLocal(projectId, { repoPath }, tx)
     await tx.insert(workflows).values({ id: workflowId, projectId, name, draftJson: JSON.stringify(graph), createdAt: now, updatedAt: now })
   })

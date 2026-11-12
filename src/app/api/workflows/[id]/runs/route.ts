@@ -11,6 +11,7 @@ const bodySchema = z.object({
   attachments: z.array(z.string()).max(MAX_IMAGES).optional(),
   startFrom: z.string().max(200).optional(),
   title: z.string().max(200).optional(),
+  stopForMe: z.boolean().optional(),
 })
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -20,7 +21,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const body = bodySchema.safeParse(await req.json().catch(() => null))
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
-    const created = await createRun({ workflowId: id, request: body.data.request, providerId: body.data.provider, startFrom: body.data.startFrom, title: body.data.title })
+    const created = await createRun({ workflowId: id, request: body.data.request, providerId: body.data.provider, startFrom: body.data.startFrom, title: body.data.title, stopForMe: body.data.stopForMe })
     await claimAttachments(body.data.attachments ?? [], created.runId)
     try {
       await inngest.send({ name: RUN_REQUESTED, data: { runId: created.runId } })

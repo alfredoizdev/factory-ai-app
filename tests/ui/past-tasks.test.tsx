@@ -148,7 +148,7 @@ test('tests that arrived after the project was added are offered, and saved only
     unobserve() {}
     disconnect() {}
   }
-  const settings = { projectId: 'p1', repoPath: '/repo', testCommand: null, autoApproveLowRisk: false, currentBranch: 'main', defaultBranch: 'main', suggestedTestCommand: 'npm test' }
+  const settings = { projectId: 'p1', repoPath: '/repo', testCommand: null, askMode: 'everything' as const, currentBranch: 'main', defaultBranch: 'main', suggestedTestCommand: 'npm test' }
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/projects/p1' && init?.method === 'PUT') return new Response(JSON.stringify({ ...settings, testCommand: 'npm test', suggestedTestCommand: null }))
     return new Response(JSON.stringify({ runs: [] }))

@@ -307,3 +307,12 @@ test('main asked for by name also starts from origin\'s newest main', async () =
   const { runId } = await createRun({ workflowId, request: 'x', providerId: 'claude', startFrom: 'main' })
   expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.baseCommit).toBe(merged)
 })
+
+test('a task made with "stop for me" keeps it, and the default is off', async () => {
+  await saveDraft(wf, defaultGraph())
+  await publishVersion(wf)
+  const plain = await createRun({ workflowId: wf, request: 'x' })
+  const stopped = await createRun({ workflowId: wf, request: 'x', stopForMe: true })
+  expect((await getRun(plain.runId)).stopForMe).toBe(false)
+  expect((await getRun(stopped.runId)).stopForMe).toBe(true)
+})

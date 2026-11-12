@@ -45,6 +45,7 @@ export async function startFollowUp(parentRunId: string, note: string): Promise<
   await db.update(runs)
     .set({
       parentRunId,
+      stopForMe: parent.stopForMe,
       // The new worktree starts here; its human check compares against it, so it shows only the new change.
       baseCommit: parentCommit,
       deliveryBase: (await wasDelivered(parentRunId)) ? null : (parent.deliveryBase ?? parent.baseCommit),
@@ -71,7 +72,7 @@ async function continueFailed(parent: typeof runs.$inferSelect, text: string): P
     throw new FollowUpError(strings.failure.cannotContinue, 409)
   }
   const { runId } = await createRun({ workflowId: parent.workflowId, request: text, providerId: parent.providerId as RunProviderId })
-  await db.update(runs).set({ parentRunId: parent.id, baseCommit: parent.baseCommit, deliveryBase: parent.deliveryBase, title: parent.title }).where(eq(runs.id, runId))
+  await db.update(runs).set({ parentRunId: parent.id, stopForMe: parent.stopForMe, baseCommit: parent.baseCommit, deliveryBase: parent.deliveryBase, title: parent.title }).where(eq(runs.id, runId))
   await appendEvent({ runId, type: 'run.continues', payload: { fromRun: parent.id, commit, skipPlan: await planWasMade(parent) } })
   return { runId }
 }

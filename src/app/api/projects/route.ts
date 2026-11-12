@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ASK_MODES } from '@/domain/ask-mode'
 import { prepareBase } from '@/engine/base'
 import { ProjectSettingsError } from '@/engine/project-settings'
 import { createProject, listProjects } from '@/engine/projects'
@@ -17,7 +18,7 @@ const createSchema = z.object({
   name: z.string().max(200),
   testCommand: z.string().max(500).nullable(),
   checks: z.array(z.object({ label: z.string().max(200), command: z.string().max(500) })).max(10),
-  autoApproveLowRisk: z.boolean().optional(),
+  askMode: z.enum(ASK_MODES).optional(),
 })
 
 // Makes a folder a project, then prepares its base in the background (installing its dependencies once).

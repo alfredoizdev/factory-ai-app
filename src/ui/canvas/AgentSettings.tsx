@@ -38,7 +38,7 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
   const tone = state === 'saved' ? theme.passed : state === 'failed' ? theme.failed : theme.border
 
   const [choosing, setChoosing] = useState(false)
-  const [autoLow, setAutoLow] = useState(settings.autoApproveLowRisk)
+  const [autoLow, setAutoLow] = useState(settings.askMode === 'small_changes' || settings.askMode === 'what_matters')
 
   // The switch saves on its own: it is one decision, and leaving it half-set would be worse than one more request.
   async function toggleAutoLow(on: boolean) {
@@ -47,7 +47,7 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
       const res = await fetch(`/api/projects/${settings.projectId}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ autoApproveLowRisk: on }),
+        body: JSON.stringify({ askMode: on ? 'small_changes' : 'everything' }),
       })
       const body = (await res.json().catch(() => null)) as (ProjectSettings & { error?: string }) | null
       if (!res.ok || !body) {

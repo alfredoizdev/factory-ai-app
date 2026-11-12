@@ -50,6 +50,13 @@
       "when": 1794512811967,
       "tag": "0006_jittery_iron_monger",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794519699005,
+      "tag": "0007_great_guardsmen",
+      "breakpoints": true
     }
   ]
 }

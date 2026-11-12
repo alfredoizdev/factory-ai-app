@@ -27,8 +27,8 @@ beforeAll(() => {
   }
 })
 
-const noRepo = { projectId: 'p1', repoPath: null, testCommand: null, autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
-const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
+const noRepo = { projectId: 'p1', repoPath: null, testCommand: null, askMode: 'everything' as const, currentBranch: null, defaultBranch: null }
+const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', askMode: 'everything' as const, currentBranch: null, defaultBranch: null }
 const runButton = () => screen.getByRole('button', { name: strings.run.run })
 
 test('the demo is the default without a folder; the project settings open in their own window, saying Claude is not sandboxed', () => {
@@ -143,7 +143,7 @@ test('the low-risk switch starts off and saves the moment it is turned on', asyn
     expect(box).not.toBeChecked()
     fireEvent.click(box)
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(JSON.parse(String(fetchMock.mock.calls.find(([, i]) => i?.body)![1]!.body))).toEqual({ autoApproveLowRisk: true })
+    expect(JSON.parse(String(fetchMock.mock.calls.find(([, i]) => i?.body)![1]!.body))).toEqual({ askMode: 'small_changes' })
     expect(box).toBeChecked()
   } finally {
     vi.unstubAllGlobals()

@@ -1,12 +1,13 @@
 import { z } from 'zod'
-import { getProjectSettings, ProjectSettingsError, setAutoApproveLowRisk, setProjectName, setProjectRepo, setTestCommand } from '@/engine/project-settings'
+import { ASK_MODES } from '@/domain/ask-mode'
+import { getProjectSettings, ProjectSettingsError, setAskMode, setProjectName, setProjectRepo, setTestCommand } from '@/engine/project-settings'
 import { rejectCrossSite } from '@/engine/same-origin'
 import { strings } from '@/ui/strings'
 
 const bodySchema = z.object({
   repoPath: z.string().min(1).optional(),
   testCommand: z.string().nullable().optional(),
-  autoApproveLowRisk: z.boolean().optional(),
+  askMode: z.enum(ASK_MODES).optional(),
   name: z.string().max(200).optional(),
 })
 
@@ -35,7 +36,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     // The command first, so a repository set in the same request keeps the command the person typed.
     if (body.data.testCommand !== undefined) (await setTestCommand(id, body.data.testCommand))
     if (body.data.repoPath !== undefined) (await setProjectRepo(id, body.data.repoPath))
-    if (body.data.autoApproveLowRisk !== undefined) (await setAutoApproveLowRisk(id, body.data.autoApproveLowRisk))
+    if (body.data.askMode !== undefined) (await setAskMode(id, body.data.askMode))
     if (body.data.name !== undefined) (await setProjectName(id, body.data.name))
     return Response.json((await getProjectSettings(id)))
   } catch (e) {

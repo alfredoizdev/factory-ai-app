@@ -162,6 +162,18 @@ test('a follow-up starts from the approved change, is told about it, and its che
   expect(git(repo, 'status', '--porcelain')).toBe('')
 })
 
+test('a follow-up and a picked-up failed task keep the parent\'s "stop for me"', async () => {
+  const done = await finishedRun()
+  await db.update(runs).set({ stopForMe: true }).where(eq(runs.id, done.runId))
+  const followUp = await startFollowUp(done.runId, 'uppercase')
+  expect((await db.select().from(runs).where(eq(runs.id, followUp.runId)))[0]!.stopForMe).toBe(true)
+  const failed = await failedRun()
+  expect((await db.select().from(runs).where(eq(runs.id, failed.runId)))[0]!.stopForMe).toBe(false)
+  await db.update(runs).set({ stopForMe: true }).where(eq(runs.id, failed.runId))
+  const picked = await startFollowUp(failed.runId, 'Fix it')
+  expect((await db.select().from(runs).where(eq(runs.id, picked.runId)))[0]!.stopForMe).toBe(true)
+})
+
 test('bringing a follow-up over carries its parent along when the parent was never brought over', async () => {
   const { runId: parentId, repo } = await finishedRun()
   const { runId } = await startFollowUp(parentId, 'uppercase')

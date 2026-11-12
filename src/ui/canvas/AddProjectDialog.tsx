@@ -81,7 +81,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
           name,
           testCommand: testCommand.trim() || null,
           checks: EXTRA.filter(c => checks.has(c) && analysis.commands[c]).map(c => ({ label: s.checkLabel[c], command: analysis.commands[c]! })),
-          autoApproveLowRisk: autoLow,
+          askMode: autoLow ? 'small_changes' : 'everything',
         }),
       })
       const body = (await res.json().catch(() => null)) as { workflowId?: string; error?: string } | null
