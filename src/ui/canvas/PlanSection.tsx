@@ -90,7 +90,10 @@ export function PlanSection({ runId, note, composer, onSent }: { runId: string; 
         <ol data-testid="plan-jobs" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8, maxHeight: 320, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>
           {drafts.map((d, i) => (
             <li key={d.key} style={{ display: 'grid', gap: 6, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span aria-hidden="true" style={{ fontSize: 11, color: theme.dim, paddingLeft: 28 }}>
+                {strings.plan.jobWhat}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: -3 }}>
                 <span aria-hidden="true" style={{ flex: 'none', width: 20, height: 20, borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 800, background: theme.tint('waiting', 0.2), color: theme.waiting }}>
                   {i + 1}
                 </span>
