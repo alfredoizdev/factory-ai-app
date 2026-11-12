@@ -38,6 +38,8 @@ export type Delivery = {
   pushed: boolean
   /** Where to open a pull request for it, when origin is on GitHub. */
   pullRequestUrl: string | null
+  /** Whether the project has a remote called origin, read live: without one the change can be saved but not sent. Null when unknown (the project is on another computer). */
+  hasRemote?: boolean | null
   /** False when the run's working copy is on another computer: the actions that need it are not offered here. */
   here: boolean
   /** The name of the computer it is on, when known. */
@@ -82,6 +84,15 @@ function currentBranch(repo: string | null): string | null {
     return null
   }
 }
+/** Whether the repository has a remote called origin; null when there is no repository here to ask. */
+function hasOrigin(repo: string | null): boolean | null {
+  if (!repo) return null
+  try {
+    return git(repo, ['remote', 'get-url', 'origin']).trim() !== ''
+  } catch {
+    return false
+  }
+}
 const deliveredRecord = (runId: string) => recordOf(runId, 'run.delivered')
 
 export async function deliveryState(runId: string): Promise<Delivery> {
@@ -91,7 +102,9 @@ export async function deliveryState(runId: string): Promise<Delivery> {
   const done = await deliveredRecord(runId)
   const pushedRecord = (await recordOf(runId, 'run.pushed'))
   const place = await runPlace(runId)
+  const repo = await repoOf(found.run.projectId)
   return {
+    hasRemote: place.here ? hasOrigin(repo) : null,
     here: place.here,
     machine: place.machine,
     eligible: found.eligible,
@@ -101,7 +114,7 @@ export async function deliveryState(runId: string): Promise<Delivery> {
     commit: done?.commit ?? kept?.commit ?? null,
     files: done?.files ?? kept?.files ?? [],
     appliedTo: done?.appliedTo ?? null,
-    current: currentBranch((await repoOf(found.run.projectId))),
+    current: currentBranch(repo),
     returnTo: (await recordOf(runId, 'run.switched'))?.from ?? null,
     pushed: pushedRecord !== null && pushedRecord.branch === (kept?.branch ?? found.run.branch),
     pullRequestUrl: pushedRecord?.pullRequestUrl ?? null,

@@ -62,6 +62,25 @@ export function ResultSection({
     [onShipState],
   )
 
+  // Asked again after the person connects the project to GitHub; says so when it still is not.
+  const [rechecking, setRechecking] = useState(false)
+  const [stillNotConnected, setStillNotConnected] = useState(false)
+  async function recheckRemote() {
+    setRechecking(true)
+    try {
+      const res = await fetch(`/api/runs/${runId}/delivery`)
+      const next = res.ok ? ((await res.json()) as Delivery) : null
+      if (next) {
+        setDelivery(next)
+        setStillNotConnected(next.hasRemote === false)
+      }
+    } catch {
+      setStillNotConnected(true)
+    } finally {
+      setRechecking(false)
+    }
+  }
+
   useEffect(() => {
     let live = true
     fetch(`/api/runs/${runId}/delivery`)
@@ -142,6 +161,8 @@ export function ResultSection({
   const kept = delivery.kept && delivery.branch !== null
   const checksOk = ship?.pr?.state === 'open' && ship.checksDone && !ship.checksFailed && !ship.pr.conflicts
   // One place on one path: Approved → Save → Check → Publish. Each moment shows one main button, its next step.
+  // Saved, but the project has no GitHub repository to send it to: said up front, with how to connect it.
+  const notConnected = kept && !shipped && !away && delivery.hasRemote === false
   const step: Step = merged ? 4 : checksOk ? 3 : kept ? 2 : 1
   const d = strings.delivery
   const headline = merged
@@ -157,11 +178,13 @@ export function ResultSection({
           ? d.nowProblem
           : d.nowChecking
         : kept
-          ? d.nowSend
+          ? notConnected
+            ? d.nowConnect
+            : d.nowSend
           : d.nowSave
   const onBranch = kept && delivery.current === delivery.branch
   const canApply = !away && !shipped && !delivery.delivered && !onBranch
-  const canPushOnly = !away && kept && !shipped && !delivery.pushed
+  const canPushOnly = !away && kept && !shipped && !delivery.pushed && !notConnected
 
   return (
     <>
@@ -210,7 +233,25 @@ export function ResultSection({
         {kept && (
           <div data-testid="kept" style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
             {/* Sending, checking and publishing: GitHub's pull request, its checks and a merge the person confirms. */}
-            <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} canOpen={!away} onRecorded={onRecorded} />
+            {notConnected ? (
+              <div data-testid="not-connected" style={{ display: 'grid', gap: 8, padding: 12, borderRadius: 10, border: `1px solid ${theme.waiting}`, background: 'rgba(245, 158, 11, 0.07)', fontSize: 12.5, lineHeight: 1.45 }}>
+                <strong style={{ fontSize: 13.5, color: '#e6e9ef' }}>{d.notConnected.title}</strong>
+                <span style={{ color: '#c9d0db' }}>{d.notConnected.text}</span>
+                <span style={{ color: theme.dim }}>{d.notConnected.how}</span>
+                <code style={{ padding: '7px 9px', borderRadius: 6, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, color: '#d6dce6', overflowWrap: 'anywhere', userSelect: 'all' }}>{d.notConnected.command}</code>
+                <span style={{ color: theme.dim }}>{d.notConnected.what}</span>
+                <button type="button" disabled={rechecking} onClick={() => void recheckRemote()} style={primaryButton(rechecking ? 'push' : null)}>
+                  {rechecking ? <WorkingSpinner blockId="recheck" size={16} /> : null} {d.notConnected.again}
+                </button>
+                {stillNotConnected && !rechecking && (
+                  <span role="status" style={{ color: theme.waiting }}>
+                    {d.notConnected.still}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} canOpen={!away} onRecorded={onRecorded} />
+            )}
             {onBranch ? (
               <>
                 <div data-testid="on-branch" style={{ fontSize: 12.5, color: theme.passed, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
