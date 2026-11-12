@@ -340,6 +340,9 @@ describe('the verifier', () => {
     expect(prompt).toContain('src/a.ts')
     expect(prompt).toContain('12')
     expect(prompt).toContain('it divides by zero')
+    expect(prompt).toMatch(/at least 8 characters/)
+    expect(prompt).toMatch(/own line/)
+    expect(prompt).toMatch(/must not appear in the command/)
     expect(prompt).toContain('{"reproduced":true|false,"command":"…","marker":"…","files":["path"]}')
   })
 
@@ -354,12 +357,12 @@ describe('the verifier', () => {
 
   test('a reproduction is carried with the files read from the copy', async () => {
     const read = vi.fn(() => 'file body')
-    const { events } = await run(verify, answer({ reproduced: true, command: 'node r.js', marker: 'MARK-1', files: ['r.js'] }), read)
+    const { events } = await run(verify, answer({ reproduced: true, command: 'node r.js', marker: 'MARKER-XYZ-1', files: ['r.js'] }), read)
     expect(read).toHaveBeenCalledWith('/copy', 'r.js')
     expect(events.at(-1)).toMatchObject({
       type: 'done',
       source: 'provider',
-      repro: { command: 'node r.js', marker: 'MARK-1', files: [{ path: 'r.js', content: 'file body' }] },
+      repro: { command: 'node r.js', marker: 'MARKER-XYZ-1', files: [{ path: 'r.js', content: 'file body' }] },
     })
   })
 
@@ -377,13 +380,13 @@ describe('the verifier', () => {
   })
 
   test('a file it names that cannot be read from the copy makes the whole repro null', async () => {
-    const { events } = await run(verify, answer({ reproduced: true, command: 'c', marker: 'm', files: ['gone.js'] }), () => null)
+    const { events } = await run(verify, answer({ reproduced: true, command: 'c', marker: 'MARKER-XYZ-1', files: ['gone.js'] }), () => null)
     expect(events.at(-1)).toMatchObject({ type: 'done', repro: null })
   })
 
   test('an unsafe path makes the repro null and nothing is read', async () => {
     const read = vi.fn(() => 'x')
-    const { events } = await run(verify, answer({ reproduced: true, command: 'c', marker: 'm', files: ['../../etc/passwd'] }), read)
+    const { events } = await run(verify, answer({ reproduced: true, command: 'c', marker: 'MARKER-XYZ-1', files: ['../../etc/passwd'] }), read)
     expect(events.at(-1)).toMatchObject({ type: 'done', repro: null })
     expect(read).not.toHaveBeenCalled()
   })
@@ -403,7 +406,7 @@ describe('the verifier', () => {
       writeFileSync(join(copy, 'ok.js'), 'inside')
       writeFileSync(join(elsewhere, 'secret'), 'secret')
       symlinkSync(join(elsewhere, 'secret'), join(copy, 'link.js'))
-      const base = { reproduced: true, command: 'c', marker: 'm' }
+      const base = { reproduced: true, command: 'c', marker: 'MARKER-XYZ-1' }
       const good = await run({ ...verify, workdir: copy }, answer({ ...base, files: ['ok.js'] }), 'real')
       expect(good.events.at(-1)).toMatchObject({ repro: { files: [{ path: 'ok.js', content: 'inside' }] } })
       const bad = await run({ ...verify, workdir: copy }, answer({ ...base, files: ['link.js'] }), 'real')

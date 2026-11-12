@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   corrected,
   makeCopy,
@@ -10,6 +10,7 @@ import {
   MAX_REPRO_FILES,
   parseRepro,
   parseVerifierAnswer,
+  REPRO_GRACE_MS,
   REPRO_TAIL_CHARS,
   REPRO_TIMEOUT_MS,
   reproduced,
@@ -42,7 +43,7 @@ function repo(): string {
 const status = (dir: string) => execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: dir, encoding: 'utf8' })
 const hash = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex')
 const live = new AbortController().signal
-const script = (command: string, extra: Partial<Repro> = {}): Repro => ({ command, marker: 'MARK-1', files: [], ...extra })
+const script = (command: string, extra: Partial<Repro> = {}): Repro => ({ command, marker: 'MARKER-XYZ-1', files: [], ...extra })
 
 describe('safeReproPath', () => {
   test.each(['tests/repro.test.ts', 'a.js', 'a/b/c.txt', 'src/.github/x.yml'])('%s is allowed', p => expect(safeReproPath(p)).toBe(true))
@@ -70,10 +71,10 @@ describe('safeReproPath', () => {
 describe('parseRepro', () => {
   const answer = (o: object) => `I tried it.\n${JSON.stringify(o)}`
   const files = (p: string) => (p === 'r.test.ts' ? 'content' : null)
-  const ok = { reproduced: true, command: 'node r.js', marker: 'MARK-1', files: ['r.test.ts'] }
+  const ok = { reproduced: true, command: 'node r.js', marker: 'MARKER-XYZ-1', files: ['r.test.ts'] }
 
   test('reads the command, the marker and the files from the answer, taking contents from the copy', () => {
-    expect(parseRepro(answer(ok), files)).toEqual({ command: 'node r.js', marker: 'MARK-1', files: [{ path: 'r.test.ts', content: 'content' }] })
+    expect(parseRepro(answer(ok), files)).toEqual({ command: 'node r.js', marker: 'MARKER-XYZ-1', files: [{ path: 'r.test.ts', content: 'content' }] })
   })
   test('null when the answer says it did not reproduce, or has no answer', () => {
     expect(parseRepro(answer({ ...ok, reproduced: false }), files)).toBeNull()
@@ -94,6 +95,14 @@ describe('parseRepro', () => {
     expect(parseRepro(answer({ ...ok, command: '  ' }), files)).toBeNull()
     expect(parseRepro(answer({ ...ok, marker: '' }), files)).toBeNull()
     expect(parseRepro(answer({ ...ok, marker: 5 }), files)).toBeNull()
+  })
+
+  test('a marker that is short, has a line break, or appears in the command is refused', () => {
+    expect(parseRepro(answer({ ...ok, marker: 'MARK-1' }), files)).toBeNull()
+    expect(parseRepro(answer({ ...ok, marker: 'MARKER-XYZ-1\nmore' }), files)).toBeNull()
+    expect(parseRepro(answer({ ...ok, marker: 'MARKER-XYZ-1\rmore' }), files)).toBeNull()
+    expect(parseRepro(answer({ ...ok, command: 'echo MARKER-XYZ-1', marker: 'MARKER-XYZ-1' }), files)).toBeNull()
+    expect(parseRepro(answer({ ...ok, marker: '12345678' }), files)).not.toBeNull()
   })
   test('null when a file is over MAX_REPRO_BYTES, or all together are', () => {
     expect(parseRepro(answer(ok), () => 'x'.repeat(MAX_REPRO_BYTES + 1))).toBeNull()
@@ -131,28 +140,28 @@ describe('reproduced and corrected', () => {
 describe('runRepro', () => {
   test('a script that prints the marker and exits 1 reproduces the problem', async () => {
     const dir = repo()
-    const r = await runRepro(script('echo MARK-1; exit 1'), dir, live)
+    const r = await runRepro(script('echo MARKER-XYZ-1; exit 1'), dir, live, { root: tmp() })
     expect(r.exitCode).toBe(1)
     expect(r.markerSeen).toBe(true)
     expect(reproduced(r)).toBe(true)
-    expect(r.outputTail).toContain('MARK-1')
+    expect(r.outputTail).toContain('MARKER-XYZ-1')
     expect(Number.isNaN(Date.parse(r.at))).toBe(false)
   })
 
   test('failing without the marker (a syntax error) does not count', async () => {
-    const r = await runRepro(script('echo oops >&2; exit 2'), repo(), live)
+    const r = await runRepro(script('echo oops >&2; exit 2'), repo(), live, { root: tmp() })
     expect(r.exitCode).toBe(2)
     expect(reproduced(r)).toBe(false)
   })
 
   test('exiting 0 counts as corrected', async () => {
-    const r = await runRepro(script('exit 0'), repo(), live)
+    const r = await runRepro(script('exit 0'), repo(), live, { root: tmp() })
     expect(corrected(r)).toBe(true)
     expect(reproduced(r)).toBe(false)
   })
 
   test('the repro files are written in the copy and the command sees them', async () => {
-    const r = await runRepro(script('cat r/x.txt; exit 1', { marker: 'inside', files: [{ path: 'r/x.txt', content: 'inside' }] }), repo(), live)
+    const r = await runRepro(script('cat r/x.txt; exit 1', { marker: 'inside-marker', files: [{ path: 'r/x.txt', content: 'inside-marker' }] }), repo(), live, { root: tmp() })
     expect(reproduced(r)).toBe(true)
   })
 
@@ -161,7 +170,7 @@ describe('runRepro', () => {
     const root = tmp()
     const before = { status: status(dir), hash: hash(join(dir, 'a.txt')) }
     const r = await runRepro(
-      script('echo MARK-1; echo changed > a.txt; exit 1', { files: [{ path: 'new/r.js', content: 'x' }] }),
+      script('echo MARKER-XYZ-1; echo changed > a.txt; exit 1', { files: [{ path: 'new/r.js', content: 'x' }] }),
       dir,
       live,
       { root },
@@ -199,7 +208,7 @@ describe('runRepro', () => {
   test('a command that never ends is stopped at the timeout and does not count', async () => {
     const root = tmp()
     const started = Date.now()
-    const r = await runRepro(script('echo MARK-1; sleep 60'), repo(), live, { timeoutMs: 400, root })
+    const r = await runRepro(script('echo MARKER-XYZ-1; sleep 60'), repo(), live, { timeoutMs: 400, root })
     expect(Date.now() - started).toBeLessThan(10_000)
     expect(r.exitCode).toBeNull()
     expect(r.markerSeen).toBe(true)
@@ -223,7 +232,7 @@ describe('runRepro', () => {
   })
 
   test('a noisy script cannot bloat the record', async () => {
-    const r = await runRepro(script('yes noise | head -c 200000; echo; echo MARK-1; exit 1'), repo(), live)
+    const r = await runRepro(script('yes noise | head -c 200000; echo; echo MARKER-XYZ-1; exit 1'), repo(), live, { root: tmp() })
     expect(r.outputTail.length).toBeLessThanOrEqual(REPRO_TAIL_CHARS)
     expect(reproduced(r)).toBe(true)
   })
@@ -233,7 +242,7 @@ describe('runRepro', () => {
     const outside = tmp()
     symlinkSync(outside, join(dir, 'link'))
     const root = tmp()
-    const r = await runRepro(script('echo MARK-1; exit 1', { files: [{ path: 'link/evil.txt', content: 'x' }] }), dir, live, { root })
+    const r = await runRepro(script('echo MARKER-XYZ-1; exit 1', { files: [{ path: 'link/evil.txt', content: 'x' }] }), dir, live, { root })
     expect(existsSync(join(outside, 'evil.txt'))).toBe(false)
     expect(reproduced(r)).toBe(false)
     expect(r.exitCode).toBeNull()
@@ -254,7 +263,7 @@ describe('runRepro', () => {
   test('an unsafe path that got this far is refused without running, and the copy is removed', async () => {
     const root = tmp()
     mkdirSync(join(root, 'keep'))
-    const r = await runRepro(script('echo MARK-1 > ../ran; exit 1', { files: [{ path: '../x', content: 'x' }] }), repo(), live, { root })
+    const r = await runRepro(script('echo MARKER-XYZ-1 > ../ran; exit 1', { files: [{ path: '../x', content: 'x' }] }), repo(), live, { root })
     expect(r.exitCode).toBeNull()
     expect(reproduced(r)).toBe(false)
     expect(readdirSync(root)).toEqual(['keep'])
@@ -269,5 +278,119 @@ describe('runRepro', () => {
     expect(reproduced(r)).toBe(false)
     expect(r.exitCode).toBeNull()
     expect(readdirSync(root)).toEqual([])
+  })
+  test('a failure that only echoes the marker does not count', async () => {
+    const a = await runRepro(script('MARKER-XYZ-1', { marker: 'MARKER-XYZ-1' }), repo(), live, { root: tmp() })
+    expect(a.exitCode).not.toBe(0)
+    expect(a.outputTail).toContain('MARKER-XYZ-1')
+    expect(reproduced(a)).toBe(false)
+    const b = await runRepro(script(`node -e "console.log('MARKER-XYZ-1'"`, { marker: 'MARKER-XYZ-1' }), repo(), live, { root: tmp() })
+    expect(b.exitCode).not.toBe(0)
+    expect(reproduced(b)).toBe(false)
+  })
+
+  test('the marker counts when it is a line of its own', async () => {
+    const r = await runRepro(script('echo "  MARKER-XYZ-1  "; exit 1'), repo(), live, { root: tmp() })
+    expect(reproduced(r)).toBe(true)
+  })
+
+  test('an already aborted signal clones nothing and counts as not reproduced', async () => {
+    const root = tmp()
+    const ctl = new AbortController()
+    ctl.abort()
+    const r = await runRepro(script('echo MARKER-XYZ-1; exit 1'), repo(), ctl.signal, { root })
+    expect(r.exitCode).toBeNull()
+    expect(reproduced(r)).toBe(false)
+    expect(readdirSync(root)).toEqual([])
+  })
+
+  test('a copy that cannot be made counts as not reproduced', async () => {
+    const r = await runRepro(script('exit 1'), join(tmp(), 'does-not-exist'), live, { root: tmp() })
+    expect(r.exitCode).toBeNull()
+  })
+
+  const hasPython = (() => {
+    try {
+      execFileSync('python3', ['--version'], { stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
+  })()
+  test.skipIf(!hasPython)('a process that leaves the group cannot hold the run past the deadline', async () => {
+    const root = tmp()
+    const started = Date.now()
+    const r = await runRepro(
+      script(`python3 -c "import os,time; os.setsid(); time.sleep(8)" & sleep 60`),
+      repo(),
+      live,
+      { root, timeoutMs: 300, graceMs: 500 },
+    )
+    expect(Date.now() - started).toBeLessThan(300 + 500 + 2000)
+    expect(r.exitCode).toBeNull()
+    expect(reproduced(r)).toBe(false)
+    expect(readdirSync(root)).toEqual([])
+  })
+
+  test('the grace after the timeout defaults to two seconds', () => {
+    expect(REPRO_GRACE_MS).toBe(2000)
+  })
+})
+
+describe('a copy of a task worktree', () => {
+  function worktree() {
+    const main = repo()
+    const parent = tmp()
+    const wt = join(parent, 'wt')
+    execFileSync('git', ['worktree', 'add', '-q', '-b', 'task', wt], { cwd: main, stdio: 'ignore' })
+    return { main, wt }
+  }
+  const out = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' })
+  const snapshot = (main: string, wt: string) => ({
+    head: out(wt, 'rev-parse', 'HEAD'),
+    status: out(wt, 'status', '--porcelain'),
+    stash: out(wt, 'stash', 'list'),
+    list: out(main, 'worktree', 'list'),
+    mainHead: out(main, 'rev-parse', 'HEAD'),
+  })
+
+  test('is a standalone repository: its git data is inside it', async () => {
+    const { wt } = worktree()
+    expect(readFileSync(join(wt, '.git'), 'utf8')).toContain('gitdir:')
+    const root = tmp()
+    const copy = await makeCopy(wt, root)
+    try {
+      expect(statSync(join(copy, '.git')).isDirectory()).toBe(true)
+      const common = realpathSync(resolve(copy, out(copy, 'rev-parse', '--git-common-dir').trim()))
+      expect(common.startsWith(`${realpathSync(copy)}/`)).toBe(true)
+      expect(out(copy, 'status', '--porcelain')).toBe('')
+    } finally {
+      rmSync(copy, { recursive: true, force: true })
+    }
+  })
+
+  test('a repro that commits, stashes and resets in its copy leaves the real worktree and repository alone', async () => {
+    const { main, wt } = worktree()
+    const before = snapshot(main, wt)
+    const r = await runRepro(
+      script('echo x > new.txt && git add -A && git -c user.name=a -c user.email=a@a commit -qm x; echo y >> a.txt; git stash -q; git stash list; echo MARKER-XYZ-1; exit 1'),
+      wt,
+      live,
+      { root: tmp() },
+    )
+    expect(reproduced(r)).toBe(true)
+    expect(snapshot(main, wt)).toEqual(before)
+  })
+
+  test('a plain folder becomes a standalone repository too', async () => {
+    const plain = tmp()
+    writeFileSync(join(plain, 'f.txt'), 'x')
+    const copy = await makeCopy(plain, tmp())
+    try {
+      expect(statSync(join(copy, '.git')).isDirectory()).toBe(true)
+      expect(out(copy, 'status', '--porcelain')).toBe('')
+    } finally {
+      rmSync(copy, { recursive: true, force: true })
+    }
   })
 })

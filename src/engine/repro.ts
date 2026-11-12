@@ -1,8 +1,9 @@
+import { execFileSync } from 'node:child_process'
 import { lstatSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import { ulid } from 'ulid'
 import { cloneTree } from '@/engine/base'
-import { runTestCommand } from '@/engine/test-runner'
+import { runTestCommand, stripAnsi } from '@/engine/test-runner'
 
 export type Repro = { command: string; marker: string; files: { path: string; content: string }[] }
 export type ReproRun = { exitCode: number | null; markerSeen: boolean; outputTail: string; at: string }
@@ -14,6 +15,10 @@ export type ReproRun = { exitCode: number | null; markerSeen: boolean; outputTai
 export const MAX_REPRO_FILES = 5
 export const MAX_REPRO_BYTES = 64 * 1024
 export const REPRO_TIMEOUT_MS = 120_000
+/** How long after the timeout the run may still hold things up before it is given up on. */
+export const REPRO_GRACE_MS = 2_000
+/** A marker shorter than this is too easy to meet by accident. */
+export const MIN_MARKER_CHARS = 8
 /** What is kept of a script's output. A noisy script must not bloat the database. */
 export const REPRO_TAIL_CHARS = 2000
 
@@ -69,7 +74,10 @@ export function parseRepro(text: string, readFile: (path: string) => string | nu
   for (const o of objectsWith(text, 'reproduced')) {
     if (o.reproduced !== true) return null
     const { command, marker, files: named } = o
-    if (typeof command !== 'string' || command.trim() === '' || typeof marker !== 'string' || marker === '') return null
+    if (typeof command !== 'string' || command.trim() === '' || typeof marker !== 'string') return null
+    // The marker proves the script itself reached the failing point: a line only it prints, which no error message
+    // that merely quotes the command can contain.
+    if (marker.length < MIN_MARKER_CHARS || /[\r\n]/.test(marker) || command.includes(marker)) return null
     if (!Array.isArray(named) || named.length > MAX_REPRO_FILES) return null
     if (!named.every((p): p is string => typeof p === 'string' && safeReproPath(p))) return null
     const files: Repro['files'] = []
@@ -86,12 +94,28 @@ export function parseRepro(text: string, readFile: (path: string) => string | nu
   return null
 }
 
-/** A fresh throwaway copy of the working copy, in `root`. The caller removes it. */
+/** The environment for git inside a copy: nothing inherited may point it back at the real task, and it never looks above the copy. */
+function copyGitEnv(root: string): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_NAMESPACE']) delete env[k]
+  return { ...env, GIT_CEILING_DIRECTORIES: root }
+}
+
+/**
+ * A fresh throwaway copy of the working copy, in `root`. The caller removes it. A task's working copy is a git
+ * worktree whose `.git` file leads to the real repository's data, so the copy's `.git` is replaced by a repository of
+ * its own: nothing a repro runs with git can reach the real task. If that cannot be done no copy is handed out.
+ */
 export async function makeCopy(workdir: string, root: string = VERIFY_ROOT): Promise<string> {
   const copy = join(root, ulid())
   mkdirSync(root, { recursive: true })
   try {
     cloneTree(workdir, copy)
+    rmSync(join(copy, '.git'), { recursive: true, force: true })
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: copy, env: copyGitEnv(root), stdio: 'ignore', timeout: 120_000 })
+    git('init', '-q')
+    git('add', '-A')
+    git('-c', 'user.name=factory', '-c', 'user.email=factory@local', 'commit', '-qm', 'base', '--no-verify', '--allow-empty')
   } catch (e) {
     rmSync(copy, { recursive: true, force: true })
     throw e
@@ -129,7 +153,7 @@ function writeInside(copy: string, path: string, content: string): boolean {
   return true
 }
 
-export type RunOptions = { timeoutMs?: number; root?: string }
+export type RunOptions = { timeoutMs?: number; graceMs?: number; root?: string }
 
 /**
  * Runs the repro in its own copy of `workdir` and removes the copy. `workdir` is never written to. When a file
@@ -137,23 +161,52 @@ export type RunOptions = { timeoutMs?: number; root?: string }
  */
 export async function runRepro(repro: Repro, workdir: string, signal: AbortSignal, options: RunOptions = {}): Promise<ReproRun> {
   const at = new Date().toISOString()
-  const copy = await makeCopy(workdir, options.root)
+  const notRun: ReproRun = { exitCode: null, markerSeen: false, outputTail: '', at }
+  if (signal.aborted) return notRun
+  const root = options.root ?? VERIFY_ROOT
+  const timeoutMs = options.timeoutMs ?? REPRO_TIMEOUT_MS
+  const graceMs = options.graceMs ?? REPRO_GRACE_MS
+  let copy: string | null = null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
   try {
+    copy = await makeCopy(workdir, options.root)
     for (const f of repro.files) {
-      if (!writeInside(copy, f.path, f.content)) return { exitCode: null, markerSeen: false, outputTail: '', at }
+      if (!writeInside(copy, f.path, f.content)) return notRun
     }
-    const stopAt = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? REPRO_TIMEOUT_MS)])
-    const run = await runTestCommand(repro.command, copy, stopAt)
+    const giveUp = new AbortController()
+    const stopAt = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs), giveUp.signal])
+    const running = runTestCommand(repro.command, copy, stopAt, { GIT_CEILING_DIRECTORIES: root })
+    // runTestCommand answers when every holder of the output pipes lets go, and a process that left its group can
+    // hold them for as long as it likes. The deadline does not wait for it.
+    const deadline = new Promise<null>(resolve => {
+      const expire = () => {
+        giveUp.abort()
+        resolve(null)
+      }
+      timer = setTimeout(expire, timeoutMs + graceMs)
+      onAbort = () => {
+        clearTimeout(timer)
+        timer = setTimeout(expire, graceMs)
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    const run = await Promise.race([running, deadline])
+    if (!run) return notRun
+    const lines = stripAnsi(run.outputTail).split(/\r?\n/)
     return {
       exitCode: run.exitCode,
-      markerSeen: repro.marker !== '' && run.outputTail.includes(repro.marker),
+      // Only a line that is the marker and nothing else: an error message that quotes the command does not count.
+      markerSeen: repro.marker !== '' && lines.some(l => l.trim() === repro.marker),
       outputTail: run.outputTail.slice(-REPRO_TAIL_CHARS),
       at,
     }
   } catch {
-    return { exitCode: null, markerSeen: false, outputTail: '', at }
+    return notRun
   } finally {
-    rmSync(copy, { recursive: true, force: true })
+    clearTimeout(timer)
+    if (onAbort) signal.removeEventListener('abort', onAbort)
+    if (copy) rmSync(copy, { recursive: true, force: true })
   }
 }
 

@@ -76,12 +76,12 @@ export function parseCounts(raw: string): TestCounts | null {
 }
 
 /** Runs the project's configured test command. That string is the allow-list: nothing else is ever run here. */
-export function runTestCommand(command: string, cwd: string, signal: AbortSignal): Promise<TestRun> {
+export function runTestCommand(command: string, cwd: string, signal: AbortSignal, env: Record<string, string> = {}): Promise<TestRun> {
   const started = Date.now()
   return new Promise(resolve => {
     let output = ''
     // Its own process group, so stopping it also stops whatever the command started (a test runner's workers).
-    const child = spawn('sh', ['-c', command], { cwd, detached: true, env: projectEnv({ CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }) })
+    const child = spawn('sh', ['-c', command], { cwd, detached: true, env: projectEnv({ CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', ...env }) })
     const keep = (chunk: Buffer) => {
       output = (output + chunk.toString()).slice(-TAIL_CHARS * 4)
     }
