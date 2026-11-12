@@ -58,5 +58,11 @@ test('the Ship details show the page before and after, on a computer or on a pho
     fireEvent.click(await screen.findByRole('tab', { name: where }))
     for (const side of [strings.snapshots.before, strings.snapshots.after]) expect(screen.getByRole('img', { name: `${side} · ${where}` })).toBeInTheDocument()
   }
+  // A click on a picture opens it large, over everything; closing it leaves the window open.
+  fireEvent.click(screen.getByRole('button', { name: strings.details.enlarge(`${strings.snapshots.after} · ${strings.snapshots.mobile}`) }))
+  expect(screen.getByTestId('large-picture')).toBeInTheDocument()
+  fireEvent.keyDown(window, { key: 'Escape' })
+  expect(screen.queryByTestId('large-picture')).toBeNull()
+  expect(screen.getByTestId('block-details')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: new RegExp(strings.details.seeOnGithub(1).replace(/[()#]/g, '.')) })).toHaveAttribute('href', 'https://github.com/me/p/pull/1')
 })

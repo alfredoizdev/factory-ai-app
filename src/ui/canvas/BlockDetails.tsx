@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { BlockCommand, BlockDetails } from '@/engine/block-details'
 import type { Shot } from '@/engine/snapshots'
 import type { BlockKind } from '@/domain/graph'
@@ -99,6 +100,7 @@ const ICON = {
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   cross: <path d="M6 6l12 12M18 6L6 18" />,
   chevron: <path d="M9 6l6 6-6 6" />,
+  enlarge: <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />,
 }
 
 function Fact({ icon, label, value, help }: { icon: ReactNode; label: string; value: ReactNode; help?: string }) {
@@ -164,6 +166,7 @@ function Command({ c }: { c: BlockCommand }) {
 function Pictures({ runId }: { runId: string }) {
   const { state } = useSnapshots(runId, false)
   const [screen, setScreen] = useState<'desktop' | 'mobile'>('desktop')
+  const [large, setLarge] = useState<Shot | null>(null)
   if (!state) return null
   if (state.status === 'working') {
     return (
@@ -201,11 +204,15 @@ function Pictures({ runId }: { runId: string }) {
             <figure key={side} style={{ margin: 0, display: 'grid', gap: 6 }}>
               <figcaption style={{ justifySelf: 'start', fontSize: 13, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? theme.dim : theme.passed }}>{strings.snapshots[side]}</figcaption>
               {state.shots.includes(shot) ? (
-                // The frame is the same size on either tab, so the window does not jump: a picture fits inside it.
-                <a href={src(shot)} target="_blank" rel="noreferrer" aria-label={label} style={{ height: PICTURE_HEIGHT, boxSizing: 'border-box', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflow: 'hidden', borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, padding: 8 }}>
+                // The frame is the same size on either tab, so the window does not jump: a picture fits inside it,
+                // and a click opens it large.
+                <button type="button" aria-label={d.enlarge(label)} title={d.enlargeHint} onClick={() => setLarge(shot)} style={{ position: 'relative', height: PICTURE_HEIGHT, boxSizing: 'border-box', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflow: 'hidden', borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, padding: 8, cursor: 'zoom-in' }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={src(shot)} alt={label} style={{ display: 'block', maxWidth: '100%', maxHeight: '100%', borderRadius: 6, border: `1px solid ${side === 'before' ? theme.border : theme.tint('passed', 0.5)}` }} />
-                </a>
+                  <span style={{ position: 'absolute', right: 10, bottom: 10, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 999, background: 'rgba(11, 14, 20, 0.88)', border: `1px solid ${theme.border}`, color: '#e6e9ef', fontSize: 12.5, fontWeight: 700 }}>
+                    <Icon path={ICON.enlarge} size={14} /> {d.enlargeHint}
+                  </span>
+                </button>
               ) : (
                 <div style={{ height: PICTURE_HEIGHT, display: 'grid', placeItems: 'center', padding: 16, textAlign: 'center', borderRadius: 8, border: `1px dashed ${theme.border}`, color: theme.dim, fontSize: 13.5, lineHeight: 1.45 }}>
                   {side === 'before' ? d.noBefore : d.noAfter}
@@ -215,7 +222,49 @@ function Pictures({ runId }: { runId: string }) {
           )
         })}
       </div>
+      {large && <LargePicture src={src(large)} label={`${strings.snapshots[large.startsWith('before') ? 'before' : 'after']} · ${strings.snapshots[large.endsWith('mobile') ? 'mobile' : 'desktop']}`} onClose={() => setLarge(null)} />}
     </div>
+  )
+}
+
+/** One picture over the whole screen, at its real size or as large as fits: scrolls when the page is long. */
+function LargePicture({ src, label, onClose }: { src: string; label: string; onClose: () => void }) {
+  useEffect(() => {
+    // Escape closes the picture only, not the window under it.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopImmediatePropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={label}
+      data-testid="large-picture"
+      onClick={e => {
+        e.stopPropagation()
+        onClose()
+      }}
+      style={{ position: 'fixed', inset: 0, zIndex: 120, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: 'rgba(5, 7, 11, 0.94)', cursor: 'zoom-out' }}
+    >
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', color: '#e6e9ef' }}>
+        <strong className="factory-display" style={{ fontSize: 17 }}>
+          {label}
+        </strong>
+        <button type="button" onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: '#e6e9ef', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
+          <Icon path={ICON.cross} size={14} /> {d.close}
+        </button>
+      </header>
+      <div style={{ overflow: 'auto', display: 'grid', justifyItems: 'center', alignItems: 'start', padding: '0 20px 24px', ...thin }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt={label} onClick={e => e.stopPropagation()} style={{ display: 'block', maxWidth: '100%', borderRadius: 8, border: `1px solid ${theme.border}`, cursor: 'default' }} />
+      </div>
+    </div>,
+    document.body,
   )
 }
 
