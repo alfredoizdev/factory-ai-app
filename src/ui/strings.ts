@@ -706,6 +706,7 @@ export const strings = {
     demoBadge: 'Demo',
     demoTitle: 'Simulated run. No real agent did this work.',
     run: 'Run',
+    send: 'Start this task',
     cancel: 'Cancel',
     requestLabel: 'What should the agents do?',
     requestPlaceholder: 'Describe the change you want',

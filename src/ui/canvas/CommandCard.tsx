@@ -78,7 +78,6 @@ export const CommandCard = forwardRef<
       onSubmit={mode === 'idle' && canRun ? onRun : undefined}
     />
   )
-  const composer = withSend()
   return (
     <section
       ref={ref}
@@ -149,23 +148,8 @@ export const CommandCard = forwardRef<
               />
             </label>
           )}
-          {composer}
-          <button
-            type="button"
-            disabled={!canRun}
-            onClick={onRun}
-            style={{
-              padding: '9px 12px',
-              borderRadius: 8,
-              border: `1px solid ${canRun ? theme.running : theme.border}`,
-              background: canRun ? theme.running : 'transparent',
-              color: canRun ? '#fff' : theme.skipped,
-              fontWeight: 700,
-              cursor: canRun ? 'pointer' : 'not-allowed',
-            }}
-          >
-            ▶ {strings.run.run} <span style={{ fontWeight: 400, opacity: 0.8, fontSize: 12 }}>↵</span>
-          </button>
+          {/* Sent like every other message in this card: the arrow inside the box, or Enter. */}
+          {withSend({ label: strings.run.send, onSend: onRun, enabled: canRun })}
         </>
       )}
       {!loading && mode === 'working' && (
