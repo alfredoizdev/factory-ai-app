@@ -6,6 +6,7 @@ import { appendEventSync } from '@/engine/events'
 import { bySeverity, mergeDuplicates, recordFindings, setFinding, type FindingRow, type FindingState } from '@/engine/findings'
 import {
   MAX_ATTEMPTS,
+  canRetry,
   describeFailure,
   freshNode,
   openProviderNode,
@@ -135,7 +136,7 @@ async function readFor(ctx: Context, nodeId: string, focus: Focus): Promise<Read
       })
     }
     const failure = describeFailure(result, block)
-    if (attempt < MAX_ATTEMPTS && result.kind !== 'timeout') {
+    if (canRetry(attempt, result)) {
       await say(strings.run.retrying, attempt + 1, { retry: true, previousCause: failure.cause, previousMessage: failure.message, ...(failure.detail ? { previousDetail: failure.detail } : {}) })
       continue
     }

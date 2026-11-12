@@ -568,7 +568,7 @@ describe('the reviewer', () => {
     expect(seen.filter(s => s.kind === 'build')).toHaveLength(3)
     expect(seen.filter(s => s.kind === 'review')).toHaveLength(9) // three readers in each of the three rounds
     const approve = await payloadOf(runId, 'node.completed', 'approve')
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 3, fixed: 2, discarded: 0, needsYou: 1 }))
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 0, needsYou: 1 }))
     expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
 })

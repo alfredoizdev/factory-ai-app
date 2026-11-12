@@ -22,11 +22,18 @@ beforeAll(() => migrateDb())
 const now = () => new Date().toISOString()
 
 class Parked extends Error {}
-function recordingStep(ids: string[] = []): StepApi {
+// Like Inngest: a step that finished is not run again, its stored result is handed back. Every id asked for is kept.
+function recordingStep(): StepApi & { ids: string[] } {
+  const ids: string[] = []
+  const done = new Map<string, unknown>()
   return {
+    ids,
     run: async (id, fn) => {
       ids.push(id)
-      return JSON.parse(JSON.stringify((await fn()) ?? null))
+      if (done.has(id)) return JSON.parse(JSON.stringify(done.get(id)))
+      const result = JSON.parse(JSON.stringify((await fn()) ?? null))
+      done.set(id, result)
+      return result
     },
     waitForEvent: async () => {
       throw new Parked()
@@ -94,9 +101,9 @@ const says = (...findings: Finding[]): AgentEvent[] => [
   { type: 'done', summary: 's', source: 'provider', review: findings.length ? { verdict: 'changes', findings } : { verdict: 'ok', findings: [] } },
 ]
 
-async function drive(runId: string, provider: AgentProvider, dir: string, base: string, ids?: string[]) {
+async function drive(runId: string, provider: AgentProvider, dir: string, base: string, step: StepApi = recordingStep()) {
   try {
-    await orchestrateRun(runId, recordingStep(ids), { resolveProvider: () => provider, createWorktree: () => ({ path: dir, branch: 'b', baseCommit: base }) })
+    await orchestrateRun(runId, step, { resolveProvider: () => provider, createWorktree: () => ({ path: dir, branch: 'b', baseCommit: base }) })
   } catch (e) {
     if (!(e instanceof Parked)) throw e
   }
@@ -110,8 +117,9 @@ describe('how many reviewers read the change', () => {
     const runId = await newRun()
     const { dir, base } = workdir(false) // not a repository: it cannot be measured, so it counts as high
     const { provider, asked } = reviewers(() => says())
-    const ids: string[] = []
-    await drive(runId, provider, dir, base, ids)
+    const step = recordingStep()
+    await drive(runId, provider, dir, base, step)
+    const ids = step.ids
     expect(asked).toEqual(['logic', 'security', 'effects'])
     for (const f of ['logic', 'security', 'effects']) expect(ids).toContain(`review-review-${f}`)
     const steps = (await payloads(runId, 'node.step', 'review')).map(p => p.text)
@@ -124,8 +132,9 @@ describe('how many reviewers read the change', () => {
     const runId = await newRun()
     const { dir, base } = workdir(true)
     const { provider, asked } = reviewers(() => says())
-    const ids: string[] = []
-    await drive(runId, provider, dir, base, ids)
+    const step = recordingStep()
+    await drive(runId, provider, dir, base, step)
+    const ids = step.ids
     expect(asked).toEqual(['logic'])
     expect(ids).not.toContain('review-review-security')
     const steps = (await payloads(runId, 'node.step', 'review')).map(p => p.text)
@@ -193,14 +202,38 @@ describe('Approve sums up the findings', () => {
     const { provider } = reviewers(focus => (focus === 'logic' ? says(finding({ problem: "still wrong" })) : says()))
     await drive(runId, provider, dir, base)
     const rows = await findingsOf(runId)
-    expect(rows.map(r => r.state)).toEqual(['fixed_unchecked', 'fixed_unchecked', 'open'])
+    expect(rows.map(r => r.state)).toEqual(['fixed_unchecked', 'fixed_unchecked', 'open']) // three rows are stored; the summary counts the problem once
     const approve = await payloads(runId, 'node.completed', 'approve')
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 3, fixed: 2, discarded: 0, needsYou: 1 }))
+    expect(approve.at(-1)!.summary).toBe('1 problem found. 1 needs you.') // one problem, reported in three rounds
   })
 
   test('the sentence reads plainly and leaves out what is zero', () => {
     expect(strings.review.approve.summary({ found: 3, fixed: 2, discarded: 0, needsYou: 1 })).toBe('3 problems found. 2 fixed, 1 needs you.')
     expect(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 1, needsYou: 0 })).toBe('1 problem found. 1 discarded.')
+  })
+})
+
+describe('a round is recorded once', () => {
+  test('across two rounds no step id is used twice, and each round records its findings once', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const { provider } = reviewers((focus, round) => (round === 1 && focus === 'logic' ? says(finding()) : says()))
+    const step = recordingStep()
+    await drive(runId, provider, dir, base, step)
+    expect(new Set(step.ids).size).toBe(step.ids.length)
+    const checked = (await eventsSince(runId, 0)).filter(e => e.type === 'node.findings_checked').map(e => (e.payload as { round: number }).round)
+    expect(checked).toEqual([1, 2])
+  })
+
+  test('running the same run again with the same finished steps adds no events and no findings', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const { provider } = reviewers((focus, round) => (round === 1 && focus === 'logic' ? says(finding()) : says()))
+    const step = recordingStep()
+    await drive(runId, provider, dir, base, step)
+    const before = { events: (await eventsSince(runId, 0)).length, findings: (await findingsOf(runId)).length }
+    await drive(runId, provider, dir, base, step)
+    expect({ events: (await eventsSince(runId, 0)).length, findings: (await findingsOf(runId)).length }).toEqual(before)
   })
 })
 

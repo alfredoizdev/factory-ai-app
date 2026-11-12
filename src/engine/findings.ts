@@ -200,6 +200,21 @@ export async function recordFindings(runId: string, nodeRunId: string, round: nu
   })
 }
 
+const placed = (r: Finding) => r.file !== undefined && r.line !== undefined
+
+/** One row per problem, however many rounds reported it: the one from the latest round (the last recorded on a tie), in order of first appearance. */
+export function distinctProblems(rows: FindingRow[]): FindingRow[] {
+  const same = (a: FindingRow, b: FindingRow) =>
+    a.type === b.type && (placed(a) && placed(b) ? a.file === b.file && Math.abs(a.line! - b.line!) <= DUPLICATE_WINDOW : a.problem === b.problem)
+  const groups: FindingRow[][] = []
+  for (const r of rows) {
+    const group = groups.find(g => g.some(m => same(m, r)))
+    if (group) group.push(r)
+    else groups.push([r])
+  }
+  return groups.map(g => g.reduce((latest, r) => (r.round >= latest.round ? r : latest)))
+}
+
 export async function setFinding(id: string, change: Partial<Pick<FindingRow, 'state' | 'reason' | 'repro' | 'evidence' | 'entryNumber'>>): Promise<void> {
   const set: Partial<typeof findings.$inferInsert> = { updatedAt: new Date().toISOString() }
   if (change.state !== undefined) set.state = change.state

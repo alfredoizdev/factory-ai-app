@@ -7,9 +7,10 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { events, nodeRuns, projects, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { bySeverity, citeCheck, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, DUPLICATE_WINDOW } from '@/engine/findings'
+import { bySeverity, citeCheck, distinctProblems, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, DUPLICATE_WINDOW } from '@/engine/findings'
 import type { Finding } from '@/engine/review'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
+import type { FindingRow } from '@/engine/findings'
 import { strings } from '@/ui/strings'
 
 beforeAll(() => migrateDb())
@@ -153,5 +154,37 @@ describe('recordFindings', () => {
     expect(rows).toHaveLength(10)
     expect(rows.every(r => r.state === 'reported')).toBe(true)
     expect((await findingsOf(runId)).map(r => r.id)).toEqual(rows.map(r => r.id))
+  })
+})
+
+describe('distinctProblems', () => {
+  let n = 0
+  const row = (over: Partial<FindingRow>): FindingRow => ({
+    ...f(), id: `r${n++}`, runId: 'r', projectId: 'p', round: 1, reporters: ['logic'], count: 1, state: 'reported', reason: null, repro: null, evidence: null, entryNumber: null, ...over,
+  })
+
+  test('the same problem re-reported in a later round is one, and the latest round is the one kept', () => {
+    const rows = [row({ file: 'a.ts', line: 3, round: 1, state: 'fixed_unchecked' }), row({ file: 'a.ts', line: 4, round: 2, state: 'fixed_unchecked' }), row({ file: 'a.ts', line: 3, round: 3, state: 'open' })]
+    const out = distinctProblems(rows)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toBe(rows[2])
+  })
+
+  test('a different line far away, another file or another type is another problem', () => {
+    const rows = [row({ file: 'a.ts', line: 3 }), row({ file: 'a.ts', line: 3 + DUPLICATE_WINDOW + 1 }), row({ file: 'b.ts', line: 3 }), row({ file: 'a.ts', line: 3, type: 'security' })]
+    expect(distinctProblems(rows)).toHaveLength(4)
+  })
+
+  test('rows without a place match on the same type and the same text', () => {
+    const rows = [row({ problem: 'x', round: 1 }), row({ problem: 'x', round: 2 }), row({ problem: 'y', round: 2 }), row({ problem: 'z', file: 'a.ts', line: 1, round: 2 })]
+    const out = distinctProblems(rows)
+    expect(out.map(r => [r.problem, r.round, r.file ?? null])).toEqual([['x', 2, null], ['y', 2, null], ['z', 2, 'a.ts']])
+  })
+
+  test('in the same round the last recorded wins, and order of first appearance is kept', () => {
+    const rows = [row({ file: 'a.ts', line: 1 }), row({ file: 'c.ts', line: 1 }), row({ file: 'a.ts', line: 2 })]
+    const out = distinctProblems(rows)
+    expect(out).toHaveLength(2)
+    expect(out.map(r => r.id)).toEqual([rows[2]!.id, rows[1]!.id])
   })
 })

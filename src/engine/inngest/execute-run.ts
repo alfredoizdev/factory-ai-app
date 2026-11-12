@@ -1,6 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { defaultReviewerModel, reviewRevisionNote, type Focus, type Review } from '@/engine/review'
-import { findingsOf } from '@/engine/findings'
+import { distinctProblems, findingsOf } from '@/engine/findings'
 import { runReviewStage, settleFindings } from '@/engine/inngest/review-stage'
 import { giveStanding, type Standing } from '@/engine/register'
 import { markWaiting } from '@/engine/relay'
@@ -383,6 +383,11 @@ export async function recordDoneFacts(tx: DbHandle, node: NodeRow, done: Done): 
 
 type Unfinished = Exclude<AttemptResult, { kind: 'done' } | { kind: 'cancelled' }>
 
+/** Whether another attempt is worth making: not after a timeout, and not after failing tests (the same suite on the same code proves nothing new). */
+export function canRetry(attempt: number, result: Unfinished): boolean {
+  return attempt < MAX_ATTEMPTS && result.kind !== 'timeout' && !(result.kind === 'error' && result.noRetry)
+}
+
 /** Why an attempt did not finish, in the app's words; the exception's own text is kept, redacted. */
 export function describeFailure(result: Unfinished, block: PlannedBlock): { cause: string; message: string; detail?: string } {
   const cause =
@@ -430,7 +435,7 @@ export async function openProviderNode(runId: string, block: PlannedBlock, lines
   })
 }
 
-export async function runProviderNode(
+async function runProviderNode(
   runId: string,
   plan: Plan,
   block: PlannedBlock,
@@ -528,8 +533,7 @@ export async function runProviderNode(
     // used the whole timeout would double the wait before a person sees anything, and the cause is recorded
     // ('timeout') so they can retry on purpose.
     // Failing tests are not retried either: running the same suite again on the same code proves nothing new.
-    const canRetry = attempt < MAX_ATTEMPTS && result.kind !== 'timeout' && !(result.kind === 'error' && result.noRetry)
-    if (canRetry) {
+    if (canRetry(attempt, result)) {
       // The node stays running: failed is terminal in the state machine, so only the final failure is recorded as one.
       await withTx(runId, async tx => {
         const node = (await freshNode(opened.id, tx))
@@ -640,7 +644,7 @@ export async function testFactsOf(runId: string): Promise<TestFacts> {
     testsPassed: runsOfTests.length > 0 && runsOfTests.every(t => t.exitCode === 0 && !t.signal),
     // Unknown (null) counts as changed: what could not be checked is not assumed untouched.
     testsChanged: runsOfTests.some(t => t.changedTestFiles === null || (t.changedTestFiles?.length ?? 0) > 0),
-    reviewOpen: (await findingsOf(runId)).some(f => f.state === 'open'),
+    reviewOpen: distinctProblems(await findingsOf(runId)).some(f => f.state === 'open'),
   }
 }
 
@@ -684,7 +688,8 @@ async function anyReviewRan(runId: string): Promise<boolean> {
 // Approve, for the real agent: a plain summary, from the record, of what the reviewers found and what became of it.
 // It always passes: the final yes is the person's, at the human check.
 async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome> {
-  const rows = await findingsOf(runId)
+  // One problem is one, however many rounds a reviewer reported it in.
+  const rows = distinctProblems(await findingsOf(runId))
   const count = (...states: string[]) => rows.filter(f => states.includes(f.state)).length
   const summary = !(await anyReviewRan(runId))
     ? strings.review.approve.none
