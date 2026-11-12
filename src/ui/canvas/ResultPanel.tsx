@@ -62,31 +62,19 @@ export function ResultSection({
     [onShipState],
   )
 
-  // Asked again after the person connects the project to GitHub; says so when it still is not.
-  const [rechecking, setRechecking] = useState(false)
-  const [stillNotConnected, setStillNotConnected] = useState(false)
+  // Read again once the project is connected, so the notice gives way to sending.
   async function recheckRemote() {
-    setRechecking(true)
-    try {
-      const res = await fetch(`/api/runs/${runId}/delivery`)
-      const next = res.ok ? ((await res.json()) as Delivery) : null
-      if (next) {
-        setDelivery(next)
-        setStillNotConnected(next.hasRemote === false)
-      }
-    } catch {
-      setStillNotConnected(true)
-    } finally {
-      setRechecking(false)
-    }
+    const res = await fetch(`/api/runs/${runId}/delivery`)
+    if (res.ok) setDelivery((await res.json()) as Delivery)
   }
 
   // Connecting from the app: a new private repository, or one the person already has, by its link.
-  const [connecting, setConnecting] = useState<'create' | 'url' | null>(null)
+  const [connecting, setConnecting] = useState<'private' | 'public' | 'url' | null>(null)
   const [connectError, setConnectError] = useState<string | null>(null)
   const [link, setLink] = useState('')
-  async function connect(how: { create: true } | { url: string }) {
-    setConnecting('create' in how ? 'create' : 'url')
+  const [haveOne, setHaveOne] = useState(false)
+  async function connect(how: { create: 'private' | 'public' } | { url: string }) {
+    setConnecting('create' in how ? how.create : 'url')
     setConnectError(null)
     try {
       const res = await fetch(`/api/runs/${runId}/connect-github`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(how) })
@@ -253,30 +241,45 @@ export function ResultSection({
           <div data-testid="kept" style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
             {/* Sending, checking and publishing: GitHub's pull request, its checks and a merge the person confirms. */}
             {notConnected ? (
-              <div data-testid="not-connected" style={{ display: 'grid', gap: 8, padding: 12, borderRadius: 10, border: `1px solid ${theme.waiting}`, background: 'rgba(245, 158, 11, 0.07)', fontSize: 12.5, lineHeight: 1.45 }}>
-                <strong style={{ fontSize: 13.5, color: '#e6e9ef' }}>{d.notConnected.title}</strong>
+              <div data-testid="not-connected" style={{ display: 'grid', gap: 10, padding: 14, borderRadius: 10, border: `1px solid ${theme.waiting}`, background: 'rgba(245, 158, 11, 0.07)', fontSize: 13, lineHeight: 1.45 }}>
+                <strong style={{ fontSize: 15, color: '#e6e9ef' }}>{d.notConnected.title}</strong>
                 <span style={{ color: '#c9d0db' }}>{d.notConnected.text}</span>
-                <button type="button" disabled={connecting !== null} onClick={() => void connect({ create: true })} style={primaryButton(connecting)}>
-                  {connecting === 'create' ? <WorkingSpinner blockId="connect" size={16} /> : null} {d.connect.create}
-                </button>
-                <span style={{ color: theme.dim }}>{d.connect.createHelp}</span>
-                <label htmlFor="github-link" style={{ marginTop: 6, color: '#e6e9ef', fontWeight: 600 }}>
-                  {d.connect.or}
-                </label>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input
-                    id="github-link"
-                    value={link}
-                    onChange={e => setLink(e.target.value)}
-                    placeholder={d.connect.placeholder}
-                    spellCheck={false}
-                    style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0b0e14', color: '#e6e9ef', fontSize: 12.5 }}
-                  />
-                  <button type="button" disabled={connecting !== null || link.trim() === ''} onClick={() => void connect({ url: link })} style={{ ...secondaryButton(connecting), flex: 'none', opacity: link.trim() === '' ? 0.5 : 1 }}>
-                    {connecting === 'url' ? <WorkingSpinner blockId="connect-url" size={16} /> : null} {d.connect.use}
-                  </button>
+                <span style={{ marginTop: 2, color: '#e6e9ef', fontWeight: 600 }}>{d.connect.heading}</span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {(['private', 'public'] as const).map(kind => (
+                    <button key={kind} type="button" aria-label={d.connect[kind]} disabled={connecting !== null} onClick={() => void connect({ create: kind })} style={repoChoice(connecting !== null)}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 700, color: '#e6e9ef' }}>
+                        {connecting === kind ? <WorkingSpinner blockId={`connect-${kind}`} size={15} /> : <RepoIcon kind={kind} />} {d.connect[kind]}
+                      </span>
+                      <span style={{ fontSize: 12.5, color: theme.dim }}>{d.connect[`${kind}Help`]}</span>
+                    </button>
+                  ))}
                 </div>
-                <span style={{ color: theme.dim }}>{d.connect.useHelp}</span>
+                {!haveOne ? (
+                  <button type="button" onClick={() => setHaveOne(true)} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 13, cursor: 'pointer' }}>
+                    {d.connect.have}
+                  </button>
+                ) : (
+                  <>
+                    <label htmlFor="github-link" style={{ color: '#e6e9ef', fontWeight: 600 }}>
+                      {d.connect.linkLabel}
+                    </label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        id="github-link"
+                        autoFocus
+                        value={link}
+                        onChange={e => setLink(e.target.value)}
+                        placeholder={d.connect.placeholder}
+                        spellCheck={false}
+                        style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0b0e14', color: '#e6e9ef', fontSize: 13 }}
+                      />
+                      <button type="button" disabled={connecting !== null || link.trim() === ''} onClick={() => void connect({ url: link })} style={{ ...primaryButton(connecting), flex: 'none', opacity: link.trim() === '' ? 0.5 : 1 }}>
+                        {connecting === 'url' ? <WorkingSpinner blockId="connect-url" size={16} /> : null} {d.connect.use}
+                      </button>
+                    </div>
+                  </>
+                )}
                 {connecting && (
                   <span role="status" style={{ color: '#cfe0ff' }}>
                     {d.connect.working}
@@ -285,14 +288,6 @@ export function ResultSection({
                 {connectError && (
                   <span role="alert" style={{ color: theme.failed }}>
                     {connectError}
-                  </span>
-                )}
-                <button type="button" disabled={rechecking} onClick={() => void recheckRemote()} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: theme.dim, textDecoration: 'underline', fontSize: 12.5, cursor: rechecking ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  {rechecking ? <WorkingSpinner blockId="recheck" size={16} /> : null} {d.notConnected.again}
-                </button>
-                {stillNotConnected && !rechecking && (
-                  <span role="status" style={{ color: theme.waiting }}>
-                    {d.notConnected.still}
                   </span>
                 )}
               </div>
@@ -429,6 +424,28 @@ function SaveIcon() {
 }
 
 const optionCard: CSSProperties = { display: 'grid', gap: 6, padding: 10, borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c' }
+
+function repoChoice(busy: boolean): CSSProperties {
+  return { display: 'grid', gap: 3, justifyItems: 'start', padding: '11px 12px', borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0f141c', textAlign: 'left', cursor: busy ? 'wait' : 'pointer' }
+}
+
+function RepoIcon({ kind }: { kind: 'private' | 'public' }) {
+  return (
+    <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {kind === 'private' ? (
+        <>
+          <rect x="5" y="11" width="14" height="9" rx="2" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+        </>
+      ) : (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18" />
+        </>
+      )}
+    </svg>
+  )
+}
 
 function primaryButton(busy: unknown): CSSProperties {
   return { padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }

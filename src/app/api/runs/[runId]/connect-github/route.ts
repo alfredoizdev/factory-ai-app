@@ -3,7 +3,7 @@ import { ConnectError, connectGithub } from '@/engine/github-connect'
 import { requireOwnPage } from '@/engine/same-origin'
 import { strings } from '@/ui/strings'
 
-const bodySchema = z.union([z.object({ create: z.literal(true) }), z.object({ url: z.string().max(300) })])
+const bodySchema = z.union([z.object({ create: z.enum(['private', 'public']) }), z.object({ url: z.string().max(300) })])
 
 // Connects the run's project to GitHub: creates a repository or adds a remote, and uploads. Only the app's own page may ask.
 export async function POST(req: Request, ctx: { params: Promise<{ runId: string }> }) {

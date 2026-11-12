@@ -51,10 +51,10 @@ function explain(e: unknown): string {
 }
 
 /**
- * Connects the project of this run to GitHub and uploads its main branch. `how.create` makes a new private repository
- * named after the project's folder; `how.url` uses one the person already has. Already connected: nothing to do.
+ * Connects the project of this run to GitHub and uploads its main branch. `how.create` makes a new repository, private
+ * or public as the person chose, named after the project's folder; `how.url` uses one the person already has. Already connected: nothing to do.
  */
-export async function connectGithub(runId: string, how: { create: true } | { url: string }, exec: Exec = defaultExec): Promise<{ url: string | null }> {
+export async function connectGithub(runId: string, how: { create: 'private' | 'public' } | { url: string }, exec: Exec = defaultExec): Promise<{ url: string | null }> {
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) throw new ConnectError(strings.errors.runNotFound, 404)
   const repo = (await projectHere(run.projectId))?.repoPath
@@ -79,7 +79,7 @@ export async function connectGithub(runId: string, how: { create: true } | { url
   }
 
   try {
-    await exec('gh', ['repo', 'create', basename(repo), '--private', '--source', '.', '--remote', 'origin'], repo)
+    await exec('gh', ['repo', 'create', basename(repo), how.create === 'public' ? '--public' : '--private', '--source', '.', '--remote', 'origin'], repo)
     await exec('git', ['push', '-u', 'origin', main], repo)
   } catch (e) {
     throw new ConnectError(explain(e))
