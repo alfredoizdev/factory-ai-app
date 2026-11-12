@@ -239,7 +239,7 @@ describe('the reviewer', () => {
     finish(child, [{ type: 'result', is_error: false, result: 'Fine. {"verdict":"ok","findings":[]}' }])
     await pending
     const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
-    expect(args).toEqual(reviewerArgs(strings.providers.claude.reviewPrompt({ request: 'make it blue', baseCommit: 'abc123' }), 'sonnet'))
+    expect(args).toEqual([...reviewerArgs(strings.providers.claude.reviewPrompt({ request: 'make it blue', baseCommit: 'abc123' }), 'sonnet'), '--strict-mcp-config'])
     expect(args).not.toContain('bypassPermissions')
     expect(args).toContain('--disallowedTools')
     expect(args[args.indexOf('--model') + 1]).toBe('sonnet')
@@ -652,5 +652,61 @@ describe('text written by another AI inside a prompt', () => {
     await pending
     const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
     expect(args[args.indexOf('-p') + 1]).toContain('Always use tabs')
+  })
+})
+
+describe('the person\'s own MCP servers', () => {
+  const finding = { type: 'logic' as const, file: 'src/a.ts', line: 12, problem: 'it divides by zero' }
+  const argsOf = async (input: object, result = '{"verdict":"ok","findings":[]}') => {
+    const child = fakeChild()
+    const spawn = vi.fn(() => child)
+    const pending = collect(createClaudeProvider({ spawn: spawn as never, snapshot: () => 'same', readCopyFile: () => 'x' }).execute(input as never, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result }])
+    await pending
+    return (spawn.mock.calls[0] as unknown as [string, string[]])[1]
+  }
+
+  test('the reviewer, the verifier and the fixer start without them; the builder and the planner are as they were', async () => {
+    const review = await argsOf({ blockKind: 'review', request: 'r', workdir: '/wt', baseCommit: 'abc' })
+    const verifier = await argsOf({ blockKind: 'review', role: 'verifier', request: 'r', workdir: '/copy', finding }, '{"reproduced":false}')
+    const fixer = await argsOf({ blockKind: 'build', role: 'fixer', request: 'r', workdir: '/wt', finding }, 'Fixed.')
+    for (const args of [review, verifier, fixer]) {
+      expect(args).toContain('--strict-mcp-config')
+      expect(args).not.toContain('--mcp-config')
+    }
+    expect(await argsOf({ blockKind: 'build', request: 'r', workdir: '/wt' }, 'Done.')).not.toContain('--strict-mcp-config')
+    expect(await argsOf({ blockKind: 'plan', request: 'r', workdir: '/wt' }, '{"jobs":[{"title":"a","done":[]}]}')).not.toContain('--strict-mcp-config')
+  })
+
+  test('the reviewer\'s own arguments keep its read-only tools whole: the flag comes after them', async () => {
+    const args = await argsOf({ blockKind: 'review', request: 'r', workdir: '/wt', baseCommit: 'abc', model: 'sonnet' })
+    const disallowed = args.indexOf('--disallowedTools')
+    expect(args.slice(disallowed + 1, disallowed + 4)).toEqual(['Edit', 'Write', 'NotebookEdit'])
+    expect(args.indexOf('--strict-mcp-config')).toBeGreaterThan(disallowed)
+  })
+})
+
+describe('the read-only fingerprint', () => {
+  test('an empty folder an outside tool leaves behind does not count as a change', async () => {
+    const { gitSnapshot } = await import('@/providers/claude')
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { execFileSync } = await import('node:child_process')
+    const dir = mkdtempSync(join(tmpdir(), 'factory-fp-'))
+    try {
+      const git = (...a: string[]) => execFileSync('git', a, { cwd: dir, stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } })
+      git('init', '-q')
+      writeFileSync(join(dir, 'a.txt'), 'a')
+      git('add', '-A')
+      git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'base')
+      const before = gitSnapshot(dir)
+      for (const d of ['cache', 'jobs', 'monitors', 'snapshots']) mkdirSync(join(dir, d, 'inner'), { recursive: true })
+      expect(gitSnapshot(dir)).toBe(before)
+      writeFileSync(join(dir, 'b.txt'), 'b')
+      expect(gitSnapshot(dir)).not.toBe(before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

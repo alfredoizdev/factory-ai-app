@@ -83,6 +83,13 @@ export function claudeArgs(prompt: string, imageDir?: string, model?: string): s
   return imageDir ? [...withModel, '--add-dir', imageDir] : withModel
 }
 
+/**
+ * For the agents that work on their own on another agent's report (reviewers, the verifier, the fixer): none of the
+ * person's own MCP servers are started. `--strict-mcp-config` with no `--mcp-config` means no MCP server at all.
+ */
+const WITHOUT_MCP = ['--strict-mcp-config']
+const withoutMcp = (args: string[]): string[] => [...args, ...WITHOUT_MCP]
+
 /** The reviewer's arguments: read-only tools only. Anything else it asks for is refused, since nobody is there to allow it. */
 export function reviewerArgs(prompt: string, model?: string): string[] {
   const readOnly = ['Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git status:*)', 'Bash(git log:*)', 'Bash(git show:*)']
@@ -90,7 +97,7 @@ export function reviewerArgs(prompt: string, model?: string): string[] {
   return model ? [...args, '--model', model] : args
 }
 
-function gitSnapshot(workdir: string): string {
+export function gitSnapshot(workdir: string): string {
   const git = (args: string[]) => execFileSync('git', args, { cwd: workdir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 })
   return createHash('sha256').update(git(['status', '--porcelain', '--untracked-files=all'])).update(git(['diff', 'HEAD'])).digest('hex')
 }
@@ -127,7 +134,7 @@ async function* runVerifier(input: AgentExecutionInput, controls: ExecutionContr
   }
   const workdir = input.workdir
   const prompt = strings.providers.claude.verifyPrompt({ request: input.request, finding: input.finding })
-  for await (const ev of runClaude(deps, workdir, claudeArgs(prompt, undefined, input.model), controls)) {
+  for await (const ev of runClaude(deps, workdir, withoutMcp(claudeArgs(prompt, undefined, input.model)), controls)) {
     if (ev.type !== 'done') {
       yield ev
       if (ev.type === 'error') return
@@ -166,7 +173,7 @@ async function* runFixer(input: AgentExecutionInput, controls: ExecutionControls
   }
   const asked = strings.providers.claude.fixPrompt(input.request, input.finding, input.repro)
   const prompt = input.notes && input.notes.length > 0 ? `${asked}\n\n${strings.providers.claude.rulesNote(input.notes)}` : asked
-  yield* runClaude(deps, input.workdir, claudeArgs(prompt, undefined, input.model), controls)
+  yield* runClaude(deps, input.workdir, withoutMcp(claudeArgs(prompt, undefined, input.model)), controls)
 }
 
 async function* runReviewer(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
@@ -184,7 +191,7 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
   }
   const workdir = input.workdir
   const before = deps.snapshot(workdir)
-  for await (const ev of runClaude(deps, workdir, reviewerArgs(
+  for await (const ev of runClaude(deps, workdir, withoutMcp(reviewerArgs(
     strings.providers.claude.reviewPrompt({
       request: input.request,
       baseCommit: input.baseCommit,
@@ -195,7 +202,7 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
       since: input.reviewSince,
     }),
     input.model,
-  ), controls)) {
+  )), controls)) {
     if (ev.type !== 'done') {
       yield ev
       if (ev.type === 'error') return
