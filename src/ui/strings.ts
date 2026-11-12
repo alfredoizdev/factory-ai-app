@@ -15,9 +15,10 @@ const MAX_SINCE_DIFF = 30_000
 const MAX_SINCE_PATHS = 200
 
 // Text from a file name or a diff must not be able to end the block it sits in. A diff line that starts with four or more
-// dashes (a removed or added line of dashes) keeps its meaning: the run of dashes after the diff sign becomes a visible count.
+// dashes (a removed or added line of dashes) keeps its meaning: the run of dashes after the diff sign, and any whitespace
+// after it, becomes a visible count. The "--- a/file" header of a diff is left as it is: it has too few dashes to pass for a fence.
 const neutral = (line: string): string =>
-  line.trimStart().startsWith('----') ? line.replace(/^([+\- ]?)(-{3,})/, (_m, sign: string, dashes: string) => `${sign}[${dashes.length} dashes]`) : line
+  line.replace(/^([+\- ]|(?=[^+\- ]))(\s*)(-{3,})/, (_m, sign: string, white: string, dashes: string) => `${sign}${white}[${dashes.length} dashes]`)
 const plainName = (path: string): string => path.replace(/[\u0000-\u001f\u007f]+/g, ' ')
 
 // The change since the first review, for a second reviewer: the files and the diff, both inside one fence as data to read.

@@ -1638,6 +1638,68 @@ describe('after fixes, the checks run again and the change is read once more', (
     expect(readers(s)).toEqual(['logic', 'logic', 'security', 'effects'])
   })
 
+  test('fixed in the first review, reproduced again in the second, and the person leaves it: discarded, not fixed', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], later: pass => (pass === 2 ? [finding()] : []), fix: (d, n) => edit(d, `fix ${n}`) })
+    let n = 0
+    const step = recordingStep(async () => {
+      const q = await openQuestion(runId)
+      if (!q) throw new Parked()
+      await answerQuestion(q.id, { option: n++ === 0 ? 'fix' : LEAVE }, { send })
+      return { data: {} }
+    })
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect((await findingsOf(runId)).map(r => r.state)).toEqual(['corrected', 'discarded'])
+    expect((await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 1, needsYou: 0 }))
+  })
+
+  test('fixed in the first review, and the second fix strays and is undone: discarded, not fixed', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], later: pass => (pass === 2 ? [finding()] : []), fix: (d, n) => { edit(d, `fix ${n}`); if (n === 2) stray(d) } })
+    await drive(runId, s.provider, dir, base, answering(runId, 'undo'), s.deps)
+    expect((await findingsOf(runId)).map(r => r.state)).toEqual(['corrected', 'discarded'])
+    expect((await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 1, needsYou: 0 }))
+  })
+
+  test('fixed in the first review and reported again with a fix nobody could check: it needs the person and nothing else', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(true)
+    let verified = 0
+    const s = scripted({
+      found: [finding()],
+      later: pass => (pass === 2 ? [finding({ severity: 'high' })] : []),
+      fix: (d, n) => edit(d, `fix ${n}`),
+      verify: () => (++verified === 1 ? reproduces() : [{ type: 'done', summary: 'v', source: 'provider', repro: null }]),
+    })
+    await drive(runId, s.provider, dir, base, answering(runId, 'fix'), s.deps)
+    expect((await findingsOf(runId)).map(r => r.state)).toEqual(['corrected', 'fixed_unchecked'])
+    expect((await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 0, needsYou: 1 }))
+  })
+
+  test('set aside in the first review and fixed in the second: fixed', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const b = finding({ type: 'effect', line: 5, problem: 'b problem' })
+    const seen: Record<string, number> = {}
+    const s = scripted({
+      found: [finding(), b],
+      later: pass => (pass === 2 ? [b] : []),
+      fix: (d, n) => edit(d, `fix ${n}`),
+      verify: problem => {
+        seen[problem] = (seen[problem] ?? 0) + 1
+        return problem === 'b problem' && seen[problem] === 1 ? [{ type: 'done', summary: 'v', source: 'provider', repro: null }] : reproduces()
+      },
+    })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect((await findingsOf(runId)).map(r => r.state).sort()).toEqual(['corrected', 'corrected', 'discarded'])
+    expect((await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary).toBe(strings.review.approve.summary({ found: 2, fixed: 2, discarded: 0, needsYou: 0 }))
+  })
+
   test('a problem asked about in the first review is asked about again in the second: the answer to the first is not reused', async () => {
     const runId = await newRun()
     await withCore(runId)

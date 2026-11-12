@@ -696,11 +696,15 @@ async function anyReviewRan(runId: string): Promise<boolean> {
 // It always passes: the final yes is the person's, at the human check.
 async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome> {
   // One problem is one, however many rounds a reviewer reported it in. It counts as fixed when a fix of it was kept and
-  // its latest word is not a problem for the person: a re-report the checker refuted is the fix having worked. When the
-  // latest word still needs the person, the fix did not hold and it counts under "needs you" only.
+  // its latest word is not a problem for the person: a re-report the checker refuted is the fix having worked, and one
+  // set aside because it could not be shown is no evidence against it. A latest word of "discarded" on a problem that was
+  // shown to happen (the person left it, or undid the fix) is a problem set aside by choice: "discarded", not fixed.
+  // When the latest word still needs the person, the fix did not hold and it counts under "needs you" only.
   const groups = problemGroups(await findingsOf(runId)).map(g => ({ latest: latestOf(g), fixedOnce: g.some(r => r.state === 'corrected') }))
-  const fixed = groups.filter(g => g.fixedOnce && ['corrected', 'refuted', 'discarded'].includes(g.latest.state)).length
-  const dropped = groups.filter(g => !g.fixedOnce && ['refuted', 'discarded'].includes(g.latest.state)).length
+  const wasFixed = (g: (typeof groups)[number]) =>
+    g.latest.state === 'corrected' || (g.fixedOnce && (g.latest.state === 'refuted' || (g.latest.state === 'discarded' && !g.latest.repro)))
+  const fixed = groups.filter(wasFixed).length
+  const dropped = groups.filter(g => !wasFixed(g) && (g.latest.state === 'refuted' || g.latest.state === 'discarded')).length
   const summary = !(await anyReviewRan(runId))
     ? strings.review.approve.none
     : groups.length === 0
