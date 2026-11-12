@@ -7,6 +7,7 @@ import type { Graph } from '@/domain/graph'
 import { CanvasScreen, type RunInfo } from '@/ui/canvas/CanvasScreen'
 import { projectHere, runPlace } from '@/engine/machine'
 import { DbDown, isDbFailure } from '@/ui/DbDown'
+import { localDb } from '@/db/where'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,5 +39,5 @@ async function canvasFor(workflowId: string) {
   const project = await projectHere(wf.projectId)
   const settings = project ? (await getProjectSettings(project.id)) : { projectId: wf.projectId, repoPath: null, testCommand: null, autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
 
-  return <CanvasScreen workflowId={workflowId} graph={graph} run={run} settings={settings} draftUpdatedAt={wf.updatedAt} />
+  return <CanvasScreen workflowId={workflowId} graph={graph} run={run} settings={settings} draftUpdatedAt={wf.updatedAt} localData={localDb()} />
 }

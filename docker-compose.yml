@@ -1,0 +1,23 @@
+# The local test database for `npm run dev`: the same Postgres that Neon runs, on this computer only.
+# Its data lives in the `ai-factory-pgdata` volume and survives restarts. `npm run dev:neon` does not use it.
+services:
+  db:
+    image: postgres:17
+    container_name: ai-factory-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: factory
+      POSTGRES_DB: ai_factory
+    ports:
+      - '127.0.0.1:54410:5432'
+    volumes:
+      - ai-factory-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U factory -d ai_factory']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  ai-factory-pgdata:

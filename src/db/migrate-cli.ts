@@ -1,10 +1,12 @@
-// `npm run db:migrate`: applies the Postgres migrations (drizzle-pg/) to the database in .env.local.
+// Applies the Postgres migrations (drizzle-pg/): `npm run db:local` to the local test database (also run by
+// `npm run dev`), `npm run db:migrate:neon` to Neon, once a change is ready for the real data.
 import { migrateDb } from '@/db/client'
+import { localDb } from '@/db/where'
 
 const started = Date.now()
 migrateDb()
   .then(() => {
-    console.log(`Migrations applied in ${Date.now() - started} ms.`)
+    console.log(`${localDb() ? 'Local test database' : 'Neon'}: migrations applied in ${Date.now() - started} ms.`)
     process.exit(0)
   })
   .catch(e => {

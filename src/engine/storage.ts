@@ -1,3 +1,4 @@
+import { localDb } from '@/db/where'
 import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 
 // Images in Cloudflare R2: the before/after pictures and the images attached to a request, so another computer sees
@@ -13,8 +14,9 @@ export type Storage = {
 
 const g = globalThis as { __factoryStorage?: Storage | null }
 
-/** R2 from the environment, or null when its keys are not set. */
+/** R2 from the environment, or null when its keys are not set or the app runs on the local test database. */
 function fromEnv(): Storage | null {
+  if (localDb()) return null
   const account = process.env.R2_ACCOUNT_ID
   const accessKeyId = process.env.R2_ACCESS_KEY_ID
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY

@@ -57,12 +57,15 @@ export function CanvasScreen({
   run: initialRun = null,
   settings: initialSettings = null,
   draftUpdatedAt,
+  localData = false,
 }: {
   workflowId: string
   graph: Graph
   run?: RunInfo | null
   /** The project's repository settings. Absent: the agent switch is not offered and every run is the demo. */
   settings?: ProjectSettings | null
+  /** True on the local test database: said in the top bar, so test tasks are never taken for the real ones. */
+  localData?: boolean
   /** The draft's version as the page loaded it; saves are refused once someone else has saved a newer one. */
   draftUpdatedAt?: string
 }) {
@@ -294,6 +297,12 @@ export function CanvasScreen({
       {/* The controls stay in the top bar, visible with the sidebar closed: which agent, run, stop, and the run's state. */}
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', minHeight: 36, borderBottom: `1px solid ${theme.border}`, background: theme.bg }}>
         <ProjectSwitcher workflowId={workflowId} style={headerButton} onOpenSettings={settings ? () => setSettingsOpen(true) : undefined} />
+        {localData && (
+          <span data-testid="local-data" title={strings.localData.hint} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999, border: `1px solid ${theme.waiting}`, color: theme.waiting, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'help' }}>
+            <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: theme.waiting }} />
+            {strings.localData.label}
+          </span>
+        )}
         {settings && (
           <button type="button" aria-label={strings.projectSettings.open} title={strings.projectSettings.open} onClick={() => setSettingsOpen(true)} style={{ ...headerButton, padding: '6px 9px', display: 'grid', placeItems: 'center' }}>
             <SettingsIcon size={17} />

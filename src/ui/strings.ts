@@ -458,7 +458,12 @@ export const strings = {
   dbDown: {
     title: 'Can\'t reach the database',
     text: 'Your tasks and history are safe; the app could not reach them just now. Check your internet connection, then try again. On the free plan the database can take a second to wake up.',
+    textLocal: 'The test database on this computer is not running. Open Docker Desktop, run "npm run dev" again, then try again. Your real tasks are not affected.',
     retry: 'Try again',
+  },
+  localData: {
+    label: 'Test data',
+    hint: 'This is the test database on this computer. Your real tasks are in Neon: start the app with "npm run dev:neon" to see them.',
   },
   machine: {
     elsewhere: (name: string | null) =>

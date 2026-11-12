@@ -1,3 +1,4 @@
+import { localDb } from '@/db/where'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 
@@ -12,7 +13,7 @@ export function DbDown() {
         <h1 className="factory-display" style={{ margin: 0, fontSize: 24 }}>
           {strings.dbDown.title}
         </h1>
-        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: theme.dim }}>{strings.dbDown.text}</p>
+        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: theme.dim }}>{localDb() ? strings.dbDown.textLocal : strings.dbDown.text}</p>
         <a href="." style={{ justifySelf: 'center', padding: '8px 16px', borderRadius: 8, background: theme.running, color: '#fff', fontWeight: 700, textDecoration: 'none' }}>
           {strings.dbDown.retry}
         </a>

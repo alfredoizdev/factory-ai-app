@@ -7,9 +7,10 @@ import { drizzle as drizzleLite } from 'drizzle-orm/pglite'
 import { migrate as migrateLite } from 'drizzle-orm/pglite/migrator'
 import { Pool } from 'pg'
 import * as schema from './schema'
+import { databaseUrl } from './where'
 
-// The app's database is Postgres on Neon (DATABASE_URL_UNPOOLED, a direct connection: the app runs as one long-lived
-// process on the person's computer). Tests use PGlite, a real Postgres in memory, so they never touch Neon.
+// The app's database is Postgres: Neon (DATABASE_URL_UNPOOLED, a direct connection: the app runs as one long-lived
+// process on the person's computer), or the local test database under `npm run dev` (see ./where). Tests use PGlite, a real Postgres in memory, so they never touch Neon.
 // Both give the same Drizzle API; every call is async.
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>
@@ -25,7 +26,7 @@ function connect(): { db: Db; migrate: () => Promise<void> } {
     const db = drizzleLite(client, { schema }) as unknown as Db
     return { db, migrate: () => migrateLite(drizzleLite(client, { schema }), { migrationsFolder: './drizzle-pg' }) }
   }
-  const url = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL
+  const url = databaseUrl()
   if (!url) throw new Error('DATABASE_URL_UNPOOLED is not set. Run `neon env pull` to write it into .env.local.')
   const pool = new Pool({ connectionString: url, max: 5 })
   // An idle connection dropped by the server (a restart, a network blip) must not take the app down with it: the pool

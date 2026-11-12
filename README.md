@@ -10,16 +10,29 @@ Design a flow of blocks on a canvas and watch AI coding agents run it, live.
 
 - Node.js 20 or newer
 - npm
+- Docker Desktop, running (for the local test database)
 
 ## Run it
 
 ```bash
 npm install
-npm run db:migrate     # creates .factory/factory.db
-npm run seed           # adds the demo project; its workflow id is "demo"
 npm run inngest        # in a second terminal, see "Pressing Run needs Inngest" below
-npm run dev            # in a third terminal
+npm run dev            # starts the local test database, applies its migrations, then the app
 ```
+
+## Two databases: test data and real data
+
+| Command | Database | Pictures | Use it for |
+| --- | --- | --- | --- |
+| `npm run dev` | Postgres 17 in Docker, on this computer (`docker-compose.yml`, port 54410) | Local files | Building and trying changes. The top bar shows **Test data**. |
+| `npm run dev:neon` | Neon (keys in `.env.local`) | Cloudflare R2 | The real tasks, shared between computers. |
+
+Both are the same Postgres, so what works locally works on Neon. A change to the tables is made once
+(`npm run db:generate`), tried locally (`npm run dev` applies it), and then applied to Neon with
+`npm run db:migrate:neon`. Only the structure travels; the data of each database stays where it is.
+
+`npm run db:local:stop` stops the local database; its data is kept in a Docker volume. Do not switch commands
+while a task is running: its steps would be written to the other database.
 
 Open <http://127.0.0.1:4100/canvas/demo>.
 
@@ -47,16 +60,13 @@ restricted networks), you can still use everything except executing a run:
 `npm run inngest` already points Inngest at the app on port 4100 and keeps it on 127.0.0.1. Started by hand,
 the equivalent is `npx inngest-cli dev --host 127.0.0.1 -u http://127.0.0.1:4100/api/inngest`.
 
-## If the canvas looks wrong, reset the database
+## Start the test data over
 
-`.factory/factory.db` keeps the draft it already has, and `npm run seed` **skips** a demo workflow that
-already exists. If you set up the app with an older version, you will keep seeing the old block positions
-(overlapping cards, invisible cables) even though the code is fixed. Reset it:
+This erases the local test database only, never Neon:
 
 ```bash
-rm .factory/factory.db*
-npm run db:migrate
-npm run seed
+docker compose down -v
+npm run dev
 ```
 
 ## Tests
