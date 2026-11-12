@@ -25,7 +25,8 @@ export type BlockDetails = {
   tokens: number | null
   /** The sentence the block ended with: what the agent said it did, or why it failed or was skipped. */
   summary: string | null
-  steps: string[]
+  /** Every step it took, in order, with when. */
+  steps: { text: string; at: string }[]
   /** The jobs of the plan, on the Plan block. */
   jobs: { title: string; done: string[] }[]
   commands: BlockCommand[]
@@ -42,14 +43,14 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
   const block = version ? (JSON.parse(version.graphJson) as Graph).blocks.find(b => b.id === blockId) : undefined
   const log = await db.select().from(events).where(and(eq(events.runId, runId), eq(events.nodeRunId, node.id))).orderBy(asc(events.sequence))
 
-  const steps: string[] = []
+  const steps: BlockDetails['steps'] = []
   let summary: string | null = node.summary
   let jobs: BlockDetails['jobs'] = []
   for (const e of log) {
     const p = JSON.parse(e.payloadJson) as Record<string, unknown>
     // A new round starts the block over: what it did before no longer describes it.
     if (e.type === 'node.reopened') steps.length = 0
-    if (e.type === 'node.step' && text(p.text)) steps.push(p.text as string)
+    if (e.type === 'node.step' && text(p.text)) steps.push({ text: p.text as string, at: e.createdAt })
     if (e.type === 'node.completed' || e.type === 'node.waiting_approval') summary = text(p.summary) ?? summary
     if (e.type === 'node.failed') summary = text(p.message) ?? summary
     if (e.type === 'node.skipped') summary = text(p.reason) ?? summary

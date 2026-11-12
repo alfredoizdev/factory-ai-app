@@ -1,14 +1,22 @@
 'use client'
 
 import { useEffect, useState, type ReactNode } from 'react'
-import type { BlockDetails } from '@/engine/block-details'
+import type { BlockCommand, BlockDetails } from '@/engine/block-details'
+import type { Shot } from '@/engine/snapshots'
+import type { BlockKind } from '@/domain/graph'
 import type { NodeState } from '@/domain/states'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
-import { visualStateOf } from './BlockCard'
+import { useSnapshots } from './BeforeAfter'
+import { visualStateOf, WorkingSpinner, type CardView } from './BlockCard'
+import { TypeMark } from './TypeMark'
 
 const d = strings.details
 const mono = 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace'
+const thin = { scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` } as const
+const KINDS: readonly string[] = ['input', 'plan', 'build', 'tests', 'review', 'approve', 'human', 'ship']
+/** Steps shown before "Show all": enough to follow the work without a wall of lines. */
+const FEW_STEPS = 8
 
 /** "2m 5s", "41s", "under a second": a length of work, said the way a person would. */
 export function howLong(ms: number): string {
@@ -22,25 +30,200 @@ export function howLong(ms: number): string {
 function clock(iso: string | null): string {
   if (!iso) return d.none
   const t = new Date(iso)
-  return Number.isNaN(t.getTime()) ? d.none : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return Number.isNaN(t.getTime()) ? d.none : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-function Fact({ label, value }: { label: string; value: ReactNode }) {
+/** How far into the work a step happened: "+0:42". Empty when either time is missing. */
+export function sinceStart(startedAt: string | null, at: string): string {
+  const ms = startedAt ? Date.parse(at) - Date.parse(startedAt) : NaN
+  if (!Number.isFinite(ms)) return ''
+  const s = Math.max(0, Math.round(ms / 1000))
+  return `+${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** An agent's sentence with its `code` set apart and its **emphasis** marks dropped: readable, never raw markup. */
+export function Prose({ text }: { text: string }) {
   return (
-    <div style={{ display: 'grid', gap: 4, padding: '12px 14px', borderRadius: 10, background: '#0f141c', border: `1px solid ${theme.border}`, minWidth: 0 }}>
-      <span style={{ fontSize: 12, letterSpacing: '0.06em', textTransform: 'uppercase', color: theme.dim }}>{label}</span>
-      <span style={{ fontSize: 17, fontWeight: 700, color: theme.ink, overflowWrap: 'anywhere' }}>{value}</span>
+    <>
+      {text
+        .replace(/\*\*/g, '')
+        .split(/\n{2,}/)
+        .map((para, i) => (
+          <p key={i} style={{ margin: 0 }}>
+            {para.split('`').map((part, k) =>
+              k % 2 === 1 ? (
+                <code key={k} style={{ padding: '1px 6px', borderRadius: 5, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: '0.86em', color: '#cfe0ff' }}>
+                  {part}
+                </code>
+              ) : (
+                part
+              ),
+            )}
+          </p>
+        ))}
+    </>
+  )
+}
+
+function Icon({ path, size = 16 }: { path: ReactNode; size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: 'none' }}>
+      {path}
+    </svg>
+  )
+}
+const ICON = {
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
+  play: <path d="M8 5.5v13l10-6.5z" />,
+  flag: <path d="M6 21V4h11l-2 4 2 4H6" />,
+  spark: <path d="M12 3l1.9 5.6L19.5 10l-5.6 1.4L12 17l-1.9-5.6L4.5 10l5.6-1.4z" />,
+  chip: (
+    <>
+      <rect x="7" y="7" width="10" height="10" rx="2" />
+      <path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4" />
+    </>
+  ),
+  repeat: (
+    <>
+      <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+      <path d="M20 4v7h-7" />
+    </>
+  ),
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  cross: <path d="M6 6l12 12M18 6L6 18" />,
+  chevron: <path d="M9 6l6 6-6 6" />,
+}
+
+function Fact({ icon, label, value, help }: { icon: ReactNode; label: string; value: ReactNode; help?: string }) {
+  return (
+    <div style={{ display: 'grid', gap: 5, padding: '13px 15px', borderRadius: 12, background: '#0f141c', border: `1px solid ${theme.border}`, minWidth: 0 }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: theme.dim }}>
+        <Icon path={icon} size={14} /> {label}
+      </span>
+      <span style={{ fontSize: 19, fontWeight: 700, color: theme.ink, overflowWrap: 'anywhere' }}>{value}</span>
+      {help && <span style={{ fontSize: 11.5, color: theme.skipped }}>{help}</span>}
     </div>
   )
 }
 
-function Heading({ children }: { children: ReactNode }) {
-  return <strong style={{ fontSize: 16 }}>{children}</strong>
+function Section({ title, help, children }: { title: string; help?: string; children: ReactNode }) {
+  return (
+    <section style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'grid', gap: 3 }}>
+        <strong className="factory-display" style={{ fontSize: 17 }}>
+          {title}
+        </strong>
+        {help && <span style={{ fontSize: 13, color: theme.dim }}>{help}</span>}
+      </div>
+      {children}
+    </section>
+  )
 }
 
-/** The window behind a card's "See details": what the block did, how long it took and what it used. */
-export function BlockDetailsDialog({ runId, blockId, label, onClose }: { runId: string; blockId: string; label: string; onClose: () => void }) {
+/** One check the block ran: whether it passed, how long it took, and what it printed, folded away. */
+function Command({ c }: { c: BlockCommand }) {
+  const [open, setOpen] = useState(false)
+  const ok = c.exitCode === 0
+  return (
+    <div style={{ display: 'grid', gap: 8, padding: '11px 13px', borderRadius: 10, background: '#0f141c', border: `1px solid ${ok ? theme.border : theme.tint('failed', 0.5)}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 999, background: theme.tint(ok ? 'passed' : 'failed', 0.16), color: ok ? theme.passed : theme.failed, fontSize: 12.5, fontWeight: 700 }}>
+          <Icon path={ok ? ICON.check : ICON.cross} size={13} /> {ok ? d.commandPassed : d.commandFailed}
+        </span>
+        <code style={{ fontFamily: mono, fontSize: 13, color: '#e6e9ef' }}>{c.command}</code>
+        {c.durationMs !== null && <span style={{ marginLeft: 'auto', fontSize: 13, color: theme.dim }}>{howLong(c.durationMs)}</span>}
+      </div>
+      {!ok && <span style={{ fontSize: 13, color: theme.failed }}>{strings.failure.ended(c.exitCode, c.signal)}</span>}
+      {c.output && (
+        <>
+          <button type="button" aria-expanded={open} onClick={() => setOpen(o => !o)} style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 5, padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 13, cursor: 'pointer' }}>
+            <span style={{ display: 'inline-flex', transform: open ? 'rotate(90deg)' : 'none' }}>
+              <Icon path={ICON.chevron} size={13} />
+            </span>
+            {open ? d.hideOutput : d.showOutput}
+          </button>
+          {open && (
+            <pre style={{ margin: 0, maxHeight: 280, overflow: 'auto', padding: 12, borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', ...thin }}>
+              {c.output}
+            </pre>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+/** The page before and after the change, on a computer and on a phone, all four at once. */
+function Pictures({ runId }: { runId: string }) {
+  const { state } = useSnapshots(runId, false)
+  const [screen, setScreen] = useState<'desktop' | 'mobile'>('desktop')
+  if (!state) return null
+  if (state.status === 'working') {
+    return (
+      <span role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, color: theme.dim }}>
+        <WorkingSpinner blockId="pictures" size={15} /> {d.picturesWorking}
+      </span>
+    )
+  }
+  if (state.status !== 'ready' || state.shots.length === 0) return <span style={{ color: theme.dim }}>{d.noPictures}</span>
+  const src = (shot: Shot) => `/api/runs/${runId}/snapshots/${shot}`
+  const tab = (value: 'desktop' | 'mobile') => ({
+    padding: '7px 16px',
+    borderRadius: 999,
+    border: `1px solid ${screen === value ? theme.running : theme.border}`,
+    background: screen === value ? theme.tint('running', 0.18) : 'transparent',
+    color: screen === value ? '#cfe0ff' : theme.dim,
+    fontSize: 13.5,
+    fontWeight: 700,
+    cursor: 'pointer',
+  })
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div role="tablist" style={{ display: 'flex', gap: 8 }}>
+        {(['desktop', 'mobile'] as const).map(value => (
+          <button key={value} type="button" role="tab" aria-selected={screen === value} onClick={() => setScreen(value)} style={tab(value)}>
+            {strings.snapshots[value]}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
+        {(['before', 'after'] as const).map(side => {
+          const shot = `${side}-${screen}` as Shot
+          const label = `${strings.snapshots[side]} · ${strings.snapshots[screen]}`
+          return (
+            <figure key={side} style={{ margin: 0, display: 'grid', gap: 6, justifyItems: screen === 'mobile' ? 'center' : 'stretch' }}>
+              <figcaption style={{ justifySelf: 'start', fontSize: 13, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? theme.dim : theme.passed }}>{strings.snapshots[side]}</figcaption>
+              {state.shots.includes(shot) ? (
+                <a href={src(shot)} target="_blank" rel="noreferrer" aria-label={label} style={{ display: 'block', width: screen === 'mobile' ? 'min(100%, 300px)' : '100%' }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src(shot)} alt={label} style={{ display: 'block', width: '100%', borderRadius: 8, border: `1px solid ${side === 'before' ? theme.border : theme.tint('passed', 0.5)}` }} />
+                </a>
+              ) : (
+                <div style={{ width: '100%', aspectRatio: '16 / 10', display: 'grid', placeItems: 'center', padding: 16, textAlign: 'center', borderRadius: 8, border: `1px dashed ${theme.border}`, color: theme.dim, fontSize: 13.5, lineHeight: 1.45 }}>
+                  {side === 'before' ? d.noBefore : d.noAfter}
+                </div>
+              )}
+            </figure>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The window behind a card's "See details": what the step is for, how long it took and what it used, what happened
+ * in plain sentences, the plan's jobs, the pictures of the change, every step in order and the checks it ran.
+ * `view` is what the card itself shows: used where the screen knows more than the record (a change that was shipped).
+ */
+export function BlockDetailsDialog({ runId, blockId, label, view, pr, onClose }: { runId: string; blockId: string; label: string; view?: CardView; pr?: { number: number; url: string } | null; onClose: () => void }) {
   const [details, setDetails] = useState<BlockDetails | null | undefined>(undefined)
+  const [allSteps, setAllSteps] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -61,102 +244,131 @@ export function BlockDetailsDialog({ runId, blockId, label, onClose }: { runId: 
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const accent = details ? theme[visualStateOf(details.state as NodeState) ?? 'skipped'] : theme.border
+  const state = (view?.state ?? details?.state ?? 'queued') as NodeState
+  const accent = theme[visualStateOf(state)]
+  const kind = details?.kind
+  const summary = (view?.summary || details?.summary) ?? null
+  const steps = details?.steps ?? []
+  const shownSteps = allSteps ? steps : steps.slice(-FEW_STEPS)
+  const showsPictures = kind === 'ship' || kind === 'human'
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center', background: 'rgba(5, 7, 11, 0.65)' }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center', background: 'rgba(5, 7, 11, 0.7)' }}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label={d.title(label)}
         data-testid="block-details"
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(1000px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14 }}
+        style={{ width: 'min(1080px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.border}`, borderTop: `3px solid ${accent}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14.5 }}
       >
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 26px', borderBottom: `1px solid ${theme.border}` }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-            <h2 className="factory-display" style={{ margin: 0, fontSize: 25 }}>
-              {label}
-            </h2>
-            {details && <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: accent }}>{strings.canvas.stateLabel[details.state as NodeState] ?? details.state}</span>}
+        <header style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '18px 26px', borderBottom: `1px solid ${theme.border}` }}>
+          {kind && KINDS.includes(kind) && <TypeMark kind={kind as BlockKind} colour={accent} size={40} />}
+          <div style={{ display: 'grid', gap: 4, flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <h2 className="factory-display" style={{ margin: 0, fontSize: 26 }}>
+                {label}
+              </h2>
+              {details && <span style={{ padding: '3px 11px', borderRadius: 999, background: `${accent}26`, color: accent, fontSize: 12.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{strings.canvas.stateLabel[state]}</span>}
+            </div>
+            {kind && d.purpose[kind] && <span style={{ fontSize: 14, color: theme.dim }}>{d.purpose[kind]}</span>}
           </div>
           <button type="button" aria-label={d.close} onClick={onClose} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 18 }}>
             ✕
           </button>
         </header>
-        <div style={{ overflowY: 'auto', padding: '22px 26px 26px', display: 'grid', gap: 22, scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
+        <div style={{ overflowY: 'auto', padding: '22px 26px 28px', display: 'grid', gap: 26, ...thin }}>
           {details === undefined && <div style={{ color: theme.dim }}>{d.loading}</div>}
           {details === null && <div style={{ color: theme.dim }}>{d.unreadable}</div>}
           {details && (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
-                <Fact label={d.took} value={details.durationMs !== null ? howLong(details.durationMs) : details.startedAt ? d.stillWorking : d.none} />
-                <Fact label={d.started} value={clock(details.startedAt)} />
-                <Fact label={d.finished} value={clock(details.finishedAt)} />
-                <Fact label={d.tokens} value={details.tokens !== null ? details.tokens.toLocaleString('en-US') : d.none} />
-                {details.model && <Fact label={d.model} value={details.model} />}
-                {details.attempt > 1 && <Fact label={d.attempts} value={details.attempt} />}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+                {details.startedAt && <Fact icon={ICON.clock} label={d.took} value={details.durationMs !== null ? howLong(details.durationMs) : d.stillWorking} />}
+                {details.startedAt && <Fact icon={ICON.play} label={d.started} value={clock(details.startedAt)} />}
+                {details.startedAt && details.finishedAt && <Fact icon={ICON.flag} label={d.finished} value={clock(details.finishedAt)} />}
+                {details.tokens !== null && <Fact icon={ICON.spark} label={d.tokens} value={details.tokens.toLocaleString('en-US')} help={d.tokensHelp} />}
+                {details.model && <Fact icon={ICON.chip} label={d.model} value={details.model} />}
+                {details.attempt > 1 && <Fact icon={ICON.repeat} label={d.attempts} value={details.attempt} />}
               </div>
 
-              <section style={{ display: 'grid', gap: 8 }}>
-                <Heading>{d.said}</Heading>
-                <p data-testid="details-summary" style={{ margin: 0, fontSize: 15.5, lineHeight: 1.6, color: '#e6e9ef', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                  {details.summary ?? d.nothingSaid}
-                </p>
-              </section>
+              <Section title={d.said} help={view?.summaryIsClaim ? d.saidByAi : undefined}>
+                <div data-testid="details-summary" style={{ display: 'grid', gap: 10, padding: '14px 16px', borderRadius: 12, background: '#0f141c', borderLeft: `3px solid ${accent}`, fontSize: 15.5, lineHeight: 1.6, color: '#e6e9ef', overflowWrap: 'anywhere' }}>
+                  {summary ? <Prose text={summary} /> : <span style={{ color: theme.dim }}>{d.nothingSaid}</span>}
+                </div>
+                {pr && kind === 'ship' && (
+                  <a href={pr.url} target="_blank" rel="noreferrer" style={{ justifySelf: 'start', color: '#9cc2ff', fontSize: 14 }}>
+                    {d.seeOnGithub(pr.number)} ↗
+                  </a>
+                )}
+              </Section>
 
-              {details.jobs.length > 0 && (
-                <section style={{ display: 'grid', gap: 10 }}>
-                  <Heading>{d.jobs(details.jobs.length)}</Heading>
-                  <ol style={{ margin: 0, paddingLeft: 22, display: 'grid', gap: 10, fontSize: 15, lineHeight: 1.5 }}>
-                    {details.jobs.map((j, i) => (
-                      <li key={i}>
-                        <span style={{ color: '#e6e9ef', fontWeight: 600 }}>{j.title}</span>
-                        {j.done.length > 0 && (
-                          <ul style={{ margin: '4px 0 0', paddingLeft: 18, color: theme.dim, fontSize: 13.5 }}>
-                            {j.done.map((c, k) => (
-                              <li key={k}>{c}</li>
-                            ))}
-                          </ul>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                </section>
+              {showsPictures && (
+                <Section title={d.pictures} help={d.picturesHelp}>
+                  <Pictures runId={runId} />
+                </Section>
               )}
 
-              <section style={{ display: 'grid', gap: 10 }}>
-                <Heading>{d.steps(details.steps.length)}</Heading>
-                {details.steps.length === 0 ? (
-                  <span style={{ color: theme.dim }}>{d.noSteps}</span>
-                ) : (
-                  <ol data-testid="details-steps" style={{ margin: 0, paddingLeft: 0, listStylePosition: 'inside', display: 'grid', gap: 6, maxHeight: 320, overflowY: 'auto', fontSize: 14, lineHeight: 1.5, color: '#cfd6e2', scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
-                    {details.steps.map((s, i) => (
-                      <li key={i} style={{ overflowWrap: 'anywhere' }}>
-                        {s}
-                      </li>
+              {details.jobs.length > 0 && (
+                <Section title={d.jobs(details.jobs.length)}>
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {details.jobs.map((j, i) => (
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 12, padding: '12px 14px', borderRadius: 10, background: '#0f141c', border: `1px solid ${theme.border}` }}>
+                        <span style={{ width: 26, height: 26, borderRadius: 999, display: 'grid', placeItems: 'center', background: theme.tint('waiting', 0.18), color: theme.waiting, fontSize: 13, fontWeight: 800 }}>{i + 1}</span>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <span style={{ fontSize: 15, fontWeight: 600, color: '#e6e9ef', lineHeight: 1.45 }}>{j.title}</span>
+                          {j.done.length > 0 && (
+                            <>
+                              <span style={{ fontSize: 12, letterSpacing: '0.06em', textTransform: 'uppercase', color: theme.skipped }}>{d.doneWhen}</span>
+                              {j.done.map((c, k) => (
+                                <span key={k} style={{ display: 'flex', gap: 8, fontSize: 13.5, lineHeight: 1.45, color: '#c9d0db' }}>
+                                  <span style={{ color: theme.passed, marginTop: 2 }}>
+                                    <Icon path={ICON.check} size={13} />
+                                  </span>
+                                  {c}
+                                </span>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      </div>
                     ))}
-                  </ol>
-                )}
-              </section>
+                  </div>
+                </Section>
+              )}
 
               {details.commands.length > 0 && (
-                <section style={{ display: 'grid', gap: 12 }}>
-                  <Heading>{d.commands}</Heading>
-                  {details.commands.map((c, i) => (
-                    <div key={i} style={{ display: 'grid', gap: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13.5, color: theme.dim }}>
-                        <code style={{ padding: '3px 8px', borderRadius: 6, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, color: '#d6dce6' }}>{c.command}</code>
-                        <span style={{ color: c.exitCode === 0 ? theme.passed : theme.failed, fontWeight: 600 }}>{c.exitCode === 0 ? d.commandPassed : strings.failure.ended(c.exitCode, c.signal)}</span>
-                        {c.durationMs !== null && <span>{howLong(c.durationMs)}</span>}
-                      </div>
-                      {c.output && (
-                        <pre style={{ margin: 0, maxHeight: 240, overflow: 'auto', padding: 12, borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
-                          {c.output}
-                        </pre>
-                      )}
-                    </div>
-                  ))}
-                </section>
+                <Section title={d.commands}>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    {details.commands.map((c, i) => (
+                      <Command key={i} c={c} />
+                    ))}
+                  </div>
+                </Section>
+              )}
+
+              {steps.length > 0 && (
+                <Section title={d.steps(steps.length)} help={d.stepsHelp}>
+                  <ol data-testid="details-steps" style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid' }}>
+                    {shownSteps.map((s, i) => {
+                      const ran = /^Running:?\s/.test(s.text)
+                      const last = i === shownSteps.length - 1
+                      return (
+                        <li key={i} style={{ display: 'grid', gridTemplateColumns: '54px 18px minmax(0, 1fr)', columnGap: 10, alignItems: 'start' }}>
+                          <span style={{ paddingTop: 2, fontFamily: mono, fontSize: 12, color: theme.skipped, textAlign: 'right' }}>{sinceStart(details.startedAt, s.at)}</span>
+                          <span aria-hidden="true" style={{ display: 'grid', justifyItems: 'center', alignSelf: 'stretch', gridTemplateRows: 'auto 1fr' }}>
+                            <span style={{ width: 9, height: 9, marginTop: 6, borderRadius: 999, background: last ? accent : theme.skipped }} />
+                            {!last && <span style={{ width: 2, minHeight: 14, background: theme.border }} />}
+                          </span>
+                          <span style={{ paddingBottom: 12, fontSize: 14, lineHeight: 1.5, color: '#d6dce6', overflowWrap: 'anywhere', ...(ran ? { fontFamily: mono, fontSize: 12.5 } : {}) }}>{s.text}</span>
+                        </li>
+                      )
+                    })}
+                  </ol>
+                  {steps.length > FEW_STEPS && (
+                    <button type="button" onClick={() => setAllSteps(a => !a)} style={{ justifySelf: 'start', padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: '#e6e9ef', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                      {allSteps ? d.showFewer : d.showAll(steps.length)}
+                    </button>
+                  )}
+                </Section>
               )}
             </>
           )}
