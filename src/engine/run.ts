@@ -8,7 +8,7 @@ import { nodeRuns, projects, runs, workflows, workflowVersions } from '@/db/sche
 import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
-import { isOnHold } from '@/engine/ship'
+import { onHoldAmong } from '@/engine/ship'
 import { cleanTitle, titleOf } from '@/engine/title'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
@@ -61,8 +61,8 @@ export class PublishRefusedError extends Error {
 
 const now = () => new Date().toISOString()
 
-function requireWorkflow(workflowId: string) {
-  const wf = db.select().from(workflows).where(eq(workflows.id, workflowId)).get()
+async function requireWorkflow(workflowId: string) {
+  const wf = (await db.select().from(workflows).where(eq(workflows.id, workflowId)))[0]
   if (!wf) throw new WorkflowNotFoundError(workflowId)
   return wf
 }
@@ -104,26 +104,25 @@ export async function saveDraft(workflowId: string, graph: Graph, base?: string)
 }
 
 export async function saveDraftVersioned(workflowId: string, graph: Graph, base?: string): Promise<{ issues: ValidationIssue[]; updatedAt: string }> {
-  requireWorkflow(workflowId)
-  const updatedAt = db.transaction(
-    tx => {
-      const row = tx.select().from(workflows).where(eq(workflows.id, workflowId)).get()!
+  await requireWorkflow(workflowId)
+  const updatedAt = (await db.transaction(
+    async tx => {
+      const row = (await tx.select().from(workflows).where(eq(workflows.id, workflowId)))[0]!
       if (base !== undefined && row.updatedAt !== base) throw new DraftConflictError()
       // Strictly later than the version replaced, even within the same millisecond, so versions never repeat.
       let stamp = now()
       if (stamp <= row.updatedAt) stamp = new Date(Date.parse(row.updatedAt) + 1).toISOString()
-      tx.update(workflows).set({ draftJson: JSON.stringify(graph), updatedAt: stamp }).where(eq(workflows.id, workflowId)).run()
+      await tx.update(workflows).set({ draftJson: JSON.stringify(graph), updatedAt: stamp }).where(eq(workflows.id, workflowId))
       return stamp
     },
-    { behavior: 'immediate' },
-  )
+  ))
   return { issues: validateGraph(graph), updatedAt }
 }
 
 export async function publishVersion(workflowId: string): Promise<{ versionId: string; hash: string }> {
   return db.transaction(
-    tx => {
-      const wf = tx.select().from(workflows).where(eq(workflows.id, workflowId)).get()
+    async tx => {
+      const wf = (await tx.select().from(workflows).where(eq(workflows.id, workflowId)))[0]
       if (!wf) throw new WorkflowNotFoundError(workflowId)
 
       const graph = JSON.parse(wf.draftJson) as Graph
@@ -131,18 +130,19 @@ export async function publishVersion(workflowId: string): Promise<{ versionId: s
       if (issues.length > 0) throw new PublishRefusedError(issues)
 
       const hash = hashGraph(graph)
-      const latest = tx
+      const latest = (await tx
         .select()
         .from(workflowVersions)
         .where(eq(workflowVersions.workflowId, workflowId))
-        .orderBy(desc(sql`rowid`))
+        // Newest first: created time, then the ULID (which sorts by time) to break a tie within one millisecond.
+        .orderBy(desc(workflowVersions.createdAt), desc(workflowVersions.id))
         .limit(1)
-        .get()
+        )[0]
       // Same meaning as the latest version: reuse it rather than minting a duplicate.
       if (latest && latest.hash === hash) return { versionId: latest.id, hash }
 
       const versionId = ulid()
-      tx.insert(workflowVersions)
+      await tx.insert(workflowVersions)
         .values({
           id: versionId,
           projectId: wf.projectId,
@@ -151,10 +151,9 @@ export async function publishVersion(workflowId: string): Promise<{ versionId: s
           hash,
           createdAt: now(),
         })
-        .run()
+        
       return { versionId, hash }
     },
-    { behavior: 'immediate' },
   )
 }
 
@@ -170,12 +169,12 @@ export async function createRun(input: {
   /** The person's name for the task. Absent: none, until they give one. */
   title?: string
 }): Promise<{ runId: string; versionId: string }> {
-  const wf = requireWorkflow(input.workflowId)
+  const wf = (await requireWorkflow(input.workflowId))
   const providerId = input.providerId ?? DEMO_PROVIDER_ID
   // Refused before anything is written: a real run with nowhere to work would only fail later, after a row exists.
   let baseCommit: string | null = null
   if (providerId === CLAUDE_PROVIDER_ID) {
-    const project = db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, wf.projectId)).get()
+    const project = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, wf.projectId)))[0]
     if (!project?.repoPath) throw new RepoNotSetError()
     // Fixed now, as a commit: the agent's copy starts there even if the person switches branches meanwhile.
     const main = defaultBranch(project.repoPath)
@@ -187,24 +186,24 @@ export async function createRun(input: {
       if (!baseCommit) throw new StartBranchError(branch)
       // The prepared base is rebuilt in the background when main's lockfile moved on from the one it holds. This task
       // installs for itself meanwhile; the next ones copy again.
-      if (branch === main && baseIsStale(wf.projectId, baseCommit)) void prepareBase(wf.projectId)
+      if (branch === main && (await baseIsStale(wf.projectId, baseCommit))) void prepareBase(wf.projectId)
     }
   }
   // Latest published version only. The draft is never consulted.
-  const version = db
+  const version = (await db
     .select()
     .from(workflowVersions)
     .where(eq(workflowVersions.workflowId, input.workflowId))
-    .orderBy(desc(sql`rowid`))
+    .orderBy(desc(workflowVersions.createdAt), desc(workflowVersions.id))
     .limit(1)
-    .get()
+    )[0]
   if (!version) throw new NothingPublishedError()
 
   const runId = ulid()
   // The run row and run.created commit together: a crash cannot leave a run with no events.
-  db.transaction(
-    tx => {
-      tx.insert(runs)
+  await db.transaction(
+    async tx => {
+      await tx.insert(runs)
         .values({
           id: runId,
           projectId: wf.projectId,
@@ -218,23 +217,22 @@ export async function createRun(input: {
           baseCommit,
           createdAt: now(),
         })
-        .run()
-      appendEventSync({ runId, type: 'run.created', payload: { versionId: version.id } }, tx)
+        
+      await appendEventSync({ runId, type: 'run.created', payload: { versionId: version.id } }, tx)
       // Every block of the frozen version becomes a queued node run now (the design's section 7, step 2), so a block
       // a run never reaches can be ended as cancelled instead of reading "Queued" for ever.
       const graph = JSON.parse(version.graphJson) as Graph
       for (const kind of STAGE_ORDER) {
         for (const block of graph.blocks.filter(b => b.kind === kind)) {
-          const row = tx
+          const row = (await tx
             .insert(nodeRuns)
             .values({ id: ulid(), projectId: wf.projectId, runId, blockId: block.id, state: 'queued', attempt: 1 })
             .returning()
-            .get()
-          appendEventSync({ runId, nodeRunId: row.id, type: 'node.queued', payload: { blockId: block.id } }, tx)
+            )[0]!
+          await appendEventSync({ runId, nodeRunId: row.id, type: 'node.queued', payload: { blockId: block.id } }, tx)
         }
       }
     },
-    { behavior: 'immediate' },
   )
   return { runId, versionId: version.id }
 }
@@ -244,41 +242,39 @@ export async function createRun(input: {
 // shows a node still running. The run row, node rows and their events commit in one transaction; a run that already
 // finished is left as it is.
 export async function cancelRun(runId: string): Promise<void> {
-  db.transaction(
-    tx => {
-      const run = tx.select().from(runs).where(eq(runs.id, runId)).get()
+  (await db.transaction(
+    async tx => {
+      const run = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
       if (!run) throw new RunNotFoundError(runId)
       if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') return
       const finishedAt = now()
-      tx.update(runs).set({ status: 'cancelled', finishedAt }).where(eq(runs.id, runId)).run()
-      for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
+      await tx.update(runs).set({ status: 'cancelled', finishedAt }).where(eq(runs.id, runId))
+      for (const node of (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)))) {
         if (!canTransition(node.state as NodeState, 'cancelled')) continue
-        tx.update(nodeRuns).set({ state: 'cancelled', finishedAt }).where(eq(nodeRuns.id, node.id)).run()
-        appendEventSync({ runId, nodeRunId: node.id, type: 'node.cancelled', payload: { blockId: node.blockId } }, tx)
+        await tx.update(nodeRuns).set({ state: 'cancelled', finishedAt }).where(eq(nodeRuns.id, node.id))
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.cancelled', payload: { blockId: node.blockId } }, tx)
       }
-      appendEventSync({ runId, type: 'run.cancelled' }, tx)
+      await appendEventSync({ runId, type: 'run.cancelled' }, tx)
     },
-    { behavior: 'immediate' },
-  )
+  ))
 }
 
 // For a run whose execution could not be requested: ends it as failed (status and event together) so it does not sit queued.
 export async function failUnstartedRun(runId: string): Promise<void> {
-  db.transaction(
-    tx => {
-      const run = tx.select().from(runs).where(eq(runs.id, runId)).get()
+  (await db.transaction(
+    async tx => {
+      const run = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
       if (!run || run.status !== 'queued') return
-      tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId)).run()
+      await tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId))
       // Nothing will ever run these blocks; leaving them queued would say they are still to come.
-      for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
+      for (const node of (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)))) {
         if (!canTransition(node.state as NodeState, 'cancelled')) continue
-        tx.update(nodeRuns).set({ state: 'cancelled', finishedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
-        appendEventSync({ runId, nodeRunId: node.id, type: 'node.cancelled', payload: { blockId: node.blockId, reason: strings.run.couldNotStart } }, tx)
+        await tx.update(nodeRuns).set({ state: 'cancelled', finishedAt: now() }).where(eq(nodeRuns.id, node.id))
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.cancelled', payload: { blockId: node.blockId, reason: strings.run.couldNotStart } }, tx)
       }
-      appendEventSync({ runId, type: 'run.failed', payload: { cause: 'not_started', message: strings.run.couldNotStart } }, tx)
+      await appendEventSync({ runId, type: 'run.failed', payload: { cause: 'not_started', message: strings.run.couldNotStart } }, tx)
     },
-    { behavior: 'immediate' },
-  )
+  ))
 }
 
 export type RunSummary = {
@@ -296,8 +292,8 @@ export type RunSummary = {
 }
 
 /** A workflow's past tasks, newest first: what was asked, when, how it ended, and the branch it was kept on. */
-export function listRuns(workflowId: string, limit = 50): RunSummary[] {
-  return db
+export async function listRuns(workflowId: string, limit = 50): Promise<RunSummary[]> {
+  const rows = (await db
     .select({
       runId: runs.id,
       request: runs.request,
@@ -310,8 +306,9 @@ export function listRuns(workflowId: string, limit = 50): RunSummary[] {
     })
     .from(runs)
     .where(eq(runs.workflowId, workflowId))
-    .orderBy(desc(sql`rowid`))
+    .orderBy(desc(runs.createdAt), desc(runs.id))
     .limit(limit)
-    .all()
-    .map(r => ({ ...r, title: titleOf(r), onHold: isOnHold(r.runId) }))
+    )
+  const held = await onHoldAmong(rows.map(r => r.runId))
+  return rows.map(r => ({ ...r, title: titleOf(r), onHold: held.has(r.runId) }))
 }

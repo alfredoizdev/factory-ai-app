@@ -28,7 +28,7 @@ export function sniffImage(bytes: Buffer): { mime: string; ext: string } | null 
   return hit ? { mime: hit.mime, ext: hit.ext } : null
 }
 
-export function saveAttachment(name: string, bytes: Buffer, dir: string = ATTACHMENT_DIR): { id: string; name: string; mime: string; size: number } {
+export async function saveAttachment(name: string, bytes: Buffer, dir: string = ATTACHMENT_DIR): Promise<{ id: string; name: string; mime: string; size: number }> {
   if (bytes.length === 0) throw new AttachmentError(strings.attachments.notImage)
   if (bytes.length > MAX_IMAGE_BYTES) throw new AttachmentError(strings.attachments.tooBig(MAX_IMAGE_BYTES / 1024 / 1024))
   const kind = sniffImage(bytes)
@@ -39,25 +39,25 @@ export function saveAttachment(name: string, bytes: Buffer, dir: string = ATTACH
   const path = join(dir, `${id}.${kind.ext}`)
   writeFileSync(path, bytes)
   const clean = name.replace(/[^\w.\- ]+/g, '_').slice(0, 120) || `image.${kind.ext}`
-  db.insert(attachments).values({ id, path, name: clean, mime: kind.mime, size: bytes.length, createdAt: new Date().toISOString() }).run()
+  await db.insert(attachments).values({ id, path, name: clean, mime: kind.mime, size: bytes.length, createdAt: new Date().toISOString() })
   return { id, name: clean, mime: kind.mime, size: bytes.length }
 }
 
 /** Gives not-yet-used attachments to a run (and, for a request for changes, to that decision). Others are ignored. */
-export function claimAttachments(ids: readonly string[], runId: string, approvalId: string | null = null): number {
+export async function claimAttachments(ids: readonly string[], runId: string, approvalId: string | null = null): Promise<number> {
   const wanted = [...new Set(ids)].slice(0, MAX_IMAGES)
   if (wanted.length === 0) return 0
-  const free = db.select().from(attachments).where(and(inArray(attachments.id, wanted), isNull(attachments.runId))).all()
-  for (const a of free) db.update(attachments).set({ runId, approvalId }).where(eq(attachments.id, a.id)).run()
+  const free = (await db.select().from(attachments).where(and(inArray(attachments.id, wanted), isNull(attachments.runId))))
+  for (const a of free) await db.update(attachments).set({ runId, approvalId }).where(eq(attachments.id, a.id))
   return free.length
 }
 
 /** The image paths for a run's first round (none attached to a decision), or for one request for changes. */
-export function imagePathsFor(runId: string, approvalId: string | null = null): string[] {
-  return db
+export async function imagePathsFor(runId: string, approvalId: string | null = null): Promise<string[]> {
+  return (await db
     .select()
     .from(attachments)
     .where(and(eq(attachments.runId, runId), approvalId ? eq(attachments.approvalId, approvalId) : isNull(attachments.approvalId)))
-    .all()
+    )
     .map(a => a.path)
 }

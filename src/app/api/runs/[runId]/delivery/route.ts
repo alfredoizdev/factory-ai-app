@@ -13,7 +13,7 @@ function failed(e: unknown): Response {
 export async function GET(_req: Request, ctx: Ctx) {
   const { runId } = await ctx.params
   try {
-    return Response.json(deliveryState(runId))
+    return Response.json((await deliveryState(runId)))
   } catch (e) {
     return failed(e)
   }
@@ -34,23 +34,23 @@ export async function POST(req: Request, ctx: Ctx) {
   const mode = body.success ? body.data.mode : 'apply'
   const name = body.success ? (body.data.name?.trim() ?? '') : ''
   try {
-    if (mode === 'switch') return Response.json(switchToBranch(runId))
-    if (mode === 'back') return Response.json(switchBack(runId))
+    if (mode === 'switch') return Response.json((await switchToBranch(runId)))
+    if (mode === 'back') return Response.json((await switchBack(runId)))
     if (mode === 'push') return Response.json(await pushBranch(runId))
     // Before the first keep, a short model names the branch (unless the person did) and describes the change, at once.
-    const first = !deliveryState(runId).kept
-    const request = requestOf(runId) ?? ''
+    const first = !(await deliveryState(runId)).kept
+    const request = (await requestOf(runId)) ?? ''
     const [fallbackName, message] = first
-      ? await Promise.all([name === '' ? suggestedName(runId) : null, suggestCommitMessage(request, pendingDiff(runId))])
+      ? await Promise.all([name === '' ? suggestedName(runId) : null, suggestCommitMessage(request, (await pendingDiff(runId)))])
       : [null, null]
     const options = { name: name || null, fallbackName, message }
-    return Response.json(mode === 'branch' ? keepOnBranch(runId, options) : deliverToProject(runId, options))
+    return Response.json(mode === 'branch' ? (await keepOnBranch(runId, options)) : (await deliverToProject(runId, options)))
   } catch (e) {
     return failed(e)
   }
 }
 
 async function suggestedName(runId: string): Promise<string | null> {
-  const request = requestOf(runId)
-  return request === null ? null : branchFromWords(runId, await suggestBranchWords(request, changedFiles(runId)))
+  const request = (await requestOf(runId))
+  return request === null ? null : branchFromWords(runId, await suggestBranchWords(request, (await changedFiles(runId))))
 }

@@ -4,8 +4,8 @@ import { db, migrateDb } from '@/db/client'
 import { seedDemoProject } from '@/db/seed'
 import { projects, workflows, workflowVersions, runs, nodeRuns, usageRecords } from '@/db/schema'
 
-beforeAll(() => {
-  migrateDb()
+beforeAll(async () => {
+  await migrateDb()
 })
 
 const now = () => new Date().toISOString()
@@ -64,7 +64,7 @@ test('foreign keys are enforced: a child row with no parent is rejected', async 
   const { projectId } = await createNodeRunChain()
   await expect(
     db.insert(usageRecords).values({ id: ulid(), projectId, nodeRunId: 'missing', createdAt: now() }),
-  ).rejects.toThrow(/FOREIGN KEY/)
+  ).rejects.toMatchObject({ cause: { code: '23503' } })
 })
 
 test('deleting a run cascades to its node runs and usage records', async () => {
@@ -79,7 +79,8 @@ test('deleting a workflow that has a run is rejected and history survives', asyn
   const chain = await createNodeRunChain()
   const usage = await insertUsage(chain)
   const run = (await db.select().from(runs).where(eq(runs.id, chain.runId)))[0]!
-  await expect(db.delete(workflows).where(eq(workflows.id, run.workflowId))).rejects.toThrow(/FOREIGN KEY/)
+  // restrict_violation: a workflow with run history cannot be deleted.
+  await expect(db.delete(workflows).where(eq(workflows.id, run.workflowId))).rejects.toMatchObject({ cause: { code: '23001' } })
   expect(await db.select().from(runs).where(eq(runs.id, chain.runId))).toHaveLength(1)
   expect(await db.select().from(nodeRuns).where(eq(nodeRuns.id, chain.nodeRunId))).toHaveLength(1)
   expect(await db.select().from(usageRecords).where(eq(usageRecords.id, usage.id))).toHaveLength(1)
@@ -100,14 +101,14 @@ test('deleting a project cascades and removes its runs and their children, delib
 // M3a: a project knows its repository and test command; a run knows the worktree it works in.
 test('repository settings and run workspace columns default to null and accept values', async () => {
   const chain = await createNodeRunChain()
-  const project = db.select().from(projects).where(eq(projects.id, chain.projectId)).get()!
+  const project = (await db.select().from(projects).where(eq(projects.id, chain.projectId)))[0]!
   expect(project.repoPath).toBeNull()
   expect(project.testCommand).toBeNull()
-  const run = db.select().from(runs).where(eq(runs.id, chain.runId)).get()!
+  const run = (await db.select().from(runs).where(eq(runs.id, chain.runId)))[0]!
   expect([run.worktreePath, run.branch, run.baseCommit]).toEqual([null, null, null])
 
-  db.update(projects).set({ repoPath: '/repo', testCommand: 'npm test' }).where(eq(projects.id, chain.projectId)).run()
-  db.update(runs).set({ worktreePath: '/wt', branch: 'factory/x', baseCommit: 'abc' }).where(eq(runs.id, chain.runId)).run()
-  expect(db.select().from(projects).where(eq(projects.id, chain.projectId)).get()!.repoPath).toBe('/repo')
-  expect(db.select().from(runs).where(eq(runs.id, chain.runId)).get()!.branch).toBe('factory/x')
+  await db.update(projects).set({ repoPath: '/repo', testCommand: 'npm test' }).where(eq(projects.id, chain.projectId))
+  await db.update(runs).set({ worktreePath: '/wt', branch: 'factory/x', baseCommit: 'abc' }).where(eq(runs.id, chain.runId))
+  expect((await db.select().from(projects).where(eq(projects.id, chain.projectId)))[0]!.repoPath).toBe('/repo')
+  expect((await db.select().from(runs).where(eq(runs.id, chain.runId)))[0]!.branch).toBe('factory/x')
 })

@@ -133,9 +133,9 @@ export async function startPreview(runId: string): Promise<PreviewState> {
   const existing = registry.get(runId)
   if (existing && existing.status !== 'failed' && existing.status !== 'stopped') return previewState(runId)
 
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run?.worktreePath || !existsSync(run.worktreePath)) throw new PreviewError(strings.preview.noWorktree)
-  const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
+  const project = (await db.select().from(projects).where(eq(projects.id, run.projectId)))[0]
   return startServer(runId, run.worktreePath, project?.repoPath ?? null)
 }
 

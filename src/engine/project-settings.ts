@@ -31,8 +31,8 @@ export type ProjectSettings = {
 
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
-export function getProjectSettings(projectId: string): ProjectSettings {
-  const row = db.select().from(projects).where(eq(projects.id, projectId)).get()
+export async function getProjectSettings(projectId: string): Promise<ProjectSettings> {
+  const row = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]
   if (!row) throw new ProjectSettingsError(strings.settings.noProject)
   return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk, currentBranch: branchOf(row.repoPath), defaultBranch: mainOf(row.repoPath) }
 }
@@ -74,30 +74,30 @@ export function validRepoRoot(path: string): string {
   return real
 }
 
-export function setProjectRepo(projectId: string, path: string): { repoPath: string; testCommand: string | null } {
-  const current = getProjectSettings(projectId)
+export async function setProjectRepo(projectId: string, path: string): Promise<{ repoPath: string; testCommand: string | null }> {
+  const current = (await getProjectSettings(projectId))
   const repoPath = validRepoRoot(path.trim())
   // A command the person chose is kept; the detected one is only a suggestion for an empty field.
   const testCommand = current.testCommand ?? detectTestCommand(repoPath)
-  db.update(projects).set({ repoPath, testCommand }).where(eq(projects.id, projectId)).run()
+  await db.update(projects).set({ repoPath, testCommand }).where(eq(projects.id, projectId))
   return { repoPath, testCommand }
 }
 
 /** The person's choice to let measured low-risk changes pass the human check on their own. */
-export function setAutoApproveLowRisk(projectId: string, on: boolean): void {
-  getProjectSettings(projectId)
-  db.update(projects).set({ autoApproveLowRisk: on }).where(eq(projects.id, projectId)).run()
+export async function setAutoApproveLowRisk(projectId: string, on: boolean): Promise<void> {
+  await getProjectSettings(projectId)
+  await db.update(projects).set({ autoApproveLowRisk: on }).where(eq(projects.id, projectId))
 }
 
-export function setProjectName(projectId: string, name: string): void {
-  getProjectSettings(projectId)
+export async function setProjectName(projectId: string, name: string): Promise<void> {
+  await getProjectSettings(projectId)
   const value = name.trim()
   if (value === '' || value.length > 80 || /[\n\r\0]/.test(value)) throw new ProjectSettingsError(strings.projects.badName)
-  db.update(projects).set({ name: value }).where(eq(projects.id, projectId)).run()
+  await db.update(projects).set({ name: value }).where(eq(projects.id, projectId))
 }
 
-export function setTestCommand(projectId: string, command: string | null): void {
-  getProjectSettings(projectId)
+export async function setTestCommand(projectId: string, command: string | null): Promise<void> {
+  await getProjectSettings(projectId)
   const value = command?.trim() ? command.trim() : null
-  db.update(projects).set({ testCommand: value }).where(eq(projects.id, projectId)).run()
+  await db.update(projects).set({ testCommand: value }).where(eq(projects.id, projectId))
 }

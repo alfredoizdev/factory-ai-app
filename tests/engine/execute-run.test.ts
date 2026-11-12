@@ -14,8 +14,8 @@ import { recordDecision, type Decision } from '@/engine/approvals'
 
 // These drive the orchestration directly with a stand-in for Inngest's step tools: no dev server is needed.
 
-beforeAll(() => {
-  migrateDb()
+beforeAll(async () => {
+  await migrateDb()
 })
 
 const now = () => new Date().toISOString()
@@ -31,7 +31,7 @@ function fakeStep(decision?: { decision: string } | null, runId?: string): StepA
     waitForEvent: async () => {
       if (decision && !delivered) {
         // As the app does it: the decision is recorded first, then the event is sent.
-        if (runId && decision.decision !== 'unrecorded') recordDecision(runId, decision.decision as Decision, { actor: 'test', diffHash: null })
+        if (runId && decision.decision !== 'unrecorded') (await recordDecision(runId, decision.decision as Decision, { actor: 'test', diffHash: null }))
         delivered = true
         return { data: decision }
       }
@@ -245,7 +245,7 @@ test('a rejection fails the run', async () => {
 
 test('a run with no run.created event still executes', async () => {
   const runId = await newRun('add a spinner')
-  await db.run(sql`delete from events where run_id = ${runId}`)
+  await db.execute(sql`delete from events where run_id = ${runId}`)
   await drive(runId, fast)
   expect((await types(runId)).at(-1)).toBe('node.waiting_approval')
 })
@@ -298,17 +298,17 @@ test('an unresolvable provider strands no node row and the failure handler fails
   // No node was left half-started: every row is still exactly as createRun left it.
   const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
   expect(rows.every(n => n.state === 'queued' && n.startedAt === null)).toBe(true)
-  failRunAfterError(runId)
+  await failRunAfterError(runId)
   expect(await runStatus(runId)).toBe('failed')
   expect((await types(runId)).at(-1)).toBe('run.failed')
 })
 
 test('the failure handler fails a node left running and then the run, once', async () => {
   const runId = await newRun('add a spinner')
-  db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
-  db.update(nodeRuns).set({ state: 'running' }).where(and(eq(nodeRuns.runId, runId), eq(nodeRuns.blockId, 'build'))).run()
-  failRunAfterError(runId)
-  failRunAfterError(runId) // idempotent
+  await db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
+  await db.update(nodeRuns).set({ state: 'running' }).where(and(eq(nodeRuns.runId, runId), eq(nodeRuns.blockId, 'build')))
+  await failRunAfterError(runId)
+  await failRunAfterError(runId) // idempotent
   expect((await getNodeRun(runId, 'build')).state).toBe('failed')
   expect((await getNodeRun(runId, 'build')).failureCause).toBe('internal_error')
   expect(await runStatus(runId)).toBe('failed')
@@ -317,9 +317,9 @@ test('the failure handler fails a node left running and then the run, once', asy
 
 test('the failure handler rescues a node stranded in queued', async () => {
   const runId = await newRun('add a spinner')
-  db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
+  await db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
   expect((await getNodeRun(runId, 'plan')).state).toBe('queued') // createRun left it queued
-  failRunAfterError(runId)
+  await failRunAfterError(runId)
   expect((await getNodeRun(runId, 'plan')).state).toBe('cancelled')
   expect(await runStatus(runId)).toBe('failed')
   expect(await types(runId)).toContain('node.cancelled')
@@ -328,15 +328,20 @@ test('the failure handler rescues a node stranded in queued', async () => {
 test('the failure handler leaves a cancelled run alone', async () => {
   const runId = await newRun('x')
   await cancelRun(runId)
-  failRunAfterError(runId)
+  await failRunAfterError(runId)
   expect(await runStatus(runId)).toBe('cancelled')
 })
 
 // The carried obligation: row and event are one write.
 describe('atomic run writes', () => {
-  afterEach(() => { db.run(sql`drop trigger if exists boom`) })
-  const failInsert = (type: string) =>
-    db.run(sql.raw(`create trigger boom before insert on events when new.type = '${type}' begin select raise(abort, 'boom'); end`))
+  afterEach(async () => {
+    await db.execute(sql`drop trigger if exists boom on events`)
+  })
+  // A Postgres trigger that refuses one event type, as a failed write would.
+  const failInsert = async (type: string) => {
+    await db.execute(sql.raw(`create or replace function boom() returns trigger language plpgsql as $$ begin if new.type = '${type}' then raise exception 'boom'; end if; return new; end $$`))
+    await db.execute(sql`create trigger boom before insert on events for each row execute function boom()`)
+  }
 
   test('createRun leaves no run behind when run.created cannot be written', async () => {
     const projectId = ulid()
@@ -346,17 +351,17 @@ describe('atomic run writes', () => {
       id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: now(), updatedAt: now(),
     })
     await publishVersion(workflowId)
-    failInsert('run.created')
-    await expect(createRun({ workflowId, request: 'x' })).rejects.toThrow(/boom/)
+    await failInsert('run.created')
+    await expect(createRun({ workflowId, request: 'x' })).rejects.toMatchObject({ cause: { message: expect.stringMatching(/boom/) } })
     expect(await db.select().from(runs).where(eq(runs.workflowId, workflowId))).toHaveLength(0)
   })
 
   test('cancelRun does not mark the run cancelled when run.cancelled cannot be written, and can be retried', async () => {
     const runId = await newRun('x')
-    failInsert('run.cancelled')
-    await expect(cancelRun(runId)).rejects.toThrow(/boom/)
+    await failInsert('run.cancelled')
+    await expect(cancelRun(runId)).rejects.toMatchObject({ cause: { message: expect.stringMatching(/boom/) } })
     expect(await runStatus(runId)).toBe('queued')
-    db.run(sql`drop trigger boom`)
+    await db.execute(sql`drop trigger boom on events`)
     await cancelRun(runId)
     expect(await runStatus(runId)).toBe('cancelled')
     expect((await types(runId)).at(-1)).toBe('run.cancelled')
@@ -365,13 +370,13 @@ describe('atomic run writes', () => {
   test('appendEvent with a transaction handle rolls back with the caller', async () => {
     const runId = await newRun('x')
     const before = await types(runId)
-    expect(() =>
-      db.transaction(tx => {
-        tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
-        void appendEvent({ runId, type: 'run.started' }, tx)
+    await expect(
+      db.transaction(async tx => {
+        await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
+        await appendEvent({ runId, type: 'run.started' }, tx)
         throw new Error('crash')
       }),
-    ).toThrow('crash')
+    ).rejects.toThrow('crash')
     expect(await runStatus(runId)).toBe('queued')
     expect(await types(runId)).toEqual(before)
     expect(before).not.toContain('run.started')

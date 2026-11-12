@@ -21,9 +21,9 @@ export function titleOf(run: { title: string | null }): string | null {
 }
 
 /** Renames a task. Marked as the person's, so a suggestion arriving later never overwrites it. */
-export function setRunTitle(runId: string, raw: string): string | null {
+export async function setRunTitle(runId: string, raw: string): Promise<string | null> {
   const title = cleanTitle(raw)
   if (!title) return null
-  const changed = db.update(runs).set({ title, titleByPerson: true }).where(eq(runs.id, runId)).run().changes
-  return changed > 0 ? title : null
+  const changed = await db.update(runs).set({ title, titleByPerson: true }).where(eq(runs.id, runId)).returning({ id: runs.id })
+  return changed.length > 0 ? title : null
 }

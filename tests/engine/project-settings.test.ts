@@ -15,9 +15,9 @@ beforeAll(() => migrateDb())
 const now = () => new Date().toISOString()
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' })
 
-function newProject(): string {
+async function newProject(): Promise<string> {
   const id = ulid()
-  db.insert(projects).values({ id, projectId: id, name: 'p', createdAt: now() }).run()
+  await db.insert(projects).values({ id, projectId: id, name: 'p', createdAt: now() })
   return id
 }
 function repo(options: { commit?: boolean; tests?: boolean } = {}): string {
@@ -33,9 +33,9 @@ function repo(options: { commit?: boolean; tests?: boolean } = {}): string {
   }
   return dir
 }
-const refusal = (fn: () => unknown) => {
+const refusal = async (fn: () => unknown) => {
   try {
-    fn()
+    await fn()
   } catch (e) {
     if (e instanceof ProjectSettingsError) return e.message
     throw e
@@ -43,17 +43,17 @@ const refusal = (fn: () => unknown) => {
   throw new Error('expected a refusal')
 }
 
-test('a valid repository is stored, and the obvious test command is suggested', () => {
-  const id = newProject()
+test('a valid repository is stored, and the obvious test command is suggested', async () => {
+  const id = (await newProject())
   const dir = repo({ tests: true })
-  expect(setProjectRepo(id, dir)).toEqual({ repoPath: dir, testCommand: 'npm test' })
-  expect(getProjectSettings(id)).toMatchObject({ projectId: id, repoPath: dir, testCommand: 'npm test', autoApproveLowRisk: false })
+  expect((await setProjectRepo(id, dir))).toEqual({ repoPath: dir, testCommand: 'npm test' })
+  expect((await getProjectSettings(id))).toMatchObject({ projectId: id, repoPath: dir, testCommand: 'npm test', autoApproveLowRisk: false })
 })
 
-test('a test command the person already set is never overwritten by the suggestion', () => {
-  const id = newProject()
-  setTestCommand(id, 'make check')
-  expect(setProjectRepo(id, repo({ tests: true })).testCommand).toBe('make check')
+test('a test command the person already set is never overwritten by the suggestion', async () => {
+  const id = (await newProject())
+  await setTestCommand(id, 'make check')
+  expect((await setProjectRepo(id, repo({ tests: true }))).testCommand).toBe('make check')
 })
 
 test.each([
@@ -66,42 +66,42 @@ test.each([
     mkdirSync(join(dir, 'sub'))
     return join(dir, 'sub')
   }, strings.settings.notRoot],
-])('%s is refused with its own sentence and nothing is stored', (_, path, sentence) => {
-  const id = newProject()
-  expect(refusal(() => setProjectRepo(id, path()))).toBe(sentence)
-  expect(getProjectSettings(id).repoPath).toBeNull()
+])('%s is refused with its own sentence and nothing is stored', async (_, path, sentence) => {
+  const id = (await newProject())
+  expect(await refusal(() => setProjectRepo(id, path()))).toBe(sentence)
+  expect((await getProjectSettings(id)).repoPath).toBeNull()
 })
 
-test('a test command can be set and cleared; blank means none', () => {
-  const id = newProject()
-  setTestCommand(id, '  npm run test:unit  ')
-  expect(getProjectSettings(id).testCommand).toBe('npm run test:unit')
-  setTestCommand(id, '   ')
-  expect(getProjectSettings(id).testCommand).toBeNull()
+test('a test command can be set and cleared; blank means none', async () => {
+  const id = (await newProject())
+  await setTestCommand(id, '  npm run test:unit  ')
+  expect((await getProjectSettings(id)).testCommand).toBe('npm run test:unit')
+  await setTestCommand(id, '   ')
+  expect((await getProjectSettings(id)).testCommand).toBeNull()
 })
 
 async function publishedWorkflow(projectId: string): Promise<string> {
   const workflowId = ulid()
-  db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: now(), updatedAt: now() }).run()
+  await db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: now(), updatedAt: now() })
   await saveDraft(workflowId, defaultGraph())
   await publishVersion(workflowId)
   return workflowId
 }
 
 test('a Claude run without a repository is refused and no run is created', async () => {
-  const id = newProject()
+  const id = (await newProject())
   const workflowId = await publishedWorkflow(id)
   await expect(createRun({ workflowId, request: 'r', providerId: 'claude' })).rejects.toBeInstanceOf(RepoNotSetError)
-  expect(db.select().from(runs).where(eq(runs.workflowId, workflowId)).all()).toEqual([])
+  expect((await db.select().from(runs).where(eq(runs.workflowId, workflowId)))).toEqual([])
 })
 
 test('the demo stays the default, and Claude is recorded when chosen with a repository', async () => {
-  const id = newProject()
-  setProjectRepo(id, repo())
+  const id = (await newProject())
+  await setProjectRepo(id, repo())
   const workflowId = await publishedWorkflow(id)
   const demo = await createRun({ workflowId, request: 'r' })
   const real = await createRun({ workflowId, request: 'r', providerId: 'claude' })
-  const provider = (runId: string) => db.select().from(runs).where(eq(runs.id, runId)).get()!.providerId
-  expect(provider(demo.runId)).toBe('demo')
-  expect(provider(real.runId)).toBe('claude')
+  const provider = async (runId: string) => (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.providerId
+  expect((await provider(demo.runId))).toBe('demo')
+  expect((await provider(real.runId))).toBe('claude')
 })

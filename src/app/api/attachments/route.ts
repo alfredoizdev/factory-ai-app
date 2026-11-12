@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   if (!(file instanceof File)) return Response.json({ error: strings.attachments.notImage }, { status: 400 })
   if (file.size > MAX_IMAGE_BYTES) return Response.json({ error: strings.attachments.tooBig(MAX_IMAGE_BYTES / 1024 / 1024) }, { status: 413 })
   try {
-    return Response.json(saveAttachment(file.name, Buffer.from(await file.arrayBuffer())), { status: 201 })
+    return Response.json((await saveAttachment(file.name, Buffer.from(await file.arrayBuffer()))), { status: 201 })
   } catch (e) {
     if (e instanceof AttachmentError) return Response.json({ error: e.message }, { status: 400 })
     throw e

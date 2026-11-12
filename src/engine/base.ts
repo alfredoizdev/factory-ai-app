@@ -57,8 +57,8 @@ export function nodeModulesDirs(root: string): string[] {
 
 export const basePathOf = (projectId: string, root = BASE_ROOT) => join(root, projectId)
 
-function setBase(projectId: string, fields: Partial<typeof projects.$inferInsert>): void {
-  db.update(projects).set({ ...fields, baseUpdatedAt: new Date().toISOString() }).where(eq(projects.id, projectId)).run()
+async function setBase(projectId: string, fields: Partial<typeof projects.$inferInsert>): Promise<void> {
+  await db.update(projects).set({ ...fields, baseUpdatedAt: new Date().toISOString() }).where(eq(projects.id, projectId))
 }
 
 const inFlight = new Set<string>()
@@ -72,13 +72,13 @@ export async function prepareBase(
   deps: { install?: (dir: string) => Promise<InstallResult | null>; root?: string } = {},
 ): Promise<void> {
   if (inFlight.has(projectId)) return
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get()
+  const project = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]
   if (!project?.repoPath) return
   inFlight.add(projectId)
   const repo = project.repoPath
   const path = basePathOf(projectId, deps.root)
   try {
-    setBase(projectId, { baseStatus: 'installing', baseMessage: null })
+    await setBase(projectId, { baseStatus: 'installing', baseMessage: null })
     const main = defaultBranch(repo)
     const start = main ? await freshestStart(repo, main) : null
     const commit = start?.commit ?? git(repo, ['rev-parse', 'HEAD'])
@@ -94,12 +94,12 @@ export async function prepareBase(
     git(repo, ['worktree', 'add', '--detach', '-q', path, commit])
     const result = await (deps.install ?? installDependencies)(path)
     if (result && !result.ok) {
-      setBase(projectId, { baseStatus: 'failed', baseCommit: commit, baseLockHash: null, baseMessage: clip(redact(result.outputTail).trim().split('\n').slice(-2).join(' '), 300) })
+      await setBase(projectId, { baseStatus: 'failed', baseCommit: commit, baseLockHash: null, baseMessage: clip(redact(result.outputTail).trim().split('\n').slice(-2).join(' '), 300) })
       return
     }
-    setBase(projectId, { baseStatus: 'ready', baseCommit: commit, baseLockHash: lockHashOf(path), baseMessage: null })
+    await setBase(projectId, { baseStatus: 'ready', baseCommit: commit, baseLockHash: lockHashOf(path), baseMessage: null })
   } catch (e) {
-    setBase(projectId, { baseStatus: 'failed', baseMessage: clip(redact(e instanceof Error ? e.message : String(e)), 300) })
+    await setBase(projectId, { baseStatus: 'failed', baseMessage: clip(redact(e instanceof Error ? e.message : String(e)), 300) })
   } finally {
     inFlight.delete(projectId)
   }
@@ -135,8 +135,8 @@ export function cloneTree(from: string, to: string): void {
 export type BaseCopy = { copied: true; ms: number } | { copied: false; reason: 'no-base' | 'different-lockfile' | 'copy-failed' }
 
 /** Gives a task's working copy the base's installed dependencies, when its lockfile is the base's. */
-export function copyBaseInto(projectId: string, workdir: string, root = BASE_ROOT): BaseCopy {
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get()
+export async function copyBaseInto(projectId: string, workdir: string, root = BASE_ROOT): Promise<BaseCopy> {
+  const project = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]
   const base = basePathOf(projectId, root)
   if (project?.baseStatus !== 'ready' || !project.baseLockHash || !existsSync(base)) return { copied: false, reason: 'no-base' }
   if (lockHashOf(workdir) !== project.baseLockHash) return { copied: false, reason: 'different-lockfile' }
@@ -155,8 +155,8 @@ export function copyBaseInto(projectId: string, workdir: string, root = BASE_ROO
 }
 
 /** True when the base was installed from a different lockfile than the one at `commit`: it should be rebuilt. */
-export function baseIsStale(projectId: string, commit: string): boolean {
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get()
+export async function baseIsStale(projectId: string, commit: string): Promise<boolean> {
+  const project = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]
   if (!project?.repoPath || project.baseStatus !== 'ready') return false
   const at = lockHashAt(project.repoPath, commit)
   return at !== null && at !== project.baseLockHash

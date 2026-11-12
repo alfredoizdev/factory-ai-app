@@ -18,11 +18,11 @@ export type ProjectSummary = {
   baseMessage: string | null
 }
 
-export function listProjects(): ProjectSummary[] {
-  const rows = db.select().from(projects).orderBy(asc(projects.createdAt)).all()
+export async function listProjects(): Promise<ProjectSummary[]> {
+  const rows = (await db.select().from(projects).orderBy(asc(projects.createdAt)))
   const out: ProjectSummary[] = []
   for (const p of rows) {
-    const wf = db.select().from(workflows).where(eq(workflows.projectId, p.id)).orderBy(asc(workflows.createdAt)).get()
+    const wf = (await db.select().from(workflows).where(eq(workflows.projectId, p.id)).orderBy(asc(workflows.createdAt)))[0]
     if (wf) out.push({ projectId: p.id, name: p.name, repoPath: p.repoPath, workflowId: wf.id, baseStatus: p.baseStatus, baseMessage: p.baseMessage })
   }
   return out
@@ -49,7 +49,7 @@ export async function createProject(input: {
   const repoPath = validRepoRoot(input.path.trim())
   const name = input.name.trim()
   if (!NAME.test(name)) throw new ProjectSettingsError(strings.projects.badName)
-  if (db.select().from(projects).where(eq(projects.repoPath, repoPath)).get()) throw new ProjectSettingsError(strings.projects.alreadyProject)
+  if ((await db.select().from(projects).where(eq(projects.repoPath, repoPath)))[0]) throw new ProjectSettingsError(strings.projects.alreadyProject)
   const testCommand = input.testCommand?.trim() || null
   if (testCommand && !COMMAND.test(testCommand)) throw new ProjectSettingsError(strings.projects.badCommand)
   for (const c of input.checks) if (!COMMAND.test(c.command.trim()) || !NAME.test(c.label.trim())) throw new ProjectSettingsError(strings.projects.badCommand)
@@ -67,9 +67,9 @@ export async function createProject(input: {
     config: { testCommand: c.command.trim() },
     position: { x: testsColumn, y: (i + 1) * 340 },
   }))
-  db.transaction(tx => {
-    tx.insert(projects).values({ id: projectId, projectId, name, repoPath, testCommand, autoApproveLowRisk: input.autoApproveLowRisk === true, createdAt: now }).run()
-    tx.insert(workflows).values({ id: workflowId, projectId, name, draftJson: JSON.stringify(graph), createdAt: now, updatedAt: now }).run()
+  await db.transaction(async tx => {
+    await tx.insert(projects).values({ id: projectId, projectId, name, repoPath, testCommand, autoApproveLowRisk: input.autoApproveLowRisk === true, createdAt: now })
+    await tx.insert(workflows).values({ id: workflowId, projectId, name, draftJson: JSON.stringify(graph), createdAt: now, updatedAt: now })
   })
   await saveDraft(workflowId, { blocks: [...graph.blocks, ...extra] })
   await publishVersion(workflowId)

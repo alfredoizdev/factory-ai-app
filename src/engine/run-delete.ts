@@ -29,15 +29,15 @@ function inside(root: string, path: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !rel.startsWith(sep) && !rel.includes(`..${sep}`)
 }
 
-export function deleteRun(runId: string, options: { worktreeRoot?: string; attachmentDir?: string; snapshotDir?: string } = {}): void {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+export async function deleteRun(runId: string, options: { worktreeRoot?: string; attachmentDir?: string; snapshotDir?: string } = {}): Promise<void> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) throw new RunDeleteError(strings.errors.runNotFound, 404)
   if (LIVE.has(run.status)) throw new RunDeleteError(strings.history.stillLive, 409)
-  const repo = db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, run.projectId)).get()?.repoPath ?? null
-  const files = db.select({ path: attachments.path }).from(attachments).where(eq(attachments.runId, runId)).all().map(a => a.path)
+  const repo = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, run.projectId)))[0]?.repoPath ?? null
+  const files = (await db.select({ path: attachments.path }).from(attachments).where(eq(attachments.runId, runId))).map(a => a.path)
 
   stopPreview(runId)
-  db.delete(runs).where(eq(runs.id, runId)).run() // its events, nodes, evidence, decisions and attachment rows go with it
+  await db.delete(runs).where(eq(runs.id, runId)) // its events, nodes, evidence, decisions and attachment rows go with it
 
   const root = options.worktreeRoot ?? DEFAULT_WORKTREE_ROOT
   const wt = run.worktreePath

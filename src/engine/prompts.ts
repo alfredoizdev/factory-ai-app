@@ -15,25 +15,25 @@ export type Prompt = {
 }
 
 /** Everything asked on this task and, before it, on each earlier task it continues from (oldest first). */
-export function promptsOf(runId: string): Prompt[] {
-  const own = promptsOfOne(runId)
+export async function promptsOf(runId: string): Promise<Prompt[]> {
+  const own = (await promptsOfOne(runId))
   const earlier: Prompt[] = []
-  let parent = db.select({ p: runs.parentRunId }).from(runs).where(eq(runs.id, runId)).get()?.p ?? null
+  let parent = (await db.select({ p: runs.parentRunId }).from(runs).where(eq(runs.id, runId)))[0]?.p ?? null
   for (let depth = 0; parent && depth < 20; depth++) {
-    earlier.unshift(...promptsOfOne(parent).map(p => ({ ...p, earlier: true })))
-    parent = db.select({ p: runs.parentRunId }).from(runs).where(eq(runs.id, parent)).get()?.p ?? null
+    earlier.unshift(...(await promptsOfOne(parent)).map(p => ({ ...p, earlier: true })))
+    parent = (await db.select({ p: runs.parentRunId }).from(runs).where(eq(runs.id, parent)))[0]?.p ?? null
   }
   return [...earlier, ...own]
 }
 
-function promptsOfOne(runId: string): Prompt[] {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+async function promptsOfOne(runId: string): Promise<Prompt[]> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) return []
   const out: Prompt[] = [{ kind: run.parentRunId ? 'followUp' : 'request', text: run.request, at: run.createdAt }]
   const rounds = new Set<string>()
   // The plan's own node: asking for a new plan reopens it too, but that is already said once, as a new plan.
   const planNodes = new Set<string>()
-  for (const e of db.select().from(events).where(eq(events.runId, runId)).orderBy(asc(events.sequence)).all()) {
+  for (const e of (await db.select().from(events).where(eq(events.runId, runId)).orderBy(asc(events.sequence)))) {
     const p = JSON.parse(e.payloadJson) as Record<string, unknown>
     const text = typeof p.note === 'string' ? p.note.trim() : ''
     // The project's rules the task was given: the agent read them with the request.
@@ -50,7 +50,7 @@ function promptsOfOne(runId: string): Prompt[] {
     }
   }
   // A yes or a no with a note: what the person said when deciding.
-  for (const a of db.select().from(approvals).where(eq(approvals.runId, runId)).all()) {
+  for (const a of (await db.select().from(approvals).where(eq(approvals.runId, runId)))) {
     const text = a.reason?.trim()
     if (!text || a.decision === 'changes') continue
     out.push({ kind: a.decision === 'approved' ? 'approvedNote' : 'rejectedNote', text, at: a.createdAt })

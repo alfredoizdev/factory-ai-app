@@ -10,7 +10,7 @@ type Ctx = { params: Promise<{ runId: string }> }
 // The run's plan as it stands: the planner's proposal, or the person's edit of it. Reading only.
 export async function GET(_req: Request, ctx: Ctx) {
   const { runId } = await ctx.params
-  return Response.json({ plan: currentPlan(runId) })
+  return Response.json({ plan: (await currentPlan(runId)) })
 }
 
 const bodySchema = z.discriminatedUnion('action', [
@@ -26,7 +26,7 @@ export async function POST(req: Request, ctx: Ctx) {
   const body = bodySchema.safeParse(await req.json().catch(() => null))
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
-    decidePlan(runId, body.data)
+    await decidePlan(runId, body.data)
     if (body.data.action === 'replan') void learnFrom(runId, body.data.note, 'replan').catch(() => undefined)
   } catch (e) {
     if (e instanceof PlanError) return Response.json({ error: e.message }, { status: e.status })

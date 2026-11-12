@@ -3,7 +3,7 @@ import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { projectNotes, runs } from '@/db/schema'
 import { askClaude, type AskModel } from '@/engine/branch-name'
-import { appendEventSync } from '@/engine/events'
+import { appendEventSync, type DbHandle } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 
 // The project's memory. What the person says on one task often holds for the next ("use the team's pink", "do not
@@ -25,21 +25,21 @@ export function cleanNote(raw: string): string | null {
   return text === '' ? null : text
 }
 
-export function listNotes(projectId: string): ProjectNote[] {
-  return db.select().from(projectNotes).where(eq(projectNotes.projectId, projectId)).orderBy(asc(projectNotes.createdAt)).all() as ProjectNote[]
+export async function listNotes(projectId: string, h: DbHandle = db): Promise<ProjectNote[]> {
+  return (await h.select().from(projectNotes).where(eq(projectNotes.projectId, projectId)).orderBy(asc(projectNotes.createdAt))) as ProjectNote[]
 }
 
-export function addNote(projectId: string, raw: string, source: NoteSource = 'person', runId: string | null = null): ProjectNote | null {
+export async function addNote(projectId: string, raw: string, source: NoteSource = 'person', runId: string | null = null): Promise<ProjectNote | null> {
   const text = cleanNote(raw)
   if (!text) return null
   // The same rule twice is noise: a repeat is not added again.
-  if (listNotes(projectId).some(n => n.text.toLowerCase() === text.toLowerCase())) return null
+  if ((await listNotes(projectId)).some(n => n.text.toLowerCase() === text.toLowerCase())) return null
   const note: ProjectNote = { id: ulid(), text, source, runId, enabled: true, createdAt: now() }
-  db.insert(projectNotes).values({ ...note, projectId }).run()
+  await db.insert(projectNotes).values({ ...note, projectId })
   return note
 }
 
-export function updateNote(projectId: string, id: string, change: { text?: string; enabled?: boolean }): ProjectNote | null {
+export async function updateNote(projectId: string, id: string, change: { text?: string; enabled?: boolean }): Promise<ProjectNote | null> {
   const set: { text?: string; enabled?: boolean } = {}
   if (change.text !== undefined) {
     const text = cleanNote(change.text)
@@ -48,36 +48,35 @@ export function updateNote(projectId: string, id: string, change: { text?: strin
   }
   if (change.enabled !== undefined) set.enabled = change.enabled
   const where = and(eq(projectNotes.id, id), eq(projectNotes.projectId, projectId))
-  if (db.update(projectNotes).set(set).where(where).run().changes === 0) return null
-  return (db.select().from(projectNotes).where(where).get() as ProjectNote | undefined) ?? null
+  if ((await db.update(projectNotes).set(set).where(where).returning({ id: projectNotes.id })).length === 0) return null
+  return ((await db.select().from(projectNotes).where(where))[0] as ProjectNote | undefined) ?? null
 }
 
-export function deleteNote(projectId: string, id: string): boolean {
-  return db.delete(projectNotes).where(and(eq(projectNotes.id, id), eq(projectNotes.projectId, projectId))).run().changes > 0
+export async function deleteNote(projectId: string, id: string): Promise<boolean> {
+  return (await db.delete(projectNotes).where(and(eq(projectNotes.id, id), eq(projectNotes.projectId, projectId))).returning({ id: projectNotes.id })).length > 0
 }
 
 /** The rules a task starts with: switched on, newest first, bounded. */
-export function rulesFor(projectId: string): ProjectNote[] {
-  return listNotes(projectId).filter(n => n.enabled).reverse().slice(0, MAX_GIVEN).reverse()
+export async function rulesFor(projectId: string, h: DbHandle = db): Promise<ProjectNote[]> {
+  return (await listNotes(projectId, h)).filter(n => n.enabled).reverse().slice(0, MAX_GIVEN).reverse()
 }
 
 /**
  * Records, on the run, the rules it was given, and returns their texts. Once per run: a replay returns what was
  * recorded the first time, so a rule added meanwhile does not change a task already going.
  */
-export function giveRules(runId: string): string[] {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+export async function giveRules(runId: string): Promise<string[]> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) return []
   return db.transaction(
-    tx => {
-      const recorded = tx.select().from(runs).where(eq(runs.id, runId)).get()?.memoryJson
+    async tx => {
+      const recorded = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]?.memoryJson
       if (recorded) return JSON.parse(recorded) as string[]
-      const texts = rulesFor(run.projectId).map(n => n.text)
-      tx.update(runs).set({ memoryJson: JSON.stringify(texts) }).where(eq(runs.id, runId)).run()
-      if (texts.length > 0) appendEventSync({ runId, type: 'run.memory', payload: { notes: texts } }, tx)
+      const texts = (await rulesFor(run.projectId, tx)).map(n => n.text)
+      await tx.update(runs).set({ memoryJson: JSON.stringify(texts) }).where(eq(runs.id, runId))
+      if (texts.length > 0) await appendEventSync({ runId, type: 'run.memory', payload: { notes: texts } }, tx)
       return texts
     },
-    { behavior: 'immediate' },
   )
 }
 
@@ -101,8 +100,8 @@ export async function distill(request: string, said: string, ask: AskModel = ask
 /** Learns from what the person said on a task, in the background. Never throws. */
 export async function learnFrom(runId: string, said: string | null | undefined, source: Exclude<NoteSource, 'person'>, ask: AskModel = askClaude): Promise<void> {
   if (!said?.trim()) return
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) return
   const rule = await distill(run.request, said, ask)
-  if (rule) addNote(run.projectId, rule, source, runId)
+  if (rule) (await addNote(run.projectId, rule, source, runId))
 }

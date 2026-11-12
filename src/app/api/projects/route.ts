@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 // Every project, with its flow and the state of its prepared base. Reading only.
 export async function GET() {
-  return Response.json({ projects: listProjects() })
+  return Response.json({ projects: (await listProjects()) })
 }
 
 const createSchema = z.object({

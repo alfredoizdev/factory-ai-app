@@ -18,7 +18,7 @@ function settingsError(e: unknown): Response {
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   try {
-    return Response.json(getProjectSettings(id))
+    return Response.json((await getProjectSettings(id)))
   } catch (e) {
     return settingsError(e)
   }
@@ -33,11 +33,11 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
     // The command first, so a repository set in the same request keeps the command the person typed.
-    if (body.data.testCommand !== undefined) setTestCommand(id, body.data.testCommand)
-    if (body.data.repoPath !== undefined) setProjectRepo(id, body.data.repoPath)
-    if (body.data.autoApproveLowRisk !== undefined) setAutoApproveLowRisk(id, body.data.autoApproveLowRisk)
-    if (body.data.name !== undefined) setProjectName(id, body.data.name)
-    return Response.json(getProjectSettings(id))
+    if (body.data.testCommand !== undefined) (await setTestCommand(id, body.data.testCommand))
+    if (body.data.repoPath !== undefined) (await setProjectRepo(id, body.data.repoPath))
+    if (body.data.autoApproveLowRisk !== undefined) (await setAutoApproveLowRisk(id, body.data.autoApproveLowRisk))
+    if (body.data.name !== undefined) (await setProjectName(id, body.data.name))
+    return Response.json((await getProjectSettings(id)))
   } catch (e) {
     return settingsError(e)
   }

@@ -40,7 +40,7 @@ async function newRun(settings: { repoPath?: string | null; testCommand?: string
   await saveDraft(workflowId, defaultGraph())
   await publishVersion(workflowId)
   const { runId } = await createRun({ workflowId, request: 'do it' })
-  db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId)).run()
+  await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))
   return runId
 }
 
@@ -71,7 +71,7 @@ async function drive(runId: string, provider: AgentProvider, createWorktree: Exe
   }
 }
 
-const node = (runId: string, blockId: string) => db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === blockId)!
+const node = async (runId: string, blockId: string) => (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === blockId)!
 const payloadOf = async (runId: string, type: string, blockId?: string) =>
   (await eventsSince(runId, 0)).filter(e => e.type === type && (!blockId || (e.payload as { blockId?: string }).blockId === blockId)).map(e => e.payload as Record<string, unknown>)
 
@@ -84,7 +84,7 @@ test('the worktree is made before any block runs, and every block is handed its 
   const types = (await eventsSince(runId, 0)).map(e => e.type)
   expect(types.indexOf('run.workspace')).toBeLessThan(types.indexOf('node.started'))
   expect(await payloadOf(runId, 'run.workspace')).toEqual([{ branch: `factory/${runId}`, path: `/wt/${runId}`, baseCommit: 'abc' }])
-  const row = db.select().from(runs).where(eq(runs.id, runId)).get()!
+  const row = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!
   expect([row.worktreePath, row.branch, row.baseCommit]).toEqual([`/wt/${runId}`, `factory/${runId}`, 'abc'])
   expect(provider.calls.every(c => c.workdir === `/wt/${runId}` && c.testCommand === 'npm test' && c.baseCommit === 'abc')).toBe(true)
 })
@@ -94,7 +94,7 @@ test('a project with no repository fails the run before any agent starts, and sa
   const provider = filesProvider({})
   await drive(runId, provider)
   expect(provider.calls).toEqual([])
-  expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.status).toBe('failed')
+  expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('failed')
   expect(await payloadOf(runId, 'run.failed')).toEqual([{ cause: 'workspace_failed', message: strings.run.noRepository }])
 })
 
@@ -113,7 +113,7 @@ test('a worktree that cannot be made fails the run with the reason, redacted', a
 test('a block the provider routes away is skipped with the provider\'s reason', async () => {
   const runId = await newRun({ repoPath: '/repo' })
   await drive(runId, filesProvider({}, kind => (kind === 'review' ? { mode: 'skip', reason: 'Not yet.' } : { mode: 'execute' })))
-  expect(node(runId, 'review').state).toBe('skipped')
+  expect((await node(runId, 'review')).state).toBe('skipped')
   expect(await payloadOf(runId, 'node.skipped', 'review')).toEqual([{ blockId: 'review', reason: 'Not yet.' }])
 })
 
@@ -125,7 +125,7 @@ const testRun: TestRun = {
 test('evidence is stored whole in its own table, and the event carries numbers only', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
   await drive(runId, filesProvider({ tests: [{ type: 'evidence', kind: 'test_run', data: testRun }, { type: 'done', summary: 'x', source: 'system' }] }))
-  const rows = db.select().from(evidence).where(eq(evidence.runId, runId)).all()
+  const rows = (await db.select().from(evidence).where(eq(evidence.runId, runId)))
   expect(rows).toHaveLength(1)
   expect(rows[0]!.source).toBe('test-runner')
   expect(JSON.parse(rows[0]!.dataJson)).toEqual(testRun)
@@ -141,12 +141,12 @@ test('evidence is stored whole in its own table, and the event carries numbers o
 test('reported tokens are stored with cost not reported, and a model\'s sentence becomes a claim', async () => {
   const runId = await newRun({ repoPath: '/repo' })
   await drive(runId, filesProvider({ build: [{ type: 'done', summary: 'Made it blue.', source: 'provider', usage: { tokens: 1200 } }] }))
-  const build = node(runId, 'build')
-  expect(db.select().from(usageRecords).where(eq(usageRecords.nodeRunId, build.id)).all().map(u => [u.tokens, u.costCents])).toEqual([[1200, null]])
-  expect(db.select().from(claims).where(eq(claims.nodeRunId, build.id)).all().map(c => c.text)).toEqual(['Made it blue.'])
+  const build = (await node(runId, 'build'))
+  expect((await db.select().from(usageRecords).where(eq(usageRecords.nodeRunId, build.id))).map(u => [u.tokens, u.costCents])).toEqual([[1200, null]])
+  expect((await db.select().from(claims).where(eq(claims.nodeRunId, build.id))).map(c => c.text)).toEqual(['Made it blue.'])
   expect(await payloadOf(runId, 'node.completed', 'build')).toEqual([{ blockId: 'build', summary: 'Made it blue.', summarySource: 'provider', attempt: 1, tokens: 1200 }])
   // A sentence the app composed is not a claim.
-  expect(db.select().from(claims).where(eq(claims.nodeRunId, node(runId, 'input').id)).all()).toEqual([])
+  expect((await db.select().from(claims).where(eq(claims.nodeRunId, (await node(runId, 'input')).id)))).toEqual([])
 })
 
 test('every step is redacted and clipped before it is logged', async () => {
@@ -162,7 +162,7 @@ test('failing tests are recorded as the system\'s words and are not run a second
   const provider = filesProvider({ tests: [{ type: 'error', message: '3 of 4 passed. 1 failed.', source: 'system', cause: 'tests_failed' }] })
   await drive(runId, provider)
   expect(provider.calls.filter(c => c.kind === 'tests')).toHaveLength(1)
-  expect(node(runId, 'tests').state).toBe('failed')
+  expect((await node(runId, 'tests')).state).toBe('failed')
   const [failed] = await payloadOf(runId, 'node.failed', 'tests')
   expect(failed).toMatchObject({ cause: 'tests_failed', messageSource: 'system', message: '3 of 4 passed. 1 failed.' })
 })
@@ -198,8 +198,8 @@ test('evidence commits together with the block\'s ending: a block that never end
     },
   }
   await drive(runId, provider)
-  expect(node(runId, 'tests').state).toBe('cancelled')
-  expect(db.select().from(evidence).where(eq(evidence.runId, runId)).all()).toEqual([])
+  expect((await node(runId, 'tests')).state).toBe('cancelled')
+  expect((await db.select().from(evidence).where(eq(evidence.runId, runId)))).toEqual([])
   expect(await payloadOf(runId, 'node.evidence')).toEqual([])
 })
 
@@ -231,23 +231,23 @@ const withTests = (data: TestRun = passingTests) =>
 test('with the switch on, a small, measured-safe change passes the human check on its own and the run goes on', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
   await drive(runId, withTests(), realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
-  expect(node(runId, 'human').state).toBe('passed')
+  expect((await node(runId, 'human')).state).toBe('passed')
   expect(await payloadOf(runId, 'node.assessed', 'human')).toMatchObject([{ level: 'low', filesCount: 1, linesChanged: 2 }])
   expect(await payloadOf(runId, 'node.completed', 'human')).toMatchObject([{ summary: strings.risk.passedLow, summarySource: 'system', autoApproved: true }])
-  expect(node(runId, 'ship').state).not.toBe('queued')
+  expect((await node(runId, 'ship')).state).not.toBe('queued')
 })
 
 test('with the switch off, the same change still stops for the person, with the measurement on record', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false })
   await drive(runId, withTests(), realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
-  expect(node(runId, 'human').state).toBe('waiting_approval')
+  expect((await node(runId, 'human')).state).toBe('waiting_approval')
   expect(await payloadOf(runId, 'node.assessed', 'human')).toMatchObject([{ level: 'low' }])
 })
 
 test('a change to something sensitive stops for the person even with the switch on, and says what', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
   await drive(runId, withTests(), realWorktree({ 'src/lib/stripe.ts': 'charge()\n' }))
-  expect(node(runId, 'human').state).toBe('waiting_approval')
+  expect((await node(runId, 'human')).state).toBe('waiting_approval')
   const [assessed] = await payloadOf(runId, 'node.assessed', 'human')
   expect(assessed!.level).toBe('high')
   expect(String(assessed!.reasons)).toContain('src/lib/stripe.ts')
@@ -256,14 +256,14 @@ test('a change to something sensitive stops for the person even with the switch 
 test('with no tests run, nothing is low risk, even a one-line change', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: null, autoApproveLowRisk: true })
   await drive(runId, filesProvider({}), realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
-  expect(node(runId, 'human').state).toBe('waiting_approval')
+  expect((await node(runId, 'human')).state).toBe('waiting_approval')
   expect(String((await payloadOf(runId, 'node.assessed', 'human'))[0]!.reasons)).toContain(strings.risk.noTests)
 })
 
 test('a run whose tests changed stops for the person', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
   await drive(runId, withTests({ ...passingTests, changedTestFiles: ['test/a.test.ts'] }), realWorktree({ 'src/app/page.tsx': 'x\n' }))
-  expect(node(runId, 'human').state).toBe('waiting_approval')
+  expect((await node(runId, 'human')).state).toBe('waiting_approval')
 })
 
 // ---- asking for changes: the return loop ----------------------------------------------------------------------
@@ -275,7 +275,7 @@ function decisionsStep(runId: string, queue: { decision: 'approved' | 'rejected'
     waitForEvent: async () => {
       const next = queue.shift()
       if (!next) throw new Parked()
-      recordDecision(runId, next.decision, { actor: 'tester', reason: next.note ?? null, diffHash: null })
+      await recordDecision(runId, next.decision, { actor: 'tester', reason: next.note ?? null, diffHash: null })
       return { data: { decision: next.decision } }
     },
   }
@@ -302,8 +302,8 @@ test('asking for changes sends the work back to the builder with the note, re-te
   expect(reopened.map(p => p.blockId)).toEqual(['build', 'tests', 'review', 'approve', 'human'])
   expect(reopened.every(p => p.round === 2 && p.note === 'make the border thicker')).toBe(true)
   // Stopped again, for a decision on round 2.
-  expect(node(runId, 'human').state).toBe('waiting_approval')
-  expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.status).toBe('waiting_approval')
+  expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('waiting_approval')
 })
 
 test('after a round of changes, an approval finishes the run; the earlier "changes" is not read twice', async () => {
@@ -313,8 +313,8 @@ test('after a round of changes, an approval finishes the run; the earlier "chang
     resolveProvider: () => provider,
     createWorktree: realWorktree({ 'src/app/page.tsx': 'x\n' }),
   })
-  expect(node(runId, 'human').state).toBe('passed')
-  expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.status).toBe('completed')
+  expect((await node(runId, 'human')).state).toBe('passed')
+  expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('completed')
   expect(provider.calls.filter(c => c.kind === 'build')).toHaveLength(2)
 })
 
@@ -344,7 +344,7 @@ test('a failing test in round 1 does not count against round 2 once it passes', 
   // Round 2 measured low on its own latest test run, and the switch is on, so it passed by itself.
   const assessed = await payloadOf(runId, 'node.assessed', 'human')
   expect(assessed.map(a => a.level)).toEqual(['high', 'low'])
-  expect(node(runId, 'human').state).toBe('passed')
+  expect((await node(runId, 'human')).state).toBe('passed')
 })
 
 test('round 1 is handed the request\'s images; a round of changes gets only the images sent with it', async () => {
@@ -352,8 +352,8 @@ test('round 1 is handed the request\'s images; a round of changes gets only the 
   const png = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex')
   const imgDir = mkdtempSync(join(tmpdir(), 'factory-img-'))
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
-  const first = saveAttachment('mock.png', png, imgDir)
-  claimAttachments([first.id], runId)
+  const first = (await saveAttachment('mock.png', png, imgDir))
+  await claimAttachments([first.id], runId)
   const provider = withTests()
   const imagesSeen: (string[] | undefined)[] = []
   const recording: AgentProvider = {
@@ -369,9 +369,9 @@ test('round 1 is handed the request\'s images; a round of changes gets only the 
     // The request for changes comes with its own image, attached to that decision.
     const result = await original(...args)
     const { approvals } = await import('@/db/schema')
-    const decision = db.select().from(approvals).where(eq(approvals.runId, runId)).all().at(-1)!
-    const second = saveAttachment('better.png', png, imgDir)
-    claimAttachments([second.id], runId, decision.id)
+    const decision = (await db.select().from(approvals).where(eq(approvals.runId, runId))).at(-1)!
+    const second = (await saveAttachment('better.png', png, imgDir))
+    await claimAttachments([second.id], runId, decision.id)
     return result
   }
   try {
@@ -388,11 +388,11 @@ test('round 1 is handed the request\'s images; a round of changes gets only the 
 test('the model written on the Build block, as frozen in the run, reaches the builder', async () => {
   const { workflowVersions } = await import('@/db/schema')
   const runId = await newRun({ repoPath: '/repo' })
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()!
-  const version = db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)).get()!
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!
+  const version = (await db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)))[0]!
   const graph = JSON.parse(version.graphJson) as { blocks: { kind: string; config: Record<string, unknown> }[] }
   graph.blocks.find(b => b.kind === 'build')!.config.model = 'opus'
-  db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id)).run()
+  await db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id))
   const models: (string | undefined)[] = []
   const provider: AgentProvider = {
     id: 'files', isDemo: false, needsWorkspace: true,
@@ -410,11 +410,11 @@ test('a Build block with a model per area builds with the one for what the reque
   const { workflowVersions } = await import('@/db/schema')
   const { strings } = await import('@/ui/strings')
   const runId = await newRun({ repoPath: '/repo' })
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()!
-  const version = db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)).get()!
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!
+  const version = (await db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)))[0]!
   const graph = JSON.parse(version.graphJson) as { blocks: { kind: string; config: Record<string, unknown> }[] }
   Object.assign(graph.blocks.find(b => b.kind === 'build')!.config, { model: 'opus', modelFrontend: 'sonnet', modelBackend: 'opus' })
-  db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id)).run()
+  await db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id))
   const models: string[] = []
   const provider: AgentProvider = {
     id: 'files', isDemo: false, needsWorkspace: true,
@@ -463,11 +463,11 @@ test('without per-area models the request is not read for routing', async () => 
 test('each Tests block runs its own command, and one without falls back to the project command', async () => {
   const { workflowVersions } = await import('@/db/schema')
   const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test' })
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()!
-  const version = db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)).get()!
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!
+  const version = (await db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)))[0]!
   const graph = JSON.parse(version.graphJson) as { blocks: { id: string; kind: string; label: string; enabled: boolean; config: Record<string, unknown>; position: { x: number; y: number } }[] }
   graph.blocks.push({ id: 'tests-1', kind: 'tests', label: 'Lint', enabled: true, config: { testCommand: '  npm run lint ' }, position: { x: 0, y: 1 } })
-  db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id)).run()
+  await db.update(workflowVersions).set({ graphJson: JSON.stringify(graph) }).where(eq(workflowVersions.id, version.id))
   const commands: string[] = []
   const provider: AgentProvider = {
     id: 'files', isDemo: false, needsWorkspace: true,
@@ -545,7 +545,7 @@ describe('the reviewer', () => {
     expect(seen.some(s => s.kind === 'approve')).toBe(false) // summed up by the app, not run by the agent
     const approve = await payloadOf(runId, 'node.completed', 'approve')
     expect(approve.at(-1)!.summary).toBe(strings.review.approve.fixed(1))
-    expect(node(runId, 'human').state).toBe('waiting_approval')
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
 
   test('a reviewer that keeps finding problems sends back at most twice, then the person sees them', async () => {
@@ -557,7 +557,7 @@ describe('the reviewer', () => {
     expect(seen.filter(s => s.kind === 'review')).toHaveLength(3)
     const approve = await payloadOf(runId, 'node.completed', 'approve')
     expect(approve.at(-1)!.summary).toBe(strings.review.approve.open)
-    expect(node(runId, 'human').state).toBe('waiting_approval')
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
 })
 
@@ -582,7 +582,7 @@ test('a copy whose lockfile matches the prepared base gets its dependencies by c
       resolveProvider: () => provider,
       createWorktree: () => ({ path: copy, branch: 'ai/x', baseCommit: 'abc' }),
       installDependencies: async () => ((installed = true), null),
-      copyBase: () => ({ copied: true, ms: 800 }),
+      copyBase: async () => ({ copied: true, ms: 800 }),
     })
   } catch (e) {
     if (!(e instanceof Parked)) throw e

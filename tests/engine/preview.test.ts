@@ -73,12 +73,12 @@ async function runWithServer(): Promise<{ runId: string; wt: string }> {
   execFileSync('git', ['init', '-q'], { cwd: wt })
   const projectId = ulid()
   const workflowId = ulid()
-  db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: new Date().toISOString(), repoPath: repo }).run()
-  db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: '', updatedAt: '' }).run()
+  await db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: new Date().toISOString(), repoPath: repo })
+  await db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: '', updatedAt: '' })
   await saveDraft(workflowId, defaultGraph())
   await publishVersion(workflowId)
   const { runId } = await createRun({ workflowId, request: 'r' })
-  db.update(runs).set({ worktreePath: wt, baseCommit: 'x' }).where(eq(runs.id, runId)).run()
+  await db.update(runs).set({ worktreePath: wt, baseCommit: 'x' }).where(eq(runs.id, runId))
   return { runId, wt }
 }
 

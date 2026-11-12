@@ -32,7 +32,7 @@ async function newRun(): Promise<string> {
   await saveDraft(workflowId, defaultGraph())
   await publishVersion(workflowId)
   const { runId } = await createRun({ workflowId, request: 'add a ring around the crest' })
-  db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId)).run()
+  await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))
   return runId
 }
 
@@ -63,7 +63,7 @@ function wordsStep(runId: string, words: ({ action: 'build'; jobs: Job[] } | { a
     waitForEvent: async () => {
       const next = words.shift()
       if (!next) throw new Parked()
-      decidePlan(runId, next)
+      await decidePlan(runId, next)
       return { data: {} }
     },
   }
@@ -77,17 +77,17 @@ async function drive(runId: string, provider: AgentProvider, step: StepApi) {
   }
 }
 
-const node = (runId: string, blockId: string) => db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === blockId)!
+const node = async (runId: string, blockId: string) => (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === blockId)!
 
 test('the run stops at the plan; nothing is built until the person says so', async () => {
   const runId = await newRun()
   const provider = planningProvider([[{ title: 'Add a ring', done: ['5px'] }]])
   await drive(runId, provider, wordsStep(runId, []))
-  expect(node(runId, 'plan').state).toBe('waiting_approval')
-  expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.status).toBe('waiting_approval')
+  expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+  expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('waiting_approval')
   expect(provider.calls.map(c => c.blockKind)).toEqual(['input', 'plan'])
   expect(provider.calls[1]!.model).toBe('sonnet')
-  expect(currentPlan(runId)).toEqual({ jobs: [{ title: 'Add a ring', done: ['5px'] }], by: 'planner' })
+  expect((await currentPlan(runId))).toEqual({ jobs: [{ title: 'Add a ring', done: ['5px'] }], by: 'planner' })
 })
 
 test('asking for a new plan runs the planner again with the note; building gives the builder the edited jobs', async () => {
@@ -98,19 +98,19 @@ test('asking for a new plan runs the planner again with the note; building gives
   const plans = provider.calls.filter(c => c.blockKind === 'plan')
   expect(plans).toHaveLength(2)
   expect(plans[1]!.revisionNote).toBe('do it in one job')
-  expect(node(runId, 'plan').state).toBe('passed')
+  expect((await node(runId, 'plan')).state).toBe('passed')
   const build = provider.calls.find(c => c.blockKind === 'build')!
   expect(build.jobs).toEqual(edited)
-  expect(currentPlan(runId)).toEqual({ jobs: edited, by: 'person' })
+  expect((await currentPlan(runId))).toEqual({ jobs: edited, by: 'person' })
   const done = (await eventsSince(runId, 0)).filter(e => e.type === 'node.completed' && (e.payload as { blockId: string }).blockId === 'plan')
   expect((done.at(-1)!.payload as { summary: string }).summary).toBe(strings.plan.confirmed(1))
 })
 
 test('a word on the plan is refused when no plan waits, and a plan needs a job', async () => {
   const runId = await newRun()
-  expect(() => decidePlan(runId, { action: 'build', jobs: [{ title: 'x', done: [] }] })).toThrow(PlanError)
+  await expect(decidePlan(runId, { action: 'build', jobs: [{ title: 'x', done: [] }] })).rejects.toThrow(PlanError)
   const provider = planningProvider([[{ title: 'A', done: [] }]])
   await drive(runId, provider, wordsStep(runId, []))
-  expect(() => decidePlan(runId, { action: 'build', jobs: [{ title: '  ', done: [] }] })).toThrow(strings.plan.needAJob)
-  expect(() => decidePlan(runId, { action: 'replan', note: ' ' })).toThrow(strings.plan.needANote)
+  await expect(decidePlan(runId, { action: 'build', jobs: [{ title: '  ', done: [] }] })).rejects.toThrow(strings.plan.needAJob)
+  await expect(decidePlan(runId, { action: 'replan', note: ' ' })).rejects.toThrow(strings.plan.needANote)
 })

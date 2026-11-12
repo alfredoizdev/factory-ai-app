@@ -47,23 +47,23 @@ export class DeliveryError extends Error {
 const git = (cwd: string, args: string[], input?: string) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim()
 
-function approvedAndFinished(runId: string) {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+async function approvedAndFinished(runId: string) {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) return null
-  const approved = db.select().from(approvals).where(and(eq(approvals.runId, runId), eq(approvals.decision, 'approved'))).get()
+  const approved = (await db.select().from(approvals).where(and(eq(approvals.runId, runId), eq(approvals.decision, 'approved'))))[0]
   return { run, eligible: run.status === 'completed' && !!approved && !!run.worktreePath && !!run.baseCommit }
 }
 
 type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string; pullRequestUrl?: string | null }
 
 /** The latest record of this kind for this run, if there was one. A keep or a delivery happens once; a switch may repeat. */
-function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed'): Record_ | null {
-  const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)).get()
+async function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed'): Promise<Record_ | null> {
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)))[0]
   return row ? (JSON.parse(row.payloadJson) as Record_) : null
 }
 
-function repoOf(projectId: string): string | null {
-  return db.select().from(projects).where(eq(projects.id, projectId)).get()?.repoPath ?? null
+async function repoOf(projectId: string): Promise<string | null> {
+  return (await db.select().from(projects).where(eq(projects.id, projectId)))[0]?.repoPath ?? null
 }
 
 /** The branch a checkout is on, or null when it is detached or cannot be read. */
@@ -77,12 +77,12 @@ function currentBranch(repo: string | null): string | null {
 }
 const deliveredRecord = (runId: string) => recordOf(runId, 'run.delivered')
 
-export function deliveryState(runId: string): Delivery {
-  const found = approvedAndFinished(runId)
+export async function deliveryState(runId: string): Promise<Delivery> {
+  const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  const kept = recordOf(runId, 'run.kept')
-  const done = deliveredRecord(runId)
-  const pushedRecord = recordOf(runId, 'run.pushed')
+  const kept = (await recordOf(runId, 'run.kept'))
+  const done = await deliveredRecord(runId)
+  const pushedRecord = (await recordOf(runId, 'run.pushed'))
   return {
     eligible: found.eligible,
     kept: !!kept,
@@ -91,8 +91,8 @@ export function deliveryState(runId: string): Delivery {
     commit: done?.commit ?? kept?.commit ?? null,
     files: done?.files ?? kept?.files ?? [],
     appliedTo: done?.appliedTo ?? null,
-    current: currentBranch(repoOf(found.run.projectId)),
-    returnTo: recordOf(runId, 'run.switched')?.from ?? null,
+    current: currentBranch((await repoOf(found.run.projectId))),
+    returnTo: (await recordOf(runId, 'run.switched'))?.from ?? null,
     pushed: pushedRecord !== null && pushedRecord.branch === (kept?.branch ?? found.run.branch),
     pullRequestUrl: pushedRecord?.pullRequestUrl ?? null,
   }
@@ -119,8 +119,8 @@ export function keepCommit(run: { id: string; request: string; worktreePath: str
 }
 
 /** True once this run's change was brought into the project. */
-export function wasDelivered(runId: string): boolean {
-  return deliveredRecord(runId) !== null
+export async function wasDelivered(runId: string): Promise<boolean> {
+  return (await deliveredRecord(runId)) !== null
 }
 
 /** A branch name a person typed: plain characters only, and one git itself accepts. */
@@ -136,8 +136,8 @@ export function validBranchName(name: string): boolean {
 }
 
 /** The files the agent changed in its copy, committed or not: what a branch name should describe. */
-export function changedFiles(runId: string): string[] {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+export async function changedFiles(runId: string): Promise<string[]> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   const wt = run?.worktreePath
   if (!run || !wt) return []
   try {
@@ -151,8 +151,8 @@ export function changedFiles(runId: string): string[] {
 }
 
 /** The change the agent left, committed or not, as one diff (new files included): what a commit message describes. */
-export function pendingDiff(runId: string): string {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+export async function pendingDiff(runId: string): Promise<string> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   const wt = run?.worktreePath
   if (!run || !wt) return ''
   try {
@@ -169,8 +169,8 @@ export function pendingDiff(runId: string): string {
 }
 
 /** The run's request, for naming its branch. */
-export function requestOf(runId: string): string | null {
-  return db.select().from(runs).where(eq(runs.id, runId)).get()?.request ?? null
+export async function requestOf(runId: string): Promise<string | null> {
+  return (await db.select().from(runs).where(eq(runs.id, runId)))[0]?.request ?? null
 }
 
 /**
@@ -181,11 +181,11 @@ export function requestOf(runId: string): string | null {
  */
 export type KeepOptions = { name?: string | null; fallbackName?: string | null; message?: CommitMessage | null }
 
-export function keepOnBranch(runId: string, options: KeepOptions = {}): Delivery {
-  const found = approvedAndFinished(runId)
+export async function keepOnBranch(runId: string, options: KeepOptions = {}): Promise<Delivery> {
+  const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
-  if (recordOf(runId, 'run.kept')) return deliveryState(runId)
+  if ((await recordOf(runId, 'run.kept'))) return deliveryState(runId)
   const { run } = found
   const wt = run.worktreePath!
   const own = options.name?.trim() || null
@@ -203,14 +203,13 @@ export function keepOnBranch(runId: string, options: KeepOptions = {}): Delivery
     own ?? (automatic ? (options.fallbackName ?? branchFromWords(run.id, fallbackWords(run.request) ?? 'change')) : branch)
   if (wanted !== branch && (own !== null || !exists(wanted))) {
     git(wt, ['branch', '-m', wanted])
-    db.update(runs).set({ branch: wanted }).where(eq(runs.id, run.id)).run()
+    await db.update(runs).set({ branch: wanted }).where(eq(runs.id, run.id))
     branch = wanted
   }
-  db.transaction(
-    tx => {
-      appendEventSync({ runId, type: 'run.kept', payload: { branch, commit, files } }, tx)
+  await db.transaction(
+    async tx => {
+      await appendEventSync({ runId, type: 'run.kept', payload: { branch, commit, files } }, tx)
     },
-    { behavior: 'immediate' },
   )
   return deliveryState(runId)
 }
@@ -219,12 +218,12 @@ export function keepOnBranch(runId: string, options: KeepOptions = {}): Delivery
  * Applies the approved change, uncommitted, to the person's checkout — on whatever branch they are on — after keeping
  * it on its own branch. Once. Refused, with nothing changed, when their checkout has unsaved work.
  */
-export function deliverToProject(runId: string, options: KeepOptions = {}): Delivery {
-  const found = approvedAndFinished(runId)
+export async function deliverToProject(runId: string, options: KeepOptions = {}): Promise<Delivery> {
+  const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
-  if (deliveredRecord(runId)) return deliveryState(runId)
-  const project = db.select().from(projects).where(eq(projects.id, found.run.projectId)).get()
+  if (await deliveredRecord(runId)) return deliveryState(runId)
+  const project = (await db.select().from(projects).where(eq(projects.id, found.run.projectId)))[0]
   const repo = project?.repoPath
   if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
 
@@ -232,8 +231,8 @@ export function deliverToProject(runId: string, options: KeepOptions = {}): Deli
   if (git(repo, ['status', '--porcelain']) !== '') throw new DeliveryError(strings.delivery.dirty, 409)
 
   // 1. Keep it on its own branch first, so the change exists as a commit before it is copied anywhere.
-  const kept = keepOnBranch(runId, options)
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()!
+  const kept = (await keepOnBranch(runId, options))
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!
   const wt = run.worktreePath!
   // A follow-up whose parent was never brought over starts from the parent's base, so both changes travel together.
   const from = run.deliveryBase ?? run.baseCommit!
@@ -257,11 +256,10 @@ export function deliverToProject(runId: string, options: KeepOptions = {}): Deli
     rmSync(dir, { recursive: true, force: true })
   }
 
-  db.transaction(
-    tx => {
-      appendEventSync({ runId, type: 'run.delivered', payload: { branch: kept.branch, commit, files, appliedTo: repo } }, tx)
+  await db.transaction(
+    async tx => {
+      await appendEventSync({ runId, type: 'run.delivered', payload: { branch: kept.branch, commit, files, appliedTo: repo } }, tx)
     },
-    { behavior: 'immediate' },
   )
   return deliveryState(runId)
 }
@@ -281,12 +279,12 @@ function checkoutIn(repo: string, branch: string): void {
  * Puts the person's project on the run's kept branch, so they see the change in their own folder and dev server.
  * Remembers the branch it was on, for switchBack. Refused while the change is not kept yet, or over unsaved work.
  */
-export function switchToBranch(runId: string): Delivery {
-  const found = approvedAndFinished(runId)
+export async function switchToBranch(runId: string): Promise<Delivery> {
+  const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  const kept = recordOf(runId, 'run.kept')
+  const kept = (await recordOf(runId, 'run.kept'))
   if (!kept?.branch) throw new DeliveryError(strings.delivery.keepFirst, 409)
-  const repo = repoOf(found.run.projectId)
+  const repo = (await repoOf(found.run.projectId))
   if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
   const from = currentBranch(repo)
   if (from === kept.branch) return deliveryState(runId)
@@ -303,21 +301,21 @@ export function switchToBranch(runId: string): Delivery {
     }
   }
   checkoutIn(repo, kept.branch)
-  db.transaction(tx => void appendEventSync({ runId, type: 'run.switched', payload: { branch: kept.branch, from } }, tx), { behavior: 'immediate' })
+  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.switched', payload: { branch: kept.branch, from } }, tx)))
   return deliveryState(runId)
 }
 
 /** Returns the person's project to the branch it was on before switchToBranch. Refused over unsaved work. */
-export function switchBack(runId: string): Delivery {
-  const found = approvedAndFinished(runId)
+export async function switchBack(runId: string): Promise<Delivery> {
+  const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  const switched = recordOf(runId, 'run.switched')
+  const switched = (await recordOf(runId, 'run.switched'))
   if (!switched?.from) throw new DeliveryError(strings.delivery.neverSwitched, 409)
-  const repo = repoOf(found.run.projectId)
+  const repo = (await repoOf(found.run.projectId))
   if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
   if (currentBranch(repo) !== switched.from) {
     checkoutIn(repo, switched.from)
-    db.transaction(tx => void appendEventSync({ runId, type: 'run.switched_back', payload: { branch: switched.from } }, tx), { behavior: 'immediate' })
+    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.switched_back', payload: { branch: switched.from } }, tx)))
   }
   return deliveryState(runId)
 }
@@ -344,12 +342,12 @@ const gitAsync = (cwd: string, args: string[]) =>
  * credentials. Their other branches are not sent. Refused before the change is kept, or with no origin.
  */
 export async function pushBranch(runId: string): Promise<Delivery> {
-  const found = approvedAndFinished(runId)
+  const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
-  const kept = recordOf(runId, 'run.kept')
+  const kept = (await recordOf(runId, 'run.kept'))
   if (!kept?.branch) throw new DeliveryError(strings.delivery.keepFirst, 409)
   const branch = kept.branch
-  const repo = repoOf(found.run.projectId)
+  const repo = (await repoOf(found.run.projectId))
   if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
   let remote: string
   try {
@@ -370,6 +368,6 @@ export async function pushBranch(runId: string): Promise<Delivery> {
     // Upstream tracking is a convenience; the push itself succeeded.
   }
   const pullRequestUrl = githubPullUrl(remote, branch)
-  db.transaction(tx => void appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx), { behavior: 'immediate' })
+  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx)))
   return deliveryState(runId)
 }

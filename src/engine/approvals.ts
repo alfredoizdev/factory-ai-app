@@ -43,8 +43,8 @@ const MAX_DIFF_CHARS = 60_000
 export const NO_CHANGE = 'no-change'
 
 /** What the run changed, read from its worktree; null when it has none. */
-export function changeUnderReview(runId: string): ChangeUnderReview | null {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+export async function changeUnderReview(runId: string): Promise<ChangeUnderReview | null> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run?.worktreePath || !run.baseCommit) return null
   const cwd = run.worktreePath
   const git = (args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024 })
@@ -73,8 +73,8 @@ export function changeUnderReview(runId: string): ChangeUnderReview | null {
   return { hash: hash.digest('hex'), files: numstat, diff: full.slice(0, MAX_DIFF_CHARS), truncated: full.length > MAX_DIFF_CHARS }
 }
 
-function waitingHumanNode(runId: string) {
-  return db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.state === 'waiting_approval')
+async function waitingHumanNode(runId: string) {
+  return (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.state === 'waiting_approval')
 }
 
 /** Who decided. A local app has one person at the keyboard; their account name is what can honestly be recorded. */
@@ -89,8 +89,8 @@ export function localActor(): string {
 }
 
 /** Writes the decision row. Exported for the executor's tests; the app goes through decideGate. */
-export function recordDecision(runId: string, decision: Decision, fields: { actor: string; reason?: string | null; diffHash: string | null }) {
-  const node = waitingHumanNode(runId)
+export async function recordDecision(runId: string, decision: Decision, fields: { actor: string; reason?: string | null; diffHash: string | null }) {
+  const node = (await waitingHumanNode(runId))
   if (!node) throw new GateError(strings.gate.notWaiting, 409)
   const row = {
     id: ulid(),
@@ -103,7 +103,7 @@ export function recordDecision(runId: string, decision: Decision, fields: { acto
     diffHash: fields.diffHash,
     createdAt: new Date().toISOString(),
   }
-  db.insert(approvals).values(row).run()
+  await db.insert(approvals).values(row)
   return row
 }
 
@@ -115,26 +115,26 @@ export async function decideGate(
   input: { decision: Decision; reason?: string | null; diffHash: string; attachments?: readonly string[] },
   deps: GateDeps,
 ) {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) throw new GateError(strings.errors.runNotFound, 404)
-  if (run.status !== 'waiting_approval' || !waitingHumanNode(runId)) throw new GateError(strings.gate.notWaiting, 409)
+  if (run.status !== 'waiting_approval' || !(await waitingHumanNode(runId))) throw new GateError(strings.gate.notWaiting, 409)
   if (input.decision === 'changes') {
     // A request for changes is only as good as its note: the builder has nothing else to go on.
     if (!input.reason?.trim()) throw new GateError(strings.gate.changesNeedNote, 400)
-    const rounds = db.select().from(approvals).where(and(eq(approvals.runId, runId), eq(approvals.decision, 'changes'))).all().length
+    const rounds = (await db.select().from(approvals).where(and(eq(approvals.runId, runId), eq(approvals.decision, 'changes')))).length
     if (rounds >= MAX_REVISIONS) throw new GateError(strings.gate.tooManyRounds(MAX_REVISIONS), 409)
   }
   // Bound to what was shown: approving a change nobody looked at is the gate being bypassed by timing.
-  const current = changeUnderReview(runId)?.hash ?? NO_CHANGE
+  const current = (await changeUnderReview(runId))?.hash ?? NO_CHANGE
   if (input.diffHash !== current) throw new GateError(strings.gate.changedSinceSeen, 409)
-  const row = recordDecision(runId, input.decision, { actor: (deps.actor ?? localActor)(), reason: input.reason, diffHash: current })
+  const row = (await recordDecision(runId, input.decision, { actor: (deps.actor ?? localActor)(), reason: input.reason, diffHash: current }))
   // Images sent with a request for changes go to that round only.
-  if (input.decision === 'changes') claimAttachments(input.attachments ?? [], runId, row.id)
+  if (input.decision === 'changes') (await claimAttachments(input.attachments ?? [], runId, row.id))
   try {
     await deps.send({ runId, decision: input.decision })
   } catch {
     // Not delivered, so it decided nothing: the row would claim a decision the run never received.
-    db.delete(approvals).where(eq(approvals.id, row.id)).run()
+    await db.delete(approvals).where(eq(approvals.id, row.id))
     throw new GateError(strings.gate.notDelivered, 409)
   }
   // The decision is made; a preview of the change has nothing left to inform.
@@ -148,19 +148,18 @@ const DECISIONS: ReadonlySet<string> = new Set<Decision>(['approved', 'rejected'
  * The decision recorded for this human check that the run has not acted on yet, newest first, and marks it acted on.
  * Null when there is none. What the executor acts on — never the event. Each round of a run needs its own decision.
  */
-export function takeRecordedDecision(runId: string, nodeRunId: string): { decision: Decision; note: string | null; approvalId: string } | null {
+export async function takeRecordedDecision(runId: string, nodeRunId: string): Promise<{ decision: Decision; note: string | null; approvalId: string } | null> {
   return db.transaction(
-    tx => {
-      const row = tx
+    async tx => {
+      const row = (await tx
         .select()
         .from(approvals)
         .where(and(eq(approvals.runId, runId), eq(approvals.nodeRunId, nodeRunId), isNull(approvals.consumedAt)))
         .orderBy(desc(approvals.createdAt), desc(approvals.id))
-        .get()
+        )[0]
       if (!row || !DECISIONS.has(row.decision)) return null
-      tx.update(approvals).set({ consumedAt: new Date().toISOString() }).where(eq(approvals.id, row.id)).run()
+      await tx.update(approvals).set({ consumedAt: new Date().toISOString() }).where(eq(approvals.id, row.id))
       return { decision: row.decision as Decision, note: row.reason, approvalId: row.id }
     },
-    { behavior: 'immediate' },
   )
 }

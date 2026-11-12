@@ -53,7 +53,7 @@ export type ExecutorDeps = {
   /** Installs the project's dependencies in the run's copy, once, before the builder starts. */
   installDependencies?: (dir: string) => Promise<InstallResult | null>
   /** Copies the project's prepared base's dependencies into the run's copy instead, when its lockfile matches. */
-  copyBase?: (runId: string, dir: string) => BaseCopy
+  copyBase?: (runId: string, dir: string) => Promise<BaseCopy>
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -64,9 +64,9 @@ const defaultDeps: ExecutorDeps = {
   },
   createWorktree: (repo, runId, startPoint, request) => createRunWorktree(repo, runId, undefined, startPoint, request),
   installDependencies,
-  copyBase: (runId, dir) => {
-    const projectId = db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)).get()?.p
-    return projectId ? copyBaseInto(projectId, dir) : { copied: false, reason: 'no-base' }
+  copyBase: async (runId, dir) => {
+    const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
+    return projectId ? (await copyBaseInto(projectId, dir)) : { copied: false, reason: 'no-base' }
   },
 }
 
@@ -118,48 +118,48 @@ const now = () => new Date().toISOString()
 
 // ---- atomic state writes: the row change and its event commit together or not at all --------------------------
 
-function withTx<T>(fn: (tx: DbHandle) => T): T {
-  return db.transaction(tx => fn(tx), { behavior: 'immediate' })
+async function withTx<T>(fn: (tx: DbHandle) => Promise<T>): Promise<T> {
+  return db.transaction(tx => fn(tx))
 }
 
-function runStatusOf(h: DbHandle, runId: string): string | undefined {
-  return h.select({ s: runs.status }).from(runs).where(eq(runs.id, runId)).get()?.s
+async function runStatusOf(h: DbHandle, runId: string): Promise<string | undefined> {
+  return (await h.select({ s: runs.status }).from(runs).where(eq(runs.id, runId)))[0]?.s
 }
 
-function isCancelled(runId: string): boolean {
-  return runStatusOf(db, runId) === 'cancelled'
+async function isCancelled(runId: string): Promise<boolean> {
+  return (await runStatusOf(db, runId)) === 'cancelled'
 }
 
 // queued -> running. Returns false when the run was cancelled (or already finished) before it began.
-function startRun(runId: string): boolean {
-  return withTx(tx => {
-    const status = runStatusOf(tx, runId)
+async function startRun(runId: string): Promise<boolean> {
+  return withTx(async tx => {
+    const status = (await runStatusOf(tx, runId))
     if (status === 'running') return true // replay after a crash: already started
     if (status !== 'queued') return false
-    tx.update(runs).set({ status: 'running', startedAt: now() }).where(eq(runs.id, runId)).run()
-    appendEventSync({ runId, type: 'run.started' }, tx)
+    await tx.update(runs).set({ status: 'running', startedAt: now() }).where(eq(runs.id, runId))
+    await appendEventSync({ runId, type: 'run.started' }, tx)
     return true
   })
 }
 
 // Moves the run to a status that is not terminal (running / waiting_approval) and appends the event for it.
-function setRunStatus(runId: string, status: RunStatus, event: { type: EventType; payload?: unknown }): void {
-  withTx(tx => {
-    const current = runStatusOf(tx, runId)
+async function setRunStatus(runId: string, status: RunStatus, event: { type: EventType; payload?: unknown }): Promise<void> {
+  await withTx(async tx => {
+    const current = (await runStatusOf(tx, runId))
     if (current === 'cancelled' || current === 'failed' || current === 'completed') return
-    if (current !== status) tx.update(runs).set({ status }).where(eq(runs.id, runId)).run()
-    appendEventSync({ runId, type: event.type, payload: event.payload } as Parameters<typeof appendEventSync>[0], tx)
+    if (current !== status) await tx.update(runs).set({ status }).where(eq(runs.id, runId))
+    await appendEventSync({ runId, type: event.type, payload: event.payload } as Parameters<typeof appendEventSync>[0], tx)
   })
 }
 
-function finishRun(runId: string, status: 'completed' | 'failed', payload?: unknown): void {
-  withTx(tx => {
-    const current = runStatusOf(tx, runId)
+async function finishRun(runId: string, status: 'completed' | 'failed', payload?: unknown): Promise<void> {
+  await withTx(async tx => {
+    const current = (await runStatusOf(tx, runId))
     if (current === 'cancelled' || current === 'failed' || current === 'completed') return
-    tx.update(runs).set({ status, finishedAt: now() }).where(eq(runs.id, runId)).run()
+    await tx.update(runs).set({ status, finishedAt: now() }).where(eq(runs.id, runId))
     // A failed run will never start the blocks it did not reach, so they end as cancelled rather than read queued.
-    if (status === 'failed') cancelUnreachedNodes(tx, runId)
-    appendEventSync({ runId, type: status === 'completed' ? 'run.completed' : 'run.failed', payload }, tx)
+    if (status === 'failed') (await cancelUnreachedNodes(tx, runId))
+    await appendEventSync({ runId, type: status === 'completed' ? 'run.completed' : 'run.failed', payload }, tx)
   })
 }
 
@@ -167,20 +167,20 @@ type NodeRow = typeof nodeRuns.$inferSelect
 
 // Writes a node state change plus its event. A change the state machine forbids (for example resurrecting a node
 // that cancelRun already cancelled) is refused and nothing is written.
-function transitionNode(
+async function transitionNode(
   tx: DbHandle,
   node: NodeRow,
   to: NodeState,
   event: { type: EventType; payload?: Record<string, unknown> },
   fields: Partial<Pick<NodeRow, 'summary' | 'failureCause'>> = {},
-): boolean {
+): Promise<boolean> {
   if (!canTransition(node.state as NodeState, to)) return false
   const terminal = to === 'passed' || to === 'failed' || to === 'skipped' || to === 'cancelled'
-  tx.update(nodeRuns)
+  await tx.update(nodeRuns)
     .set({ state: to, ...fields, ...(terminal ? { finishedAt: now() } : {}) })
     .where(eq(nodeRuns.id, node.id))
-    .run()
-  appendEventSync(
+    
+  await appendEventSync(
     { runId: node.runId, nodeRunId: node.id, type: event.type, payload: { blockId: node.blockId, ...event.payload } } as Parameters<typeof appendEventSync>[0],
     tx,
   )
@@ -189,32 +189,33 @@ function transitionNode(
 }
 
 // Every block still queued when its run has failed was never reached and never will be.
-function cancelUnreachedNodes(tx: DbHandle, runId: string): void {
-  for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
-    if (node.state === 'queued') transitionNode(tx, node, 'cancelled', { type: 'node.cancelled', payload: { reason: strings.run.notReached } })
+async function cancelUnreachedNodes(tx: DbHandle, runId: string): Promise<void> {
+  for (const node of (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)))) {
+    if (node.state === 'queued') (await transitionNode(tx, node, 'cancelled', { type: 'node.cancelled', payload: { reason: strings.run.notReached } }))
   }
 }
 
 // Finds this block's node run or creates it. Refuses (null) once the run is cancelled, inside the same transaction,
 // so a node cannot slip in after cancelRun swept the existing ones.
-function openNodeIn(tx: DbHandle, runId: string, blockId: string): NodeRow | null {
-  if (runStatusOf(tx, runId) === 'cancelled') return null
-  const existing = tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === blockId)
+async function openNodeIn(tx: DbHandle, runId: string, blockId: string): Promise<NodeRow | null> {
+  if ((await runStatusOf(tx, runId)) === 'cancelled') return null
+  const existing = (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === blockId)
   if (existing) return existing
-  const run = tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, runId)).get()
+  const run = (await tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]
   if (!run) return null
-  const row = tx
+  const row = (await tx
     .insert(nodeRuns)
     .values({ id: ulid(), projectId: run.projectId, runId, blockId, state: 'queued', attempt: 1 })
     .returning()
-    .get()
+    )[0]!
   // A row the canvas can see has an event: node.queued commits in the same transaction as the insert.
-  appendEventSync({ runId, nodeRunId: row.id, type: 'node.queued', payload: { blockId } }, tx)
+  await appendEventSync({ runId, nodeRunId: row.id, type: 'node.queued', payload: { blockId } }, tx)
   return row
 }
 
-function freshNode(id: string): NodeRow {
-  const row = db.select().from(nodeRuns).where(eq(nodeRuns.id, id)).get()
+// Read through the transaction when there is one: outside it, its own writes are not visible yet.
+async function freshNode(id: string, h: DbHandle = db): Promise<NodeRow> {
+  const row = (await h.select().from(nodeRuns).where(eq(nodeRuns.id, id)))[0]
   if (!row) throw new Error(`node run ${id} vanished`)
   return row
 }
@@ -243,7 +244,8 @@ async function runAttempt(
   workspace: Workspace,
   revisionNote: string | null,
   images: readonly string[],
-  onStep: (text: string) => void,
+  // Awaited before the next event is read: steps are written in the order the agent said them.
+  onStep: (text: string) => Promise<void> | void,
   onEvidence: (data: TestRun) => void,
 ): Promise<AttemptResult> {
   const controller = new AbortController()
@@ -254,8 +256,8 @@ async function runAttempt(
   // These two settle on their own clocks, so a provider that yields nothing cannot hold the node forever.
   const guard = new Promise<AttemptResult>(resolve => {
     timer = setTimeout(() => resolve({ kind: 'timeout' }), block.timeoutMs)
-    poll = setInterval(() => {
-      if (isCancelled(runId)) resolve({ kind: 'cancelled' })
+    poll = setInterval(async () => {
+      if ((await isCancelled(runId))) resolve({ kind: 'cancelled' })
     }, CANCEL_POLL_MS)
   })
 
@@ -277,7 +279,7 @@ async function runAttempt(
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
-        if (ev.type === 'step') onStep(ev.text)
+        if (ev.type === 'step') await onStep(ev.text)
         else if (ev.type === 'evidence') onEvidence(ev.data)
         else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}) }
         else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
@@ -300,13 +302,13 @@ async function runAttempt(
 
 // ---- nodes -------------------------------------------------------------------------------------------------------
 
-function skipNode(runId: string, block: PlannedBlock, reason: string = strings.run.skippedDisabled): Outcome {
-  return withTx(tx => {
-    const node = openNodeIn(tx, runId, block.id)
+async function skipNode(runId: string, block: PlannedBlock, reason: string = strings.run.skippedDisabled): Promise<Outcome> {
+  return withTx(async tx => {
+    const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
     if (settled) return { outcome: settled }
-    transitionNode(tx, node, 'skipped', { type: 'node.skipped', payload: { reason } })
+    await transitionNode(tx, node, 'skipped', { type: 'node.skipped', payload: { reason } })
     return { outcome: 'skipped' }
   })
 }
@@ -315,14 +317,14 @@ function skipNode(runId: string, block: PlannedBlock, reason: string = strings.r
 // the browser never receives command output. Written inside the transaction that ends the attempt, so a measurement
 // and the block's result are stored together or not at all: a crash in between cannot leave a measurement whose
 // block then re-runs and measures again.
-function writeEvidence(tx: DbHandle, node: NodeRow, blockId: string, measured: readonly TestRun[]): void {
+async function writeEvidence(tx: DbHandle, node: NodeRow, blockId: string, measured: readonly TestRun[]): Promise<void> {
   if (node.state !== 'running') return
   const { runId, id: nodeRunId } = node
   for (const data of measured) {
-    tx.insert(evidence)
+    await tx.insert(evidence)
       .values({ id: ulid(), projectId: node.projectId, runId, nodeRunId, kind: 'test_run', source: 'test-runner', dataJson: JSON.stringify(data), createdAt: now() })
-      .run()
-    appendEventSync(
+      
+    await appendEventSync(
       {
         runId,
         nodeRunId,
@@ -346,12 +348,12 @@ function writeEvidence(tx: DbHandle, node: NodeRow, blockId: string, measured: r
 
 // What a finished block leaves behind besides its state: the usage the provider reported (cost is never stored for
 // the subscription builder — not reported, never 0), and its sentence as a claim when a model wrote it.
-function recordDoneFacts(tx: DbHandle, node: NodeRow, done: Done): void {
+async function recordDoneFacts(tx: DbHandle, node: NodeRow, done: Done): Promise<void> {
   if (done.tokens !== undefined) {
-    tx.insert(usageRecords).values({ id: ulid(), projectId: node.projectId, nodeRunId: node.id, tokens: done.tokens, costCents: null, createdAt: now() }).run()
+    await tx.insert(usageRecords).values({ id: ulid(), projectId: node.projectId, nodeRunId: node.id, tokens: done.tokens, costCents: null, createdAt: now() })
   }
   if (done.source !== 'system' && done.summary.trim() !== '') {
-    tx.insert(claims).values({ id: ulid(), projectId: node.projectId, runId: node.runId, nodeRunId: node.id, text: done.summary, createdAt: now() }).run()
+    await tx.insert(claims).values({ id: ulid(), projectId: node.projectId, runId: node.runId, nodeRunId: node.id, text: done.summary, createdAt: now() })
   }
 }
 
@@ -368,32 +370,32 @@ async function runProviderNode(
   const provider = deps.resolveProvider(plan.providerId)
 
   // Row, node.queued and node.started commit together: a node is never left queued.
-  const opened = withTx((tx): NodeRow | Outcome => {
-    const node = openNodeIn(tx, runId, block.id)
+  const opened = (await withTx(async (tx): Promise<NodeRow | Outcome> => {
+    const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
     if (settled) return { outcome: settled } // replay of a step that already finished
     if (node.state === 'queued') {
-      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) {
+      if (!(await transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } }))) {
         return { outcome: 'cancelled' }
       }
-      tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+      await tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id))
       // Which model was chosen for this request, and why: first on the card, before the agent's own steps.
       if (block.routeNote) {
-        appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: node.attempt, text: block.routeNote } }, tx)
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: node.attempt, text: block.routeNote } }, tx)
       }
     }
     return node
-  })
+  }))
   if ('outcome' in opened) return opened
 
   // The copy is a fresh worktree, without node_modules: install once, before the first build, so the agent and the
   // tests work against the project's real dependencies. A failed install is said on the card; the run carries on.
-  if (block.kind === 'build' && workspace.workdir && deps.installDependencies && !alreadyInstalled(runId)) {
+  if (block.kind === 'build' && workspace.workdir && deps.installDependencies && !(await alreadyInstalled(runId))) {
     await prepareDependencies(runId, opened, block, workspace.workdir, deps.installDependencies, deps.copyBase)
   }
 
-  for (let attempt = freshNode(opened.id).attempt; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = (await freshNode(opened.id)).attempt; attempt <= MAX_ATTEMPTS; attempt++) {
     // Held until the attempt ends, then written in the same transaction as its outcome.
     const measured: TestRun[] = []
     const result = await runAttempt(
@@ -404,13 +406,13 @@ async function runProviderNode(
       workspace,
       revisionNote,
       images,
-      text => {
-        withTx(tx => {
-          const node = freshNode(opened.id)
+      async text => {
+        await withTx(async tx => {
+          const node = (await freshNode(opened.id, tx))
           // Everything a real agent prints is cleaned here, before it can reach the log or the browser.
           const clean = clip(redact(text), STEP_MAX)
           if (node.state === 'running') {
-            appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: clean } }, tx)
+            await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: clean } }, tx)
           }
         })
       },
@@ -422,28 +424,28 @@ async function runProviderNode(
     if (result.kind === 'done' && block.kind === 'plan' && result.plan) {
       // A proposed plan is not a finished block: it waits for the person, who checks it before anything is built.
       const jobs = result.plan
-      const parked = withTx(tx => {
-        const node = freshNode(opened.id)
+      const parked = (await withTx(async tx => {
+        const node = (await freshNode(opened.id, tx))
         if (node.state !== 'running') return false
-        recordDoneFacts(tx, node, result)
-        appendEventSync({ runId, nodeRunId: node.id, type: 'node.planned', payload: { blockId: block.id, jobs, by: 'planner' } }, tx)
-        appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_proposed', payload: { blockId: block.id, summary: result.summary, count: jobs.length } }, tx)
-        if (runStatusOf(tx, runId) === 'running') {
-          tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId)).run()
-          appendEventSync({ runId, type: 'run.waiting_approval', payload: { blockId: block.id } }, tx)
+        await recordDoneFacts(tx, node, result)
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.planned', payload: { blockId: block.id, jobs, by: 'planner' } }, tx)
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_proposed', payload: { blockId: block.id, summary: result.summary, count: jobs.length } }, tx)
+        if ((await runStatusOf(tx, runId)) === 'running') {
+          await tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId))
+          await appendEventSync({ runId, type: 'run.waiting_approval', payload: { blockId: block.id } }, tx)
         }
-        tx.update(nodeRuns).set({ summary: result.summary }).where(eq(nodeRuns.id, node.id)).run()
+        await tx.update(nodeRuns).set({ summary: result.summary }).where(eq(nodeRuns.id, node.id))
         return transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval', payload: { summary: result.summary, summarySource: result.source } })
-      })
+      }))
       return parked ? { outcome: 'parked' } : { outcome: 'cancelled' }
     }
 
     if (result.kind === 'done') {
-      const done = withTx(tx => {
-        const node = freshNode(opened.id)
+      const done = (await withTx(async tx => {
+        const node = (await freshNode(opened.id, tx))
         if (!canTransition(node.state as NodeState, 'passed')) return false
-        writeEvidence(tx, node, block.id, measured)
-        const moved = transitionNode(tx, node, 'passed', {
+        await writeEvidence(tx, node, block.id, measured)
+        const moved = (await transitionNode(tx, node, 'passed', {
           type: 'node.completed',
           payload: {
             summary: result.summary,
@@ -452,15 +454,15 @@ async function runProviderNode(
             // Present only when the provider said something about usage; null inside means "not reported".
             ...(result.tokens !== undefined ? { tokens: result.tokens } : {}),
           },
-        }, { summary: result.summary })
+        }, { summary: result.summary }))
         if (!moved) return false
-        recordDoneFacts(tx, node, result)
+        await recordDoneFacts(tx, node, result)
         // A reviewer's verdict and findings, on the record: the loop reads it to decide whether Build goes again.
         if (result.review) {
-          appendEventSync({ runId, nodeRunId: node.id, type: 'node.reviewed', payload: { blockId: block.id, verdict: result.review.verdict, findings: result.review.findings } }, tx)
+          await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reviewed', payload: { blockId: block.id, verdict: result.review.verdict, findings: result.review.findings } }, tx)
         }
         return true
-      })
+      }))
       return done ? { outcome: 'passed', ...(result.review ? { review: result.review } : {}) } : { outcome: 'cancelled' }
     }
 
@@ -493,12 +495,12 @@ async function runProviderNode(
     const canRetry = attempt < MAX_ATTEMPTS && result.kind !== 'timeout' && !(result.kind === 'error' && result.noRetry)
     if (canRetry) {
       // The node stays running: failed is terminal in the state machine, so only the final failure is recorded as one.
-      withTx(tx => {
-        const node = freshNode(opened.id)
+      await withTx(async tx => {
+        const node = (await freshNode(opened.id, tx))
         if (node.state !== 'running') return
-        writeEvidence(tx, node, block.id, measured)
-        tx.update(nodeRuns).set({ attempt: attempt + 1 }).where(eq(nodeRuns.id, node.id)).run()
-        appendEventSync(
+        await writeEvidence(tx, node, block.id, measured)
+        await tx.update(nodeRuns).set({ attempt: attempt + 1 }).where(eq(nodeRuns.id, node.id))
+        await appendEventSync(
           {
             runId,
             nodeRunId: node.id,
@@ -519,10 +521,10 @@ async function runProviderNode(
       continue
     }
 
-    const failed = withTx(tx => {
-      const node = freshNode(opened.id)
+    const failed = (await withTx(async tx => {
+      const node = (await freshNode(opened.id, tx))
       if (!canTransition(node.state as NodeState, 'failed')) return false
-      writeEvidence(tx, node, block.id, measured)
+      await writeEvidence(tx, node, block.id, measured)
       return transitionNode(tx, node, 'failed', {
         type: 'node.failed',
         // messageSource says who wrote `message`: only a provider_error carries the provider's own words. The
@@ -535,15 +537,15 @@ async function runProviderNode(
           ...(detail ? { detail } : {}),
         },
       }, { failureCause: cause })
-    })
+    }))
     return { outcome: failed ? 'failed' : 'cancelled' }
   }
   return { outcome: 'failed' } // unreachable: the loop always returns
 }
 
 // What the tests of this run measured, read back from its evidence: the gate is judged on records, not on a summary.
-function alreadyInstalled(runId: string): boolean {
-  return db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.installed'))).get() !== undefined
+async function alreadyInstalled(runId: string): Promise<boolean> {
+  return (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.installed'))))[0] !== undefined
 }
 
 async function prepareDependencies(
@@ -552,29 +554,29 @@ async function prepareDependencies(
   block: PlannedBlock,
   dir: string,
   install: (dir: string) => Promise<InstallResult | null>,
-  copyBase?: (runId: string, dir: string) => BaseCopy,
+  copyBase?: (runId: string, dir: string) => Promise<BaseCopy>,
 ): Promise<void> {
   const step = (text: string, tx: DbHandle) =>
     appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: node.attempt, text } }, tx)
   const command = installCommandFor(dir)
   if (!command) return
   // The project's prepared base, when this copy's lockfile is the one it was installed from: copied, not installed.
-  const copied = copyBase?.(runId, dir)
+  const copied = copyBase ? await copyBase(runId, dir) : undefined
   if (copied?.copied) {
-    withTx(tx => {
-      step(strings.run.copiedFromBase(Math.max(1, Math.round(copied.ms / 1000))), tx)
-      appendEventSync({ runId, type: 'run.installed', payload: { command, ok: true, fromBase: true } }, tx)
+    await withTx(async tx => {
+      await step(strings.run.copiedFromBase(Math.max(1, Math.round(copied.ms / 1000))), tx)
+      await appendEventSync({ runId, type: 'run.installed', payload: { command, ok: true, fromBase: true } }, tx)
     })
     return
   }
-  withTx(tx => step(copied && copied.reason === 'different-lockfile' ? strings.run.installingChanged(command) : strings.run.installing(command), tx))
+  await withTx(tx => step(copied && copied.reason === 'different-lockfile' ? strings.run.installingChanged(command) : strings.run.installing(command), tx))
   const result = await install(dir)
-  withTx(tx => {
+  await withTx(async tx => {
     if (result) {
       const seconds = Math.max(1, Math.round(result.durationMs / 1000))
-      step(result.ok ? strings.run.installed(seconds) : strings.run.installFailed(clip(redact(result.outputTail).trim().split('\n').slice(-2).join(' '), 200)), tx)
+      await step(result.ok ? strings.run.installed(seconds) : strings.run.installFailed(clip(redact(result.outputTail).trim().split('\n').slice(-2).join(' '), 200)), tx)
     }
-    appendEventSync({ runId, type: 'run.installed', payload: { command, ok: result?.ok ?? false } }, tx)
+    await appendEventSync({ runId, type: 'run.installed', payload: { command, ok: result?.ok ?? false } }, tx)
   })
 }
 
@@ -586,10 +588,10 @@ function ownCommand(b: { kind: string; config: Record<string, unknown> }): { tes
   return command !== '' && command.length <= 500 && !/[\r\n\0]/.test(command) ? { testCommand: command } : {}
 }
 
-function testFactsOf(runId: string): TestFacts {
+async function testFactsOf(runId: string): Promise<TestFacts> {
   // The latest test run of each block: an earlier round's result says nothing about the change as it is now.
   const latest = new Map<string, { createdAt: string; id: string; data: TestRun }>()
-  for (const e of db.select().from(evidence).where(eq(evidence.runId, runId)).all()) {
+  for (const e of (await db.select().from(evidence).where(eq(evidence.runId, runId)))) {
     if (e.kind !== 'test_run') continue
     const seen = latest.get(e.nodeRunId)
     if (!seen || e.createdAt > seen.createdAt || (e.createdAt === seen.createdAt && e.id > seen.id)) {
@@ -602,17 +604,17 @@ function testFactsOf(runId: string): TestFacts {
     testsPassed: runsOfTests.length > 0 && runsOfTests.every(t => t.exitCode === 0 && !t.signal),
     // Unknown (null) counts as changed: what could not be checked is not assumed untouched.
     testsChanged: runsOfTests.some(t => t.changedTestFiles === null || (t.changedTestFiles?.length ?? 0) > 0),
-    reviewOpen: latestReview(runId) === 'changes',
+    reviewOpen: (await latestReview(runId)) === 'changes',
   }
 }
 
-function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): RiskAssessment | null {
+async function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): Promise<RiskAssessment | null> {
   if (!workspace.workdir || !workspace.baseCommit) return null
-  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, testFactsOf(runId))
-  withTx(tx => {
-    const node = openNodeIn(tx, runId, block.id)
+  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)))
+  await withTx(async tx => {
+    const node = (await openNodeIn(tx, runId, block.id))
     if (!node || outcomeOf(node.state)) return
-    appendEventSync(
+    await appendEventSync(
       {
         runId,
         nodeRunId: node.id,
@@ -637,16 +639,16 @@ function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): R
 const MAX_REVIEW_ROUNDS = 2
 
 /** The latest verdict any reviewer recorded on this run, or null when none did. */
-function latestReview(runId: string): 'ok' | 'changes' | null {
-  const rows = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.reviewed'))).orderBy(desc(events.sequence)).all()
+async function latestReview(runId: string): Promise<'ok' | 'changes' | null> {
+  const rows = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.reviewed'))).orderBy(desc(events.sequence)))
   const verdict = rows[0] ? (JSON.parse(rows[0].payloadJson) as { verdict?: string }).verdict : null
   return verdict === 'ok' || verdict === 'changes' ? verdict : null
 }
 
 // Approve, for the real agent: a plain summary, from the record, of what the reviewers concluded. It always passes:
 // the final yes is the person's, at the human check.
-function sumUpReviews(runId: string, block: PlannedBlock, sentBack: number): Outcome {
-  const latest = latestReview(runId)
+async function sumUpReviews(runId: string, block: PlannedBlock, sentBack: number): Promise<Outcome> {
+  const latest = (await latestReview(runId))
   const summary =
     latest === null
       ? strings.review.approve.none
@@ -655,37 +657,37 @@ function sumUpReviews(runId: string, block: PlannedBlock, sentBack: number): Out
         : sentBack > 0
           ? strings.review.approve.fixed(sentBack)
           : strings.review.approve.clean
-  return withTx((tx): Outcome => {
-    const node = openNodeIn(tx, runId, block.id)
+  return withTx(async (tx): Promise<Outcome> => {
+    const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
     if (settled) return { outcome: settled }
     if (node.state === 'queued') {
-      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return { outcome: 'cancelled' }
-      tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+      if (!(await transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } }))) return { outcome: 'cancelled' }
+      await tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id))
     }
-    const passed = transitionNode(tx, node, 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary })
+    const passed = (await transitionNode(tx, node, 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary }))
     return { outcome: passed ? 'passed' : 'cancelled' }
   })
 }
 
-function passLowRiskGate(runId: string, block: PlannedBlock): Outcome {
-  return withTx((tx): Outcome => {
-    const node = openNodeIn(tx, runId, block.id)
+async function passLowRiskGate(runId: string, block: PlannedBlock): Promise<Outcome> {
+  return withTx(async (tx): Promise<Outcome> => {
+    const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
     if (settled) return { outcome: settled }
     if (node.state === 'queued') {
-      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return { outcome: 'cancelled' }
-      tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+      if (!(await transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } }))) return { outcome: 'cancelled' }
+      await tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id))
     }
-    const passed = transitionNode(
+    const passed = (await transitionNode(
       tx,
       node,
       'passed',
       { type: 'node.completed', payload: { summary: strings.risk.passedLow, summarySource: 'system', autoApproved: true } },
       { summary: strings.risk.passedLow },
-    )
+    ))
     return { outcome: passed ? 'passed' : 'cancelled' }
   })
 }
@@ -693,30 +695,30 @@ function passLowRiskGate(runId: string, block: PlannedBlock): Outcome {
 // The person asked for changes: every block from the builder to the human check goes back to queued for the next
 // round, in one transaction, each with a node.reopened event carrying the round and the person's note. Blocks that
 // were skipped stay skipped. The run is running again. Nothing in the worktree is touched: the next round builds on it.
-function reopenForRevision(
+async function reopenForRevision(
   runId: string,
   blocks: readonly PlannedBlock[],
   round: number,
   note: string | null,
   by: 'person' | 'reviewer' = 'person',
-): boolean {
-  return withTx(tx => {
+): Promise<boolean> {
+  return withTx(async tx => {
     // The person sends work back from the gate, where the run waits; a reviewer does it while the run is still going.
-    const status = runStatusOf(tx, runId)
+    const status = (await runStatusOf(tx, runId))
     if (status !== (by === 'person' ? 'waiting_approval' : 'running')) return false
     const clean = note ? clip(redact(note), 500) : null
     for (const block of blocks) {
-      const node = tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
+      const node = (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
       if (!node || !canReopen(node.state as NodeState)) continue
-      tx.update(nodeRuns)
+      await tx.update(nodeRuns)
         .set({ state: 'queued', attempt: 1, summary: null, failureCause: null, startedAt: null, finishedAt: null })
         .where(eq(nodeRuns.id, node.id))
-        .run()
-      appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by } }, tx)
+        
+      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by } }, tx)
     }
     if (by === 'person') {
-      tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
-      appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
+      await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
+      await appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
     }
     return true
   })
@@ -725,72 +727,72 @@ function reopenForRevision(
 /** How many unrecorded decisions a gate tolerates before it stops listening (the run stays waiting). */
 const MAX_IGNORED_DECISIONS = 20
 
-function readRecordedDecision(runId: string, block: PlannedBlock): { decision: Decision; note: string | null; approvalId: string } | null {
-  const node = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
+async function readRecordedDecision(runId: string, block: PlannedBlock): Promise<{ decision: Decision; note: string | null; approvalId: string } | null> {
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
   if (!node) return null
-  const decided = takeRecordedDecision(runId, node.id)
+  const decided = (await takeRecordedDecision(runId, node.id))
   if (decided === null) {
-    withTx(tx => {
-      appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, text: strings.gate.ignoredEvent } }, tx)
+    await withTx(async tx => {
+      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, text: strings.gate.ignoredEvent } }, tx)
     })
   }
   return decided
 }
 
 // A human block never calls a provider: it records that it is waiting and the function parks.
-function parkHumanNode(runId: string, block: PlannedBlock): Outcome {
-  const result = withTx((tx): Outcome => {
-    const node = openNodeIn(tx, runId, block.id)
+async function parkHumanNode(runId: string, block: PlannedBlock): Promise<Outcome> {
+  const result = (await withTx(async (tx): Promise<Outcome> => {
+    const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
     if (settled) return { outcome: settled }
     if (node.state === 'queued') {
-      if (!transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } })) return { outcome: 'cancelled' }
-      tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id)).run()
+      if (!(await transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } }))) return { outcome: 'cancelled' }
+      await tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id))
     }
     // The run's own state change is an event too, appended where the status changes. It precedes the node event so
     // the log ends on node.waiting_approval, the block the person has to act on.
-    if (runStatusOf(tx, runId) === 'running') {
-      tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId)).run()
-      appendEventSync({ runId, type: 'run.waiting_approval', payload: { blockId: block.id } }, tx)
+    if ((await runStatusOf(tx, runId)) === 'running') {
+      await tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId))
+      await appendEventSync({ runId, type: 'run.waiting_approval', payload: { blockId: block.id } }, tx)
     }
-    if (node.state === 'running' && !transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval' })) return { outcome: 'cancelled' }
+    if (node.state === 'running' && !(await transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval' }))) return { outcome: 'cancelled' }
     return { outcome: 'parked' }
-  })
+  }))
   return result
 }
 
-function decideHumanNode(runId: string, block: PlannedBlock, approved: boolean): Outcome {
-  const node = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
+async function decideHumanNode(runId: string, block: PlannedBlock, approved: boolean): Promise<Outcome> {
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
   if (!node) return { outcome: 'cancelled' }
-  const ok = withTx(tx => {
-    const fresh = freshNode(node.id)
+  const ok = (await withTx(async tx => {
+    const fresh = (await freshNode(node.id, tx))
     const moved = approved
-      ? transitionNode(tx, fresh, 'passed', { type: 'node.completed', payload: { summary: strings.run.resumed, summarySource: 'system' } }, { summary: strings.run.resumed })
-      : transitionNode(tx, fresh, 'failed', { type: 'node.failed', payload: { cause: 'rejected', message: strings.run.rejected, messageSource: 'system' } }, { failureCause: 'rejected' })
-    if (moved && runStatusOf(tx, runId) === 'waiting_approval') {
-      tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
-      appendEventSync({ runId, type: 'run.started', payload: { resumed: true } }, tx)
+      ? (await transitionNode(tx, fresh, 'passed', { type: 'node.completed', payload: { summary: strings.run.resumed, summarySource: 'system' } }, { summary: strings.run.resumed }))
+      : (await transitionNode(tx, fresh, 'failed', { type: 'node.failed', payload: { cause: 'rejected', message: strings.run.rejected, messageSource: 'system' } }, { failureCause: 'rejected' }))
+    if (moved && (await runStatusOf(tx, runId)) === 'waiting_approval') {
+      await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
+      await appendEventSync({ runId, type: 'run.started', payload: { resumed: true } }, tx)
     }
     return moved
-  })
+  }))
   return { outcome: ok ? (approved ? 'passed' : 'failed') : 'cancelled' }
 }
 
 // The person said build it: the plan block passes with the jobs they checked, and the run goes on.
-function confirmPlanNode(runId: string, block: PlannedBlock): { outcome: Outcome['outcome']; jobs?: Job[] } {
-  const jobs = currentPlan(runId)?.jobs
-  const node = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId === block.id)
+async function confirmPlanNode(runId: string, block: PlannedBlock): Promise<{ outcome: Outcome['outcome']; jobs?: Job[] }> {
+  const jobs = (await currentPlan(runId))?.jobs
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
   if (!node || !jobs) return { outcome: 'cancelled' }
   const summary = strings.plan.confirmed(jobs.length)
-  const ok = withTx(tx => {
-    const moved = transitionNode(tx, freshNode(node.id), 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary })
-    if (moved && runStatusOf(tx, runId) === 'waiting_approval') {
-      tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId)).run()
-      appendEventSync({ runId, type: 'run.started', payload: { resumed: true } }, tx)
+  const ok = (await withTx(async tx => {
+    const moved = (await transitionNode(tx, (await freshNode(node.id, tx)), 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary }))
+    if (moved && (await runStatusOf(tx, runId)) === 'waiting_approval') {
+      await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
+      await appendEventSync({ runId, type: 'run.started', payload: { resumed: true } }, tx)
     }
     return moved
-  })
+  }))
   return ok ? { outcome: 'passed', jobs } : { outcome: 'cancelled' }
 }
 
@@ -799,10 +801,10 @@ const MAX_REPLANS = 5
 
 // ---- the orchestration ---------------------------------------------------------------------------------------------
 
-function loadPlan(runId: string): Plan {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+async function loadPlan(runId: string): Promise<Plan> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) throw new NonRetriableError(`${strings.errors.runNotFound} (${runId})`)
-  const version = db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)).get()
+  const version = (await db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)))[0]
   if (!version) throw new NonRetriableError(`${strings.errors.runNotFound} (${runId})`)
   const graph = JSON.parse(version.graphJson) as Graph
   // Stage order, then the order blocks were added within a stage. Disabled blocks stay in the plan so they are reported.
@@ -826,7 +828,7 @@ function loadPlan(runId: string): Plan {
       ...ownCommand(b),
     }
   })
-  const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
+  const project = (await db.select().from(projects).where(eq(projects.id, run.projectId)))[0]
   return {
     providerId: run.providerId,
     request: run.request,
@@ -834,16 +836,16 @@ function loadPlan(runId: string): Plan {
     repoPath: project?.repoPath ?? null,
     testCommand: project?.testCommand ?? null,
     autoApproveLowRisk: project?.autoApproveLowRisk ?? false,
-    previousRequest: run.parentRunId ? (db.select({ r: runs.request }).from(runs).where(eq(runs.id, run.parentRunId)).get()?.r ?? null) : null,
+    previousRequest: run.parentRunId ? ((await db.select({ r: runs.request }).from(runs).where(eq(runs.id, run.parentRunId)))[0]?.r ?? null) : null,
   }
 }
 
 // The run's working copy, made once before any block runs. A provider that touches no files (the demo) gets none. If the
 // copy cannot be made, the run fails with that sentence rather than letting an agent start somewhere else.
-function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Workspace | { failed: string } {
+async function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Promise<Workspace | { failed: string }> {
   const provider = deps.resolveProvider(plan.providerId)
   if (!provider.needsWorkspace) return { workdir: null, testCommand: plan.testCommand, baseCommit: null }
-  const existing = db.select().from(runs).where(eq(runs.id, runId)).get()
+  const existing = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (existing?.worktreePath) return { workdir: existing.worktreePath, testCommand: plan.testCommand, baseCommit: existing.baseCommit }
   if (!plan.repoPath) return { failed: strings.run.noRepository }
   try {
@@ -853,9 +855,9 @@ function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Worksp
     const make = deps.createWorktree ?? ((r: string, id: string, sp?: string, req?: string) => createRunWorktree(r, id, undefined, sp, req))
     // The branch is named after the request, so a person can tell it apart in their own `git branch`.
     const ws = make(plan.repoPath, runId, startPoint, plan.request)
-    withTx(tx => {
-      tx.update(runs).set({ worktreePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit }).where(eq(runs.id, runId)).run()
-      appendEventSync({ runId, type: 'run.workspace', payload: { branch: ws.branch, path: ws.path, baseCommit: ws.baseCommit } }, tx)
+    await withTx(async tx => {
+      await tx.update(runs).set({ worktreePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit }).where(eq(runs.id, runId))
+      await appendEventSync({ runId, type: 'run.workspace', payload: { branch: ws.branch, path: ws.path, baseCommit: ws.baseCommit } }, tx)
     })
     return { workdir: ws.path, testCommand: plan.testCommand, baseCommit: ws.baseCommit }
   } catch (e) {
@@ -1047,35 +1049,35 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   }
 
   // Everything finished: let the roll-up, not an assumption, decide whether that is success.
-  await step.run('finish', () => {
-    const states = db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().map(n => n.state as NodeState)
+  await step.run('finish', async () => {
+    const states = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).map(n => n.state as NodeState)
     const status = rollUpRunStatus(states)
-    if (status === 'completed') finishRun(runId, 'completed')
-    else if (status === 'failed') finishRun(runId, 'failed')
-    else if (status === 'waiting_approval') setRunStatus(runId, 'waiting_approval', { type: 'run.waiting_approval' })
+    if (status === 'completed') (await finishRun(runId, 'completed'))
+    else if (status === 'failed') (await finishRun(runId, 'failed'))
+    else if (status === 'waiting_approval') (await setRunStatus(runId, 'waiting_approval', { type: 'run.waiting_approval' }))
     return status
   })
 }
 
 // Last resort when a step throws for good (missing run, exhausted retries): nothing may be left running with no
 // recorded cause. Unfinished nodes fail, then the run fails, each through the guarded transitions.
-export function failRunAfterError(runId: string): void {
-  withTx(tx => {
-    const status = runStatusOf(tx, runId)
+export async function failRunAfterError(runId: string): Promise<void> {
+  await withTx(async tx => {
+    const status = (await runStatusOf(tx, runId))
     if (status === undefined || status === 'cancelled' || status === 'failed' || status === 'completed') return
-    for (const node of tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all()) {
+    for (const node of (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)))) {
       if (node.state === 'queued') {
         // queued -> failed is not a legal transition; a node that never started is cancelled, and the run carries the failure.
-        transitionNode(tx, node, 'cancelled', { type: 'node.cancelled', payload: { reason: strings.run.internalFailure } })
+        (await transitionNode(tx, node, 'cancelled', { type: 'node.cancelled', payload: { reason: strings.run.internalFailure } }))
         continue
       }
-      transitionNode(tx, node, 'failed', {
+      (await transitionNode(tx, node, 'failed', {
         type: 'node.failed',
         payload: { cause: 'internal_error', message: strings.run.internalFailure, messageSource: 'system' },
-      }, { failureCause: 'internal_error' })
+      }, { failureCause: 'internal_error' }))
     }
-    tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId)).run()
-    appendEventSync({ runId, type: 'run.failed', payload: { cause: 'internal_error', message: strings.run.internalFailure } }, tx)
+    await tx.update(runs).set({ status: 'failed', finishedAt: now() }).where(eq(runs.id, runId))
+    await appendEventSync({ runId, type: 'run.failed', payload: { cause: 'internal_error', message: strings.run.internalFailure } }, tx)
   })
 }
 
@@ -1085,7 +1087,7 @@ export const executeRun = inngest.createFunction(
     triggers: [{ event: RUN_REQUESTED }],
     onFailure: async ({ event }) => {
       const runId = (event.data.event.data as { runId?: unknown }).runId
-      if (typeof runId === 'string') failRunAfterError(runId)
+      if (typeof runId === 'string') (await failRunAfterError(runId))
     },
   },
   async ({ event, step }) => {

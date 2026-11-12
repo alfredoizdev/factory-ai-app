@@ -12,13 +12,13 @@ export async function seedDemoProject(): Promise<{ projectId: string; workflowId
   // Immediate transaction: the existence check and the insert are one atomic step,
   // so concurrent seed processes serialize instead of colliding on the 'demo' key.
   return db.transaction(
-    tx => {
-      const existing = tx.select().from(workflows).where(eq(workflows.id, DEMO_WORKFLOW_ID)).get()
+    async tx => {
+      const existing = (await tx.select().from(workflows).where(eq(workflows.id, DEMO_WORKFLOW_ID)))[0]
       if (existing) return { projectId: existing.projectId, workflowId: existing.id }
 
       const projectId = ulid()
-      tx.insert(projects).values({ id: projectId, projectId, name: strings.demo.projectName, createdAt: now }).run()
-      tx.insert(workflows)
+      await tx.insert(projects).values({ id: projectId, projectId, name: strings.demo.projectName, createdAt: now })
+      await tx.insert(workflows)
         .values({
           id: DEMO_WORKFLOW_ID,
           projectId,
@@ -27,15 +27,14 @@ export async function seedDemoProject(): Promise<{ projectId: string; workflowId
           createdAt: now,
           updatedAt: now,
         })
-        .run()
+        
       return { projectId, workflowId: DEMO_WORKFLOW_ID }
     },
-    { behavior: 'immediate' },
   )
 }
 
 // `npm run seed`
 if (process.argv[1]?.endsWith('seed.ts')) {
-  migrateDb()
+  await migrateDb()
   seedDemoProject().then(r => console.log(r))
 }

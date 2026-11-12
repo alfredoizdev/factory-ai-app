@@ -24,7 +24,7 @@ function cursorFrom(req: Request): number {
 
 export async function GET(req: Request, ctx: { params: Promise<{ runId: string }> }) {
   const { runId } = await ctx.params
-  const run = db.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).get()
+  const run = (await db.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)))[0]
   if (!run) return Response.json({ error: strings.errors.runNotFound }, { status: 404 })
 
   let cursor = cursorFrom(req)

@@ -21,8 +21,8 @@ const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(
 async function aRun(): Promise<string> {
   const projectId = ulid()
   const workflowId = ulid()
-  db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: '' }).run()
-  db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: '', updatedAt: '' }).run()
+  await db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: '' })
+  await db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: '', updatedAt: '' })
   await saveDraft(workflowId, defaultGraph())
   await publishVersion(workflowId)
   return (await createRun({ workflowId, request: 'r' })).runId
@@ -34,31 +34,31 @@ test('an image is recognised by its bytes, never by its name', () => {
   expect(sniffImage(Buffer.from('#!/bin/sh\necho not an image at all'))).toBeNull()
 })
 
-test('a script renamed to .png is refused; an image is stored under a name of the app\'s choosing', () => {
+test('a script renamed to .png is refused; an image is stored under a name of the app\'s choosing', async () => {
   const d = dir()
-  expect(() => saveAttachment('evil.png', Buffer.from('#!/bin/sh\nrm -rf / # pretending'), d)).toThrow(strings.attachments.notImage)
-  const saved = saveAttachment('../../etc/passwd screenshot.png', PNG, d)
-  const row = db.select().from(attachments).where(eq(attachments.id, saved.id)).get()!
+  await expect(saveAttachment('evil.png', Buffer.from('#!/bin/sh\nrm -rf / # pretending'), d)).rejects.toThrow(strings.attachments.notImage)
+  const saved = (await saveAttachment('../../etc/passwd screenshot.png', PNG, d))
+  const row = (await db.select().from(attachments).where(eq(attachments.id, saved.id)))[0]!
   expect(row.path).toBe(join(d, `${saved.id}.png`))
   expect(readFileSync(row.path).equals(PNG)).toBe(true)
   expect(saved.name).not.toContain('/')
 })
 
-test('an image over the size limit is refused', () => {
+test('an image over the size limit is refused', async () => {
   const big = Buffer.concat([PNG, Buffer.alloc(MAX_IMAGE_BYTES)])
-  expect(() => saveAttachment('big.png', big, dir())).toThrow(AttachmentError)
+  await expect(saveAttachment('big.png', big, dir())).rejects.toThrow(AttachmentError)
 })
 
 test('a run gets the images sent with its request; a request for changes gets only its own', async () => {
   const runId = await aRun()
   const d = dir()
-  const first = saveAttachment('a.png', PNG, d)
-  const later = saveAttachment('b.png', PNG, d)
-  expect(claimAttachments([first.id], runId)).toBe(1)
-  expect(claimAttachments([first.id], runId)).toBe(0) // already used: not claimed twice
-  expect(imagePathsFor(runId)).toEqual([join(d, `${first.id}.png`)])
-  claimAttachments([later.id], runId, null)
-  expect(imagePathsFor(runId)).toHaveLength(2)
+  const first = (await saveAttachment('a.png', PNG, d))
+  const later = (await saveAttachment('b.png', PNG, d))
+  expect((await claimAttachments([first.id], runId))).toBe(1)
+  expect((await claimAttachments([first.id], runId))).toBe(0) // already used: not claimed twice
+  expect((await imagePathsFor(runId))).toEqual([join(d, `${first.id}.png`)])
+  await claimAttachments([later.id], runId, null)
+  expect((await imagePathsFor(runId))).toHaveLength(2)
 })
 
 test('with images, the agent is told where they are and given read access to that folder only', () => {
@@ -83,6 +83,6 @@ test('from the app\'s own page an image is attached and its id comes back', asyn
   expect(res.status).toBe(201)
   const body = (await res.json()) as { id: string; mime: string }
   expect(body.mime).toBe('image/png')
-  const row = db.select().from(attachments).where(eq(attachments.id, body.id)).get()!
+  const row = (await db.select().from(attachments).where(eq(attachments.id, body.id)))[0]!
   expect(existsSync(row.path)).toBe(true)
 })

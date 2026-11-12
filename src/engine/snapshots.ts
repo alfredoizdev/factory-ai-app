@@ -79,19 +79,19 @@ const fileOf = (runId: string, shot: Shot, root = SNAP_ROOT) => join(root, runId
 export const snapshotFile = (runId: string, shot: string, root = SNAP_ROOT): string | null =>
   (SHOTS as readonly string[]).includes(shot) && existsSync(fileOf(runId, shot as Shot, root)) ? fileOf(runId, shot as Shot, root) : null
 
-const changeHash = (runId: string) => createHash('sha256').update(pendingDiff(runId)).digest('hex').slice(0, 16)
+const changeHash = async (runId: string) => createHash('sha256').update((await pendingDiff(runId))).digest('hex').slice(0, 16)
 
 // Pictures being taken now, by run. Kept on globalThis so a hot reload does not forget them.
 const working: Map<string, string> = ((globalThis as { __factorySnapshots?: Map<string, string> }).__factorySnapshots ??= new Map())
 
 /** Where the pictures of a run's change stand. Pictures of an earlier version of the change do not count. */
-export function snapshotState(runId: string): SnapshotState {
+export async function snapshotState(runId: string): Promise<SnapshotState> {
   const now = working.get(runId)
   if (now !== undefined) return { status: 'working', route: null, shots: [], message: now }
-  const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.snapshots'))).orderBy(desc(events.sequence)).get()
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.snapshots'))).orderBy(desc(events.sequence)))[0]
   if (!row) return { status: 'none', route: null, shots: [], message: null }
   const p = JSON.parse(row.payloadJson) as { route: string | null; shots: Shot[]; message: string | null; change: string }
-  if (p.change !== changeHash(runId)) return { status: 'none', route: null, shots: [], message: null }
+  if (p.change !== (await changeHash(runId))) return { status: 'none', route: null, shots: [], message: null }
   const shots = p.shots.filter(s => snapshotFile(runId, s) !== null)
   return shots.length > 0 ? { status: 'ready', route: p.route, shots, message: null } : { status: 'failed', route: p.route, shots: [], message: p.message }
 }
@@ -102,17 +102,17 @@ const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, en
  * Takes the before and after pictures of a run's change, in the background. Returns at once; snapshotState says how
  * it goes. Once at a time per run. Whatever it started (the version before, a copy of it, a browser) it stops.
  */
-export function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot, root = SNAP_ROOT): SnapshotState {
+export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot, root = SNAP_ROOT): Promise<SnapshotState> {
   if (working.has(runId)) return snapshotState(runId)
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run?.worktreePath || !existsSync(run.worktreePath)) throw new SnapshotError(strings.snapshots.noWorkingCopy)
-  const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get()
+  const project = (await db.select().from(projects).where(eq(projects.id, run.projectId)))[0]
   const repo = project?.repoPath
   const from = run.deliveryBase ?? run.baseCommit
   if (!repo || !from) throw new SnapshotError(strings.snapshots.noWorkingCopy)
 
-  const change = changeHash(runId)
-  const route = routeFor(changedFiles(runId))
+  const change = (await changeHash(runId))
+  const route = routeFor((await changedFiles(runId)))
   const dir = join(root, runId)
   const beforeTree = join(dir, 'before-tree')
   const beforeKey = `${runId}:before`
@@ -126,7 +126,7 @@ export function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot
       mkdirSync(dir, { recursive: true })
       if (existsSync(beforeTree)) removeTree(repo, beforeTree)
       git(repo, ['worktree', 'add', '-q', '--detach', beforeTree, from])
-      copyBaseInto(run.projectId, beforeTree)
+      await copyBaseInto(run.projectId, beforeTree)
       // Both versions start at once; each is photographed as soon as it answers.
       await Promise.all([startPreview(runId), startServer(beforeKey, beforeTree, repo)])
       working.set(runId, strings.snapshots.waiting)
@@ -150,7 +150,7 @@ export function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot
       // The dev server lets go of the copy first, then the copy goes.
       setTimeout(() => removeTree(repo, beforeTree), 4000).unref()
       try {
-        db.transaction(tx => void appendEventSync({ runId, type: 'run.snapshots', payload: { route, shots, message, change } }, tx), { behavior: 'immediate' })
+        await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.snapshots', payload: { route, shots, message, change } }, tx)))
       } finally {
         working.delete(runId)
       }

@@ -1,4 +1,4 @@
-import { and, eq, gt, asc, max } from 'drizzle-orm'
+import { and, eq, gt, asc, max, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { events, runs } from '@/db/schema'
@@ -88,19 +88,21 @@ function toRow(r: typeof events.$inferSelect): EventRow {
 
 // A handle a caller already holds: the db itself, or the tx inside db.transaction(). With a transaction handle the
 // event commits or rolls back together with the caller's own writes.
-export type DbHandle = Pick<typeof db, 'select' | 'insert' | 'update'>
+export type DbHandle = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete' | 'execute'>
 
-function insertEvent(h: DbHandle, input: AppendEventInput): EventRow {
+async function insertEvent(h: DbHandle, input: AppendEventInput): Promise<EventRow> {
   // Runtime guard: the type requires blockId, but a cast bypasses types and '' type-checks.
   if (input.type.startsWith('node.')) {
     const blockId = (input.payload as { blockId?: unknown } | null | undefined)?.blockId
     if (typeof blockId !== 'string' || blockId === '') throw new InvalidEventPayloadError(input.type)
   }
-  const run = h.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, input.runId)).get()
+  const run = (await h.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, input.runId)))[0]
   if (!run) throw new RunNotFoundError(input.runId)
-  const top = h.select({ m: max(events.sequence) }).from(events).where(eq(events.runId, input.runId)).get()
+  // One writer per run at a time, until the transaction ends: the next sequence is read and written without a race.
+  await lockRun(h, input.runId)
+  const top = (await h.select({ m: max(events.sequence) }).from(events).where(eq(events.runId, input.runId)))[0]
   return toRow(
-    h
+    (await h
       .insert(events)
       .values({
         id: ulid(),
@@ -113,31 +115,35 @@ function insertEvent(h: DbHandle, input: AppendEventInput): EventRow {
         createdAt: new Date().toISOString(),
       })
       .returning()
-      .get(),
+      )[0]!,
   )
 }
 
-// Synchronous form for use inside db.transaction(): pass the tx so the row and its event are written atomically.
-// The caller's transaction should be IMMEDIATE so the sequence read-then-write cannot race another writer.
-export function appendEventSync(input: AppendEventInput, handle: DbHandle): EventRow {
+/** Holds this run's lock until the surrounding transaction ends, so per-run counters are read and written in turn. */
+export async function lockRun(h: DbHandle, runId: string): Promise<void> {
+  await h.execute(sql`select pg_advisory_xact_lock(hashtext(${runId}))`)
+}
+
+// Inside db.transaction(): pass the tx so the row and its event are written atomically. The run's lock is taken
+// inside, so the sequence read-then-write cannot race another writer.
+export function appendEventSync(input: AppendEventInput, handle: DbHandle): Promise<EventRow> {
   return insertEvent(handle, input)
 }
 
 export async function appendEvent(input: AppendEventInput, handle?: DbHandle): Promise<EventRow> {
   if (handle) return insertEvent(handle, input)
-  // Read-max and insert share one IMMEDIATE transaction: the write lock is taken up front, so a second
-  // connection waits (busy_timeout) rather than reading the same max under a shared lock and failing on
-  // upgrade. The unique (runId, sequence) index is the backstop: a lost race throws rather than corrupts.
-  return db.transaction(tx => insertEvent(tx, input), { behavior: 'immediate' })
+  // Read-max and insert share one transaction holding the run's lock. The unique (runId, sequence) index is the
+  // backstop: a lost race throws rather than corrupts.
+  return db.transaction(tx => insertEvent(tx, input))
 }
 
 // afterSequence 0 means everything; sequences start at 1.
 export async function eventsSince(runId: string, afterSequence: number): Promise<EventRow[]> {
-  const rows = db
+  const rows = (await db
     .select()
     .from(events)
     .where(and(eq(events.runId, runId), gt(events.sequence, afterSequence)))
     .orderBy(asc(events.sequence))
-    .all()
+    )
   return rows.map(toRow)
 }

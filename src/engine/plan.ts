@@ -59,8 +59,8 @@ export function workList(jobs: readonly Job[]): string {
 type Planned = { jobs: Job[]; by: 'planner' | 'person' }
 
 /** The run's plan as it stands: the last one recorded, by the planner or the person. */
-export function currentPlan(runId: string): Planned | null {
-  const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.planned'))).orderBy(desc(events.sequence)).get()
+export async function currentPlan(runId: string): Promise<Planned | null> {
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.planned'))).orderBy(desc(events.sequence)))[0]
   if (!row) return null
   const p = JSON.parse(row.payloadJson) as { jobs?: unknown; by?: unknown }
   const jobs = cleanJobs(p.jobs)
@@ -70,8 +70,8 @@ export function currentPlan(runId: string): Planned | null {
 export type PlanDecision = { action: 'build' } | { action: 'replan'; note: string }
 
 /** What the person last said about the plan, if they said anything since it was last proposed. */
-export function planDecision(runId: string): PlanDecision | null {
-  const rows = db.select().from(events).where(eq(events.runId, runId)).orderBy(desc(events.sequence)).all()
+export async function planDecision(runId: string): Promise<PlanDecision | null> {
+  const rows = (await db.select().from(events).where(eq(events.runId, runId)).orderBy(desc(events.sequence)))
   for (const row of rows) {
     if (row.type === 'node.plan_proposed') return null // the planner proposed after the last decision: nothing decided on it
     if (row.type !== 'node.plan_decided') continue
@@ -93,27 +93,32 @@ export class PlanError extends Error {
  * Records the person's word on a plan waiting for them: build it (with their edited jobs), or plan again with a note.
  * Only while the plan block waits; the caller then tells the run to look.
  */
-export function decidePlan(runId: string, decision: { action: 'build'; jobs: unknown } | { action: 'replan'; note: string }): void {
-  db.transaction(
-    tx => {
-      const node = tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).all().find(n => n.blockId !== undefined && n.state === 'waiting_approval' && isPlanNode(tx, runId, n.id))
+export async function decidePlan(runId: string, decision: { action: 'build'; jobs: unknown } | { action: 'replan'; note: string }): Promise<void> {
+  await db.transaction(
+    async tx => {
+      let node: (typeof nodeRuns.$inferSelect) | undefined
+      for (const n of await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))) {
+        if (n.state === 'waiting_approval' && (await isPlanNode(tx, runId, n.id))) {
+          node = n
+          break
+        }
+      }
       if (!node) throw new PlanError(strings.plan.notWaiting)
       if (decision.action === 'build') {
         const jobs = cleanJobs(decision.jobs)
         if (!jobs) throw new PlanError(strings.plan.needAJob)
-        appendEventSync({ runId, nodeRunId: node.id, type: 'node.planned', payload: { blockId: node.blockId, jobs, by: 'person' } }, tx)
-        appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_decided', payload: { blockId: node.blockId, action: 'build' } }, tx)
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.planned', payload: { blockId: node.blockId, jobs, by: 'person' } }, tx)
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_decided', payload: { blockId: node.blockId, action: 'build' } }, tx)
       } else {
         const note = clip(redact(decision.note.trim()), 1000)
         if (note === '') throw new PlanError(strings.plan.needANote)
-        appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_decided', payload: { blockId: node.blockId, action: 'replan', note } }, tx)
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_decided', payload: { blockId: node.blockId, action: 'replan', note } }, tx)
       }
     },
-    { behavior: 'immediate' },
   )
 }
 
 // A node is the plan's when the planner proposed on it.
-function isPlanNode(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], runId: string, nodeRunId: string): boolean {
-  return tx.select().from(events).where(and(eq(events.runId, runId), eq(events.nodeRunId, nodeRunId), eq(events.type, 'node.plan_proposed'))).get() !== undefined
+async function isPlanNode(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], runId: string, nodeRunId: string): Promise<boolean> {
+  return (await tx.select().from(events).where(and(eq(events.runId, runId), eq(events.nodeRunId, nodeRunId), eq(events.type, 'node.plan_proposed'))))[0] !== undefined
 }

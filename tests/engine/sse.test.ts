@@ -6,8 +6,8 @@ import { appendEvent, eventsSince, type EventRow } from '@/engine/events'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import { GET } from '@/app/api/runs/[runId]/events/route'
 
-beforeAll(() => {
-  migrateDb()
+beforeAll(async () => {
+  await migrateDb()
 })
 
 const now = () => new Date().toISOString()

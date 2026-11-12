@@ -21,7 +21,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
     const created = await createRun({ workflowId: id, request: body.data.request, providerId: body.data.provider, startFrom: body.data.startFrom, title: body.data.title })
-    claimAttachments(body.data.attachments ?? [], created.runId)
+    await claimAttachments(body.data.attachments ?? [], created.runId)
     try {
       await inngest.send({ name: RUN_REQUESTED, data: { runId: created.runId } })
     } catch {
@@ -42,5 +42,5 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 // The past tasks of this flow, for the sidebar's list. Reading only.
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
-  return Response.json({ runs: listRuns(id) })
+  return Response.json({ runs: (await listRuns(id)) })
 }

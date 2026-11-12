@@ -10,8 +10,8 @@ import { POST as publish } from '@/app/api/workflows/[id]/publish/route'
 import { POST as startRun } from '@/app/api/workflows/[id]/runs/route'
 import { POST as cancel } from '@/app/api/runs/[runId]/cancel/route'
 
-beforeAll(() => {
-  migrateDb()
+beforeAll(async () => {
+  await migrateDb()
 })
 
 const now = () => new Date().toISOString()

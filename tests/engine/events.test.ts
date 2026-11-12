@@ -5,8 +5,8 @@ import { eq } from 'drizzle-orm'
 import { events } from '@/db/schema'
 import { appendEvent, eventsSince, InvalidEventPayloadError, RunNotFoundError } from '@/engine/events'
 
-beforeAll(() => {
-  migrateDb()
+beforeAll(async () => {
+  await migrateDb()
 })
 
 const now = () => new Date().toISOString()

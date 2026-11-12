@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { events, projects, runs } from '@/db/schema'
 import { defaultBranch } from '@/engine/branches'
@@ -65,20 +65,20 @@ export function checkOf(c: Rollup): Check {
   }
 }
 
-function recordOf(runId: string, type: 'run.pr_opened' | 'run.merged' | 'run.on_hold'): Record<string, unknown> | null {
-  const row = db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)).get()
+async function recordOf(runId: string, type: 'run.pr_opened' | 'run.merged' | 'run.on_hold'): Promise<Record<string, unknown> | null> {
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)))[0]
   return row ? { ...(JSON.parse(row.payloadJson) as Record<string, unknown>), at: row.createdAt } : null
 }
 
 /** Right after a pull request opens, GitHub may not have listed its checks yet: no checks then is not "none". */
 export const CHECKS_GRACE_MS = 60_000
 
-function repoOf(runId: string): { repo: string; branch: string } {
-  const run = db.select().from(runs).where(eq(runs.id, runId)).get()
+async function repoOf(runId: string): Promise<{ repo: string; branch: string }> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) throw new ShipError(strings.errors.runNotFound, 404)
-  const repo = db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, run.projectId)).get()?.repoPath
+  const repo = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, run.projectId)))[0]?.repoPath
   if (!repo) throw new ShipError(strings.run.noRepository)
-  const state = deliveryState(runId)
+  const state = (await deliveryState(runId))
   if (!state.kept || !state.branch) throw new ShipError(strings.delivery.keepFirst)
   return { repo, branch: state.branch }
 }
@@ -98,8 +98,8 @@ function ghFailure(e: unknown): ShipError {
  * Once: a pull request already open for the branch is reused.
  */
 export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promise<ShipState> {
-  const { repo, branch } = repoOf(runId)
-  if (!recordOf(runId, 'run.pr_opened')) {
+  const { repo, branch } = (await repoOf(runId))
+  if (!(await recordOf(runId, 'run.pr_opened'))) {
     try {
       await pushBranch(runId)
     } catch (e) {
@@ -118,7 +118,7 @@ export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promis
         throw ghFailure(e)
       }
     }
-    db.transaction(tx => void appendEventSync({ runId, type: 'run.pr_opened', payload: { number: pr.number, url: pr.url, base } }, tx), { behavior: 'immediate' })
+    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pr_opened', payload: { number: pr.number, url: pr.url, base } }, tx)))
   }
   return shipState(runId, gh)
 }
@@ -129,9 +129,9 @@ export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promis
  * (often: already merged). Nothing is created; without one, or without gh, nothing changes.
  */
 async function adoptPullRequest(runId: string, gh: Gh): Promise<Record<string, unknown> | null> {
-  const state = deliveryState(runId)
+  const state = (await deliveryState(runId))
   if (!state.kept || !state.pushed || !state.branch) return null
-  const { repo, branch } = repoOf(runId)
+  const { repo, branch } = (await repoOf(runId))
   let found: { number: number; url: string; baseRefName?: string }[]
   try {
     found = JSON.parse(await gh(['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,url,baseRefName', '--limit', '1'], repo))
@@ -140,16 +140,16 @@ async function adoptPullRequest(runId: string, gh: Gh): Promise<Record<string, u
   }
   const pr = found[0]
   if (!pr || typeof pr.number !== 'number') return null
-  db.transaction(tx => void appendEventSync({ runId, type: 'run.pr_opened', payload: { number: pr.number, url: pr.url, base: pr.baseRefName ?? null, adopted: true } }, tx), { behavior: 'immediate' })
+  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pr_opened', payload: { number: pr.number, url: pr.url, base: pr.baseRefName ?? null, adopted: true } }, tx)))
   return recordOf(runId, 'run.pr_opened')
 }
 
 /** Where the pull request stands: its checks while open, what reported on the merged commit once merged. */
 export async function shipState(runId: string, gh: Gh = defaultGh): Promise<ShipState> {
-  const opened = recordOf(runId, 'run.pr_opened') ?? (await adoptPullRequest(runId, gh))
+  const opened = (await recordOf(runId, 'run.pr_opened')) ?? (await adoptPullRequest(runId, gh))
   const empty: ShipState = { pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null, onHold: false }
   if (!opened) return empty
-  const { repo } = repoOf(runId)
+  const { repo } = (await repoOf(runId))
   let view: { number: number; url: string; state: string; mergeable: string; statusCheckRollup: Rollup[]; mergeCommit: { oid: string } | null; mergedAt: string | null }
   try {
     view = JSON.parse(await gh(['pr', 'view', String(opened.number), '--json', 'number,url,state,mergeable,statusCheckRollup,mergeCommit,mergedAt'], repo))
@@ -179,14 +179,32 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
     checksFailed: checks.some(c => c.state === 'failed'),
     deploy,
     mergedAt: view.mergedAt ?? null,
-    onHold: state === 'open' && isOnHold(runId),
+    onHold: state === 'open' && (await isOnHold(runId)),
   }
 }
 
 /** Whether the person's last word on this run's pull request was "hold", and it was not merged since. */
-export function isOnHold(runId: string): boolean {
-  if (recordOf(runId, 'run.merged')) return false
-  return recordOf(runId, 'run.on_hold')?.held === true
+export async function isOnHold(runId: string): Promise<boolean> {
+  return (await onHoldAmong([runId])).has(runId)
+}
+
+/** Which of these runs are on hold, in one query: the last hold word for each, unless merged since. */
+export async function onHoldAmong(runIds: readonly string[]): Promise<Set<string>> {
+  if (runIds.length === 0) return new Set()
+  const rows = await db
+    .select({ runId: events.runId, type: events.type, payloadJson: events.payloadJson, sequence: events.sequence })
+    .from(events)
+    .where(and(inArray(events.runId, [...runIds]), inArray(events.type, ['run.on_hold', 'run.merged'])))
+    .orderBy(asc(events.sequence))
+  const held = new Set<string>()
+  const merged = new Set<string>()
+  for (const r of rows) {
+    if (r.type === 'run.merged') merged.add(r.runId)
+    else if ((JSON.parse(r.payloadJson) as { held?: unknown }).held === true) held.add(r.runId)
+    else held.delete(r.runId)
+  }
+  for (const id of merged) held.delete(id)
+  return held
 }
 
 /**
@@ -198,7 +216,7 @@ export async function setHold(runId: string, held: boolean, gh: Gh = defaultGh):
   if (!current.pr) throw new ShipError(strings.ship.openFirst)
   if (current.pr.state !== 'open') throw new ShipError(current.pr.state === 'merged' ? strings.ship.merged : strings.ship.closed)
   if (current.onHold !== held) {
-    db.transaction(tx => void appendEventSync({ runId, type: 'run.on_hold', payload: { held } }, tx), { behavior: 'immediate' })
+    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.on_hold', payload: { held } }, tx)))
   }
   return { ...current, onHold: held }
 }
@@ -216,12 +234,12 @@ export async function mergePullRequest(runId: string, gh: Gh = defaultGh): Promi
   if (current.pr.conflicts) throw new ShipError(strings.ship.conflicts)
   if (!current.checksDone) throw new ShipError(strings.ship.checksRunning)
   if (current.checksFailed) throw new ShipError(strings.ship.checksFailed)
-  const { repo } = repoOf(runId)
+  const { repo } = (await repoOf(runId))
   try {
     await gh(['pr', 'merge', String(current.pr.number), '--squash'], repo)
   } catch (e) {
     throw ghFailure(e)
   }
-  db.transaction(tx => void appendEventSync({ runId, type: 'run.merged', payload: { number: current.pr!.number } }, tx), { behavior: 'immediate' })
+  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number: current.pr!.number } }, tx)))
   return shipState(runId, gh)
 }

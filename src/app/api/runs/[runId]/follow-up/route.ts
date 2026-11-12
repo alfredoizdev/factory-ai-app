@@ -18,7 +18,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
   if (!body.success) return Response.json({ error: strings.errors.invalidBody }, { status: 400 })
   try {
     const created = await startFollowUp(runId, body.data.note)
-    claimAttachments(body.data.attachments ?? [], created.runId)
+    await claimAttachments(body.data.attachments ?? [], created.runId)
     try {
       await inngest.send({ name: RUN_REQUESTED, data: { runId: created.runId } })
     } catch {

@@ -6,8 +6,8 @@ import { defaultGraph, type Graph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
 import { saveDraft, publishVersion, createRun, cancelRun, NothingPublishedError, DEMO_PROVIDER_ID } from '@/engine/run'
 
-beforeAll(() => {
-  migrateDb()
+beforeAll(async () => {
+  await migrateDb()
 })
 
 const now = () => new Date().toISOString()
@@ -182,9 +182,9 @@ test('a node run is unique per block per run', async () => {
   await publishVersion(wf)
   const { runId } = await createRun({ workflowId: wf, request: 'x' })
   const [row] = await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))
-  expect(() =>
-    db.insert(nodeRuns).values({ id: ulid(), projectId: row!.projectId, runId, blockId: row!.blockId, state: 'queued', attempt: 1 }).run(),
-  ).toThrow(/UNIQUE/)
+  await expect(
+    db.insert(nodeRuns).values({ id: ulid(), projectId: row!.projectId, runId, blockId: row!.blockId, state: 'queued', attempt: 1 }),
+  ).rejects.toMatchObject({ cause: { code: '23505' } })
 })
 
 test('cancelling a run that never started cancels the blocks it never reached', async () => {
@@ -198,7 +198,7 @@ test('cancelling a run that never started cancels the blocks it never reached', 
 test('a save from a page that loaded an older draft is refused, so it cannot undo a newer edit', async () => {
   const { saveDraftVersioned, DraftConflictError } = await import('@/engine/run')
   const id = await newWorkflow()
-  const loaded = db.select().from(workflows).where(eq(workflows.id, id)).get()!.updatedAt
+  const loaded = (await db.select().from(workflows).where(eq(workflows.id, id)))[0]!.updatedAt
   // Tab A saves first; its next save builds on what it got back.
   const a1 = await saveDraftVersioned(id, defaultGraph(), loaded)
   const a2 = await saveDraftVersioned(id, defaultGraph(), a1.updatedAt)
@@ -206,7 +206,7 @@ test('a save from a page that loaded an older draft is refused, so it cannot und
   // Tab B, opened before, still holds the first version: refused, and the draft is A's.
   const stale = { blocks: defaultGraph().blocks.slice(0, 3) }
   await expect(saveDraftVersioned(id, stale, loaded)).rejects.toBeInstanceOf(DraftConflictError)
-  expect(JSON.parse(db.select().from(workflows).where(eq(workflows.id, id)).get()!.draftJson).blocks).toHaveLength(defaultGraph().blocks.length)
+  expect(JSON.parse((await db.select().from(workflows).where(eq(workflows.id, id)))[0]!.draftJson).blocks).toHaveLength(defaultGraph().blocks.length)
   // Without a base the save is unconditional, as before.
   await saveDraft(id, stale)
 })
@@ -232,8 +232,8 @@ describe('where a fresh task starts', () => {
     g(repo, 'commit', '-qam', 'b')
     const feature = g(repo, 'rev-parse', 'HEAD')
     const workflowId = await newWorkflow()
-    const wf = db.select().from(workflows).where(eq(workflows.id, workflowId)).get()!
-    db.update(projects).set({ repoPath: repo }).where(eq(projects.id, wf.projectId)).run()
+    const wf = (await db.select().from(workflows).where(eq(workflows.id, workflowId)))[0]!
+    await db.update(projects).set({ repoPath: repo }).where(eq(projects.id, wf.projectId))
     await saveDraft(workflowId, defaultGraph())
     await publishVersion(workflowId)
     return { workflowId, main, feature }
@@ -242,21 +242,21 @@ describe('where a fresh task starts', () => {
   test('from the main branch, whatever branch the folder is on', async () => {
     const { workflowId, main } = await withRepo()
     const { runId } = await createRun({ workflowId, request: 'x', providerId: 'claude' })
-    expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.baseCommit).toBe(main)
+    expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.baseCommit).toBe(main)
   })
 
   test('from another branch when the person picks it', async () => {
     const { workflowId, feature } = await withRepo()
     const { runId } = await createRun({ workflowId, request: 'x', providerId: 'claude', startFrom: 'ai/feature' })
-    expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.baseCommit).toBe(feature)
+    expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.baseCommit).toBe(feature)
   })
 
   test('a branch that does not exist is refused before anything is written', async () => {
     const { StartBranchError } = await import('@/engine/run')
     const { workflowId } = await withRepo()
-    const before = db.select().from(runs).all().length
+    const before = (await db.select().from(runs)).length
     await expect(createRun({ workflowId, request: 'x', providerId: 'claude', startFrom: 'nope' })).rejects.toBeInstanceOf(StartBranchError)
-    expect(db.select().from(runs).all().length).toBe(before)
+    expect((await db.select().from(runs)).length).toBe(before)
   })
 })
 
@@ -267,8 +267,8 @@ test('past tasks are listed newest first, with what was asked and how each ended
   await publishVersion(workflowId)
   const first = await createRun({ workflowId, request: 'First task' })
   const second = await createRun({ workflowId, request: 'Second task' })
-  db.update(runs).set({ status: 'completed', branch: 'ai/second-x1' }).where(eq(runs.id, second.runId)).run()
-  const list = listRuns(workflowId)
+  await db.update(runs).set({ status: 'completed', branch: 'ai/second-x1' }).where(eq(runs.id, second.runId))
+  const list = (await listRuns(workflowId))
   expect(list.map(r => r.runId)).toEqual([second.runId, first.runId])
   expect(list[0]).toMatchObject({ request: 'Second task', status: 'completed', branch: 'ai/second-x1', providerId: DEMO_PROVIDER_ID })
   expect(typeof list[0]!.createdAt).toBe('string')
@@ -300,10 +300,10 @@ test('main asked for by name also starts from origin\'s newest main', async () =
   g(other, 'push', '-q', 'origin', 'main')
   const merged = g(other, 'rev-parse', 'HEAD')
   const workflowId = await newWorkflow()
-  const wf = db.select().from(workflows).where(eq(workflows.id, workflowId)).get()!
-  db.update(projects).set({ repoPath: repo }).where(eq(projects.id, wf.projectId)).run()
+  const wf = (await db.select().from(workflows).where(eq(workflows.id, workflowId)))[0]!
+  await db.update(projects).set({ repoPath: repo }).where(eq(projects.id, wf.projectId))
   await saveDraft(workflowId, defaultGraph())
   await publishVersion(workflowId)
   const { runId } = await createRun({ workflowId, request: 'x', providerId: 'claude', startFrom: 'main' })
-  expect(db.select().from(runs).where(eq(runs.id, runId)).get()!.baseCommit).toBe(merged)
+  expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.baseCommit).toBe(merged)
 })

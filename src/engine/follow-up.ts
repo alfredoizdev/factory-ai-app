@@ -21,9 +21,9 @@ export class FollowUpError extends Error {
 export async function startFollowUp(parentRunId: string, note: string): Promise<{ runId: string }> {
   const text = note.trim()
   if (!text) throw new FollowUpError(strings.followUp.needNote, 400)
-  const parent = db.select().from(runs).where(eq(runs.id, parentRunId)).get()
+  const parent = (await db.select().from(runs).where(eq(runs.id, parentRunId)))[0]
   if (!parent) throw new FollowUpError(strings.errors.runNotFound, 404)
-  const approved = db.select().from(approvals).where(and(eq(approvals.runId, parentRunId), eq(approvals.decision, 'approved'))).get()
+  const approved = (await db.select().from(approvals).where(and(eq(approvals.runId, parentRunId), eq(approvals.decision, 'approved'))))[0]
   if (parent.status !== 'completed' || !approved || !parent.worktreePath || !parent.baseCommit) {
     throw new FollowUpError(strings.followUp.notEligible, 409)
   }
@@ -35,14 +35,14 @@ export async function startFollowUp(parentRunId: string, note: string): Promise<
     throw new FollowUpError(strings.followUp.couldNotKeep, 409)
   }
   const { runId } = await createRun({ workflowId: parent.workflowId, request: text, providerId: parent.providerId as RunProviderId })
-  db.update(runs)
+  await db.update(runs)
     .set({
       parentRunId,
       // The new worktree starts here; its human check compares against it, so it shows only the new change.
       baseCommit: parentCommit,
-      deliveryBase: wasDelivered(parentRunId) ? null : (parent.deliveryBase ?? parent.baseCommit),
+      deliveryBase: (await wasDelivered(parentRunId)) ? null : (parent.deliveryBase ?? parent.baseCommit),
     })
     .where(eq(runs.id, runId))
-    .run()
+    
   return { runId }
 }
