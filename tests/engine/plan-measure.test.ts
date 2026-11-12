@@ -106,3 +106,37 @@ test('pathsOverlap', () => {
   expect(pathsOverlap('a/b.ts', 'a/c.ts')).toBe(false)
   expect(pathsOverlap('ab/', 'a/')).toBe(false)
 })
+
+test.each(['src\\api\\x.ts', '.github\\workflows\\ci.yml', 'C:\\x', 'C:/x', '~', '~/x', 'src//ledger/x.ts', 'src/./ledger/x.ts', 'src/./', 'src/a\nb.ts', 'src/a\tb.ts', ' /etc/x', 'src/ x.ts', 'src/x.ts '])(
+  'a path written oddly (%j) cannot be measured',
+  entry => {
+    expect(measure([job(entry)])).toMatchObject({ simple: false, reasons: [r.unmeasurable(entry)] })
+  },
+)
+
+test('an entry without a trailing slash may be a folder, so it is also judged as one', () => {
+  expect(measure([job('src/app/api')]).reasons).toEqual([r.sensitive(strings.risk.areas.server)])
+  expect(measure([job('src/db')]).reasons).toEqual([r.sensitive(strings.risk.areas.database)])
+  expect(measure([job('.github/workflows')]).reasons).toEqual([r.sensitive(strings.risk.areas.deploy)])
+  expect(measure([job('src')]).reasons).toEqual([r.tooWide('src')])
+  expect(measure([job('src/ledger')], { core: ['src/ledger/'], decisions: [] }).reasons).toEqual([r.core])
+  expect(measure([job('src/rounding')], { core: [], decisions: [{ text: 'D', paths: ['src/rounding/'] }] }).reasons).toEqual([r.decision('D')])
+  expect(measure([job('src/ui/Footer.tsx')]).simple).toBe(true)
+})
+
+test('src/ledger and src/ledger/ are one entry, kept as written', () => {
+  const v = measure([job('src/ledger', 'src/ledger/')])
+  expect(v.entries).toEqual(['src/ledger'])
+  expect(measure([job('src/ledger/', 'src/ledger')]).entries).toEqual(['src/ledger/'])
+})
+
+test('core areas and decisions are compared without regard to case, like the sensitive areas', () => {
+  expect(measure([job('SRC/Ledger/x.ts')], { core: ['src/ledger/'], decisions: [] }).reasons).toEqual([r.core])
+  expect(measure([job('src/rounding/x.ts')], { core: [], decisions: [{ text: 'D', paths: ['SRC/Rounding/'] }] }).reasons).toEqual([r.decision('D')])
+  expect(pathsOverlap('A/', 'a/B.ts')).toBe(true)
+})
+
+test('private settings files are sensitive in any case', () => {
+  expect(measure([job('.env')]).reasons).toContain(r.sensitive(strings.risk.areas.secrets))
+  expect(measure([job('config/.ENV.local')]).reasons).toEqual([r.sensitive(strings.risk.areas.secrets)])
+})
