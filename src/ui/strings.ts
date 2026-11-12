@@ -1245,6 +1245,7 @@ export const strings = {
           '{"verdict":"ok","findings":[]}',
           'or, when something must be fixed (type is logic, security or effect; severity is high, medium or low; affects lists up to 5 other things the problem touches):',
           '{"verdict":"changes","findings":[{"type":"logic","file":"path/to/file","line":12,"problem":"what is wrong and how to fix it","severity":"medium","affects":["what else it touches"],"decisions":[]}]}',
+          'file is the path relative to this directory, as git shows it (src/app/page.tsx, never an absolute path or ./src/app/page.tsx).',
         ].join('\n'),
       noBase: 'This run does not know where its change started, so it cannot be reviewed.',
       noFinding: 'There is no reported problem to check, so nothing was checked.',

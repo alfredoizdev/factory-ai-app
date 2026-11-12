@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
@@ -7,7 +7,7 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { events, nodeRuns, projects, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { bySeverity, citeCheck, distinctProblems, endingOf, problemGroups, latestOf, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, DUPLICATE_WINDOW } from '@/engine/findings'
+import { bySeverity, citeCheck, citedPath, distinctProblems, endingOf, problemGroups, latestOf, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, DUPLICATE_WINDOW } from '@/engine/findings'
 import type { Finding } from '@/engine/review'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { FindingRow } from '@/engine/findings'
@@ -24,6 +24,54 @@ function copy(): string {
   writeFileSync(join(dir, 'src/a.ts'), Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n') + '\n')
   return dir
 }
+
+async function newRunForPaths() {
+  const p = ulid()
+  await db.insert(projects).values({ id: p, projectId: p, name: 'p', createdAt: now(), repoPath: '/repo' })
+  const workflowId = ulid()
+  await db.insert(workflows).values({ id: workflowId, projectId: p, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: now(), updatedAt: now() })
+  await saveDraft(workflowId, defaultGraph())
+  await publishVersion(workflowId)
+  const { runId } = await createRun({ workflowId, request: 'x' })
+  const n = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)))[0]!
+  return { runId, nodeRunId: n.id }
+}
+
+describe('the path a finding cites', () => {
+  const dir = copy()
+  test('is read as the project names it: from the folder, with forward slashes and no "./"', () => {
+    expect(citedPath(dir, './src/a.ts')).toBe('src/a.ts')
+    expect(citedPath(dir, 'src\\a.ts')).toBe('src/a.ts')
+    expect(citedPath(dir, '.\\src\\a.ts')).toBe('src/a.ts')
+    expect(citedPath(dir, 'src/../src/a.ts')).toBe('src/a.ts')
+    expect(citedPath(dir, `${dir}/src/a.ts`)).toBe('src/a.ts')
+    expect(citedPath(dir, `${realpathSync(dir)}/src/a.ts`)).toBe('src/a.ts')
+    expect(citedPath(dir, 'src/a.ts')).toBe('src/a.ts')
+  })
+  test('takes the letters the file has on disk, as a core area does', () => {
+    // Only on a disk that does not tell letters apart can the other spelling be found at all.
+    const caseBlind = readdirSync(dir).includes('src') && (() => { try { realpathSync(join(dir, 'SRC')); return true } catch { return false } })()
+    if (caseBlind) expect(citedPath(dir, 'SRC/A.ts')).toBe('src/a.ts')
+  })
+  test('one outside the folder is kept as written, so the check refuses it', () => {
+    expect(citedPath(dir, '/etc/passwd')).toBe('/etc/passwd')
+    expect(citedPath(dir, '../x.ts')).toBe('../x.ts')
+    expect(citeCheck(dir, f({ file: citedPath(dir, '/etc/passwd') }))).toEqual({ ok: false, reason: strings.findings.outsideCopy })
+  })
+  test('a path that is not plainly inside the project counts as unknown, so it is high', () => {
+    for (const file of ['/abs/src/a.ts', '../a.ts', 'src\\a.ts', './src/a.ts']) {
+      const r = riskOf(f({ file }), { corePaths: [] })
+      expect(r.level).toBe('high')
+      expect(r.reasons).toContain(strings.findings.risk.unknown)
+    }
+    expect(riskOf(f({ file: 'src/a.ts' }), { corePaths: [] }).level).toBe('low')
+  })
+  test('recorded findings keep the path as the project names it', async () => {
+    const runId = await newRunForPaths()
+    const rows = await recordFindings(runId.runId, runId.nodeRunId, 1, mergeDuplicates([{ focus: 'logic', finding: f({ file: `${dir}/src/a.ts`, line: 2 }) }]), dir)
+    expect(rows[0]).toMatchObject({ file: 'src/a.ts', state: 'reported' })
+  })
+})
 
 describe('citeCheck', () => {
   const dir = copy()

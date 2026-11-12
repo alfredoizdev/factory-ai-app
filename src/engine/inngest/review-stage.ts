@@ -3,7 +3,7 @@ import { db } from '@/db/client'
 import { findings, nodeRuns, runs } from '@/db/schema'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
-import { bySeverity, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, type FindingRow } from '@/engine/findings'
+import { bySeverity, citedPath, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, type FindingRow } from '@/engine/findings'
 import { QUESTION_ANSWERED } from '@/engine/inngest/client'
 import { LEAVE, askPerson, takeAnswer, type Question } from '@/engine/questions'
 import { addEntry, corePaths, standingFor, touchesCore } from '@/engine/register'
@@ -104,7 +104,8 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
       const outcome = await step.run(id(`review-fail-${block.id}`), () => failReview(runId, opened.nodeId, reading.failed))
       return none(outcome)
     }
-    for (const finding of reading.review?.findings ?? []) found.push({ focus, finding })
+    // One problem cited two ways ("./a.ts", the full path) is one problem: paths are read as the project names them first.
+    for (const finding of reading.review?.findings ?? []) found.push({ focus, finding: finding.file !== undefined && workspace.workdir ? { ...finding, file: citedPath(workspace.workdir, finding.file) } : finding })
   }
 
   const rows = await step.run(id(`review-found-${block.id}`), () =>

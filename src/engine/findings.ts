@@ -1,5 +1,5 @@
-import { readFileSync, realpathSync } from 'node:fs'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { readFileSync, readdirSync, realpathSync } from 'node:fs'
+import { isAbsolute, posix, relative, resolve, sep } from 'node:path'
 import { asc, eq } from 'drizzle-orm'
 import { monotonicFactory } from 'ulid'
 import { db } from '@/db/client'
@@ -37,6 +37,51 @@ const RANK: Record<Severity, number> = { high: 0, medium: 1, low: 2 }
 
 // Monotonic ids: ids made in one millisecond still increase, so rows written together sort in the order they were written.
 const nextId = monotonicFactory()
+
+/** A cited path the way the project names it: relative to the working copy, forward slashes, no "./" or "..". */
+const PLAIN = /^(?!\/)(?![A-Za-z]:)(?!\.{1,2}(\/|$))(?!.*\/\.{1,2}(\/|$))[^\\]+$/
+const isPlain = (path: string) => PLAIN.test(path) && !path.startsWith('./')
+
+/**
+ * The path a reviewer cited, as the project names it, so it can be compared with core areas and sensitive paths:
+ * relative to the working copy (an absolute path inside it, under either its given or its real name, is made relative),
+ * forward slashes, no "./", and each name with the letters it has on disk. A path outside the copy is returned as
+ * written: the cite check refuses it, and anything that compares it counts it as unknown.
+ */
+export function citedPath(workdir: string, file: string): string {
+  const slashed = file.trim().replace(/\\/g, '/')
+  let roots: string[]
+  try {
+    roots = [...new Set([workdir, realpathSync(workdir)].map(r => r.replace(/\\/g, '/').replace(/\/+$/, '')))]
+  } catch {
+    roots = [workdir.replace(/\\/g, '/').replace(/\/+$/, '')]
+  }
+  let rel: string
+  if (posix.isAbsolute(slashed) || /^[A-Za-z]:\//.test(slashed)) {
+    const root = roots.find(r => slashed.startsWith(`${r}/`))
+    if (!root) return file
+    rel = slashed.slice(root.length + 1)
+  } else {
+    rel = slashed
+  }
+  const normal = posix.normalize(rel)
+  if (normal === '.' || normal === '..' || normal.startsWith('../') || posix.isAbsolute(normal)) return file
+  // Each name takes the case it has on disk, as a core area's path does; a name that cannot be found stays as written.
+  const named: string[] = []
+  let here = roots.at(-1)!
+  for (const seg of normal.split('/')) {
+    let hit = seg
+    try {
+      const names = readdirSync(here)
+      hit = names.includes(seg) ? seg : (names.find(n => n.toLowerCase() === seg.toLowerCase()) ?? seg)
+    } catch {
+      // not a folder that can be read: the rest stays as written
+    }
+    named.push(hit)
+    here = `${here}/${hit}`
+  }
+  return named.join('/')
+}
 
 /** Whether the file and line a finding cites exist in the working copy. Never reads outside it, symlinks included. */
 export function citeCheck(workdir: string, f: Finding): { ok: true } | { ok: false; reason: string } {
@@ -124,11 +169,13 @@ export function bySeverity<T extends { severity: Severity }>(items: T[]): T[] {
 export function riskOf(f: Finding, ctx: { corePaths: string[]; unknown?: boolean }): { level: 'low' | 'high'; reasons: string[] } {
   const reasons: string[] = []
   if (f.file && touchesCore(f.file, ctx.corePaths)) reasons.push(strings.findings.risk.core)
+  // A path that is not plainly inside the project cannot be compared with its core areas: where it is, is unknown.
+  const unknownPlace = f.file !== undefined && !isPlain(f.file)
   const area = f.file ? SENSITIVE.find(([re]) => re.test(f.file!)) : undefined
   if (area) reasons.push(strings.findings.risk.sensitive(area[1]))
   for (const n of f.decisions) reasons.push(strings.findings.risk.decision(label(n)))
   if (f.type === 'security' && f.severity === 'high') reasons.push(strings.findings.risk.security)
-  if (ctx.unknown) reasons.push(strings.findings.risk.unknown)
+  if (ctx.unknown || unknownPlace) reasons.push(strings.findings.risk.unknown)
   return { level: reasons.length > 0 ? 'high' : 'low', reasons }
 }
 
@@ -157,7 +204,11 @@ function toRow(r: typeof findings.$inferSelect): FindingRow {
 
 /** Checks each merged finding against the working copy and records them (refuted ones with the reason) with one event, together. The event's "merged" is how many reports were folded into another. */
 export async function recordFindings(runId: string, nodeRunId: string, round: number, merged: Merged[], workdir: string): Promise<FindingRow[]> {
-  const checked = merged.map(m => ({ m, check: citeCheck(workdir, m.finding) }))
+  // The path is kept as the project names it, so a core area or a duplicate is recognised however it was cited.
+  const checked = merged.map(m => {
+    const finding = m.finding.file !== undefined && workdir ? { ...m.finding, file: citedPath(workdir, m.finding.file) } : m.finding
+    return { m: { ...m, finding }, check: citeCheck(workdir, finding) }
+  })
   const at = new Date().toISOString()
   return db.transaction(async tx => {
     const run = (await tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]

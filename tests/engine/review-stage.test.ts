@@ -369,6 +369,29 @@ const counts = async (runId: string) => ({
 })
 const questionRows = (runId: string) => db.select().from(questions).where(eq(questions.runId, runId))
 
+describe('a path cited in another way', () => {
+  test('a problem cited by its full path inside a core area is asked about, not fixed, and kept as the project names it', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding({ file: join(dir, 'a.tsx') })] })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(s.calls.some(c => c.role === 'fixer')).toBe(false)
+    expect((await openQuestion(runId))?.kind).toBe('finding')
+    expect((await findingsOf(runId))[0]!.file).toBe('a.tsx')
+  })
+
+  test('one problem cited as "./a.tsx" by one reader and "a.tsx" by another is one problem', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const { provider } = reviewers((focus, round) => (round === 1 && focus !== 'effects' ? says(finding({ file: focus === 'logic' ? './a.tsx' : 'a.tsx' })) : says()))
+    await drive(runId, provider, dir, base)
+    const rows = await findingsOf(runId)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ file: 'a.tsx', count: 2 })
+  })
+})
+
 describe('what every agent is given', () => {
   test('the checker and the fixer are given the decisions, rules and core areas the task stands on, like the builder and the reviewers', async () => {
     const runId = await newRun()

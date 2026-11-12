@@ -785,3 +785,9 @@ describe('the plan in the reviewer\'s prompt', () => {
     for (const l of lines.slice(open + 1, close)) expect(l.trimStart().startsWith('----')).toBe(false)
   })
 })
+
+test('the reviewer is told to cite files relative to the directory, as git shows them', () => {
+  const prompt = strings.providers.claude.reviewPrompt({ request: 'r', baseCommit: 'abc' })
+  expect(prompt).toMatch(/relative to this directory/)
+  expect(prompt).toMatch(/never an absolute path/)
+})
