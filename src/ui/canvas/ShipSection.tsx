@@ -140,8 +140,15 @@ export function ShipSection({
           {open && (
             <>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: theme.dim }}>{strings.ship.checksTitle}</div>
-              {state.checks.length === 0 ? <span style={hint}>{strings.ship.noChecks}</span> : <CheckList checks={state.checks} />}
-              {!state.checksDone && <span style={{ ...hint, display: 'flex', gap: 6, alignItems: 'center' }}><WorkingSpinner blockId="ship-checks" size={13} /> {strings.ship.waiting}</span>}
+              {/* Still on its way: one clear line that says so. "No checks" is only said once GitHub has settled. */}
+              {!state.checksDone && (
+                <div role="status" data-testid="ship-checking" style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '10px 12px', borderRadius: 8, border: `1px solid ${theme.tint('running', 0.5)}`, background: theme.tint('running', 0.1), color: '#cfe0ff', fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>
+                  <WorkingSpinner blockId="ship-checks" size={18} />
+                  {state.checks.length === 0 ? strings.ship.looking : strings.ship.waiting}
+                </div>
+              )}
+              {state.checks.length > 0 && <CheckList checks={state.checks} />}
+              {state.checksDone && state.checks.length === 0 && <span style={hint}>{strings.ship.noChecks}</span>}
               {state.checksDone && state.checks.length > 0 && !state.checksFailed && <span style={{ color: theme.passed }}>✓ {strings.ship.allPassed}</span>}
               {state.checksFailed && <span style={{ color: theme.failed }}>{strings.ship.someFailed}</span>}
               {state.pr.conflicts && <span style={{ color: theme.failed }}>{strings.ship.conflicts}</span>}

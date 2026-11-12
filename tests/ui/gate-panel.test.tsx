@@ -336,3 +336,18 @@ test('waiting, on the screen: the card keeps the decision and sends the person t
   expect(screen.queryByText(/It changes package\.json\./)).toBeNull()
   expect(screen.getByRole('button', { name: `✓ ${strings.gate.approve}` })).toBeEnabled()
 })
+
+test('done: while GitHub is still checking, the card only says so', async () => {
+  const kept = { ...approved, kept: true, branch: 'ai/x', commit: '1234567abc', pushed: true }
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/ship')) return new Response(JSON.stringify({ pr: { number: 5, url: 'u', state: 'open', conflicts: false }, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null, onHold: false }))
+    return new Response(JSON.stringify(kept))
+  }))
+  render(<Card mode="done" />)
+  expect(await screen.findByTestId('ship-checking')).toHaveTextContent(strings.ship.looking)
+  // It does not claim there are no checks while it is still looking, and offers nothing else to press.
+  expect(screen.queryByText(strings.ship.noChecks)).toBeNull()
+  expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.moreOptions) })).toBeNull()
+  expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeNull()
+  expect(screen.getByText(strings.followUp.hint)).not.toBeVisible()
+})

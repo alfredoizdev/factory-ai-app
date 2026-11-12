@@ -34,3 +34,7 @@ test('a ready pull request on hold still waits on the person, and says it is on 
   expect(view.state).toBe('waiting_approval')
   expect(view.summary).toBe(strings.ship.cardOnHold)
 })
+
+test('just sent, no check reported yet: it says it is looking, not "0 of 0"', () => {
+  expect(shipView('ship', { ...base, checksDone: false })).toMatchObject({ state: 'running', summary: strings.ship.cardLooking })
+})

@@ -55,6 +55,8 @@ export function ResultSection({
   const [ship, setShip] = useState<ShipState | null>(null)
   const shipped = ship?.pr != null
   const merged = ship?.pr?.state === 'merged'
+  // GitHub is still checking the change: the card only says so, and offers nothing else to press meanwhile.
+  const checking = ship?.pr?.state === 'open' && !ship.checksDone
   const shipStateSeen = useCallback(
     (next: ShipState) => {
       setShip(next)
@@ -257,7 +259,7 @@ export function ResultSection({
                 )}
               </>
             ) : (
-              !merged && !away && (
+              !merged && !away && !checking && (
                 // Trying it locally is a side trip, not the next step: it stays quiet next to the main button.
                 <div style={{ display: 'grid', gap: 2 }}>
                   <button type="button" disabled={busy !== null} onClick={() => void bring('switch')} style={linkButton}>
@@ -272,7 +274,7 @@ export function ResultSection({
         {delivery.delivered && <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{d.done(delivery.files.length)}</div>}
 
         {/* Everything a developer may want and nobody else needs: names, hashes, and the less common moves. Closed. */}
-        {(kept || canApply) && (
+        {(kept || canApply) && !checking && (
           <div style={{ display: 'grid', gap: 8 }}>
             <button
               type="button"
@@ -316,7 +318,7 @@ export function ResultSection({
           </div>
         )}
       </div>
-      <div style={{ display: 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
+      <div style={{ display: checking ? 'none' : 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
         <div style={{ fontSize: 12, color: theme.dim }}>{strings.followUp.hint}</div>
         {composer({
           label: strings.followUp.start,

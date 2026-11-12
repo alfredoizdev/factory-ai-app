@@ -18,7 +18,7 @@ export function shipView(blockId: string, ship: ShipState): NodeRunView | null {
     if (ship.checksFailed) return { ...base, state: 'failed', summary: s.someFailed }
     if (!ship.checksDone) {
       const done = ship.checks.filter(c => c.state !== 'pending').length
-      return { ...base, state: 'running', summary: s.cardChecking(done, ship.checks.length) }
+      return { ...base, state: 'running', summary: ship.checks.length === 0 ? s.cardLooking : s.cardChecking(done, ship.checks.length) }
     }
     return { ...base, state: 'waiting_approval', summary: ship.onHold ? s.cardOnHold : s.cardReady }
   }
