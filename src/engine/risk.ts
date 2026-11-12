@@ -15,8 +15,10 @@ export type TestFacts = {
   testsRan: boolean
   testsPassed: boolean
   testsChanged: boolean
-  /** A reviewer's last word was that something must still be fixed. */
+  /** A problem the reviewers found is still open (not dealt with, or waiting on the person). */
   reviewOpen?: boolean
+  /** A problem was fixed, but the app could not check the fix. */
+  reviewUnchecked?: boolean
   /** In the latest review, a reviewer's answer could not be read: that part of the review is missing. */
   reviewUnreadable?: boolean
 }
@@ -68,7 +70,8 @@ export function classifyChange(files: readonly ChangedFile[], tests: TestFacts, 
   if (!tests.testsRan) reasons.push(strings.risk.noTests)
   else if (!tests.testsPassed) reasons.push(strings.risk.testsFailed)
   if (tests.testsChanged) reasons.push(strings.risk.testsChanged)
-  if (tests.reviewOpen) reasons.push(strings.risk.reviewOpen)
+  if (tests.reviewOpen) reasons.push(strings.risk.reviewStillOpen)
+  if (tests.reviewUnchecked) reasons.push(strings.risk.fixUnchecked)
   if (tests.reviewUnreadable) reasons.push(strings.risk.reviewUnreadable)
   const level = reasons.length === 0 ? 'low' : 'high'
   return { level, reasons: level === 'low' ? [strings.risk.lowBecause(files.length, linesChanged)] : reasons, files: files.map(f => f.path), linesChanged }

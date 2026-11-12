@@ -47,7 +47,14 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
   }
   if (event.type === 'node.reviewed') {
     const n = Array.isArray(payload.findings) ? payload.findings.length : 0
+    const focus = payload.focus === 'logic' || payload.focus === 'security' || payload.focus === 'effects' ? payload.focus : null
+    // Each reader says which one it is; a verdict recorded without a focus reads as before.
+    if (focus) return { text: strings.review.readerSaid(focus, payload.verdict === 'ok' ? 0 : n), isClaim: true }
     return { text: payload.verdict === 'ok' ? strings.review.noProblems : strings.review.problems(n), isClaim: true }
+  }
+  if (event.type === 'node.findings_checked') {
+    const count = (v: unknown) => (typeof v === 'number' && v >= 0 ? v : 0)
+    return { text: strings.events.findingsChecked(count(payload.reported) + count(payload.refuted), count(payload.refuted)), isClaim: false }
   }
   if (event.type === 'node.assessed') {
     const reasons = Array.isArray(payload.reasons) ? payload.reasons.filter((r): r is string => typeof r === 'string') : []
@@ -113,7 +120,9 @@ export function EventBar({ event, block, onPoint }: { event: Wire; block: Block;
 }
 
 /** Events kept for a developer reading the run later, never for the person. */
-const FOR_DEVELOPERS: ReadonlySet<string> = new Set(['node.finding_checked', 'node.review_unreadable'])
+// How each problem ended is shown in the list of what the reviewers found, not one line per problem here; a reader whose
+// answer could not be read is said on the card itself.
+const FOR_DEVELOPERS: ReadonlySet<string> = new Set(['node.finding_checked', 'node.review_unreadable', 'node.finding_resolved'])
 
 /** The list of lines. Events whose block the run does not contain are left out: a line must name a real block. */
 export function EventBarList({ events, blocks, onPoint }: { events: readonly Wire[]; blocks: readonly Block[]; onPoint: (blockId: string) => void }) {

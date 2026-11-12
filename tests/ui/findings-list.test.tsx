@@ -98,3 +98,11 @@ test('an entry number reads the same in what the reviewer said and in why it end
   expect(text).toContain('Your core area src/app/ appears nowhere in the repo')
   expect(text).not.toContain(strings.question.earlierDecision)
 })
+
+test('the legend shows only the marks the list uses', () => {
+  render(<FindingsList findings={[view({ id: 'a' }), view({ id: 'b', how: 'checked' })]} />)
+  const legend = screen.getByTestId('legend')
+  expect(legend).toHaveTextContent(strings.findings.howMeans.checked)
+  expect(legend).not.toHaveTextContent(strings.findings.howMeans.ai)
+  expect(legend).not.toHaveTextContent(strings.findings.howMeans.not_checked)
+})

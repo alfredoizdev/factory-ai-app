@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChangeUnderReview } from '@/engine/approvals'
-import { strings } from '@/ui/strings'
+import { asSentence, strings } from '@/ui/strings'
 import { explained, type Touched } from '@/ui/explain'
 import type { ComposerSend } from './Composer'
 import { WorkingSpinner } from './BlockCard'
@@ -143,7 +143,8 @@ export function GateSection({
 
       {risk && !onSeeChanges && (
         <div style={{ fontSize: 12.5, color: risk.level === 'low' ? theme.passed : theme.waiting, lineHeight: 1.4 }}>
-          <strong>{strings.risk.label[risk.level]}:</strong> {explained(risk.reasons.join(' '), touched)}
+          <strong>{strings.risk.label[risk.level]}:</strong>
+          <Reasons reasons={risk.reasons} touched={touched} />
         </div>
       )}
 
@@ -214,6 +215,19 @@ export function GateSection({
 }
 
 /** The change, line by line: added in green, removed in red, positions in blue. Long lines wrap. */
+/** Why it needs the person (or why it does not): one full sentence per line. */
+function Reasons({ reasons, touched = [] }: { reasons: readonly string[]; touched?: readonly Touched[] }) {
+  return (
+    <ul style={{ margin: '2px 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: 2 }}>
+      {reasons.map((r, i) => (
+        <li key={i} data-testid="risk-reason" style={{ overflowWrap: 'anywhere' }}>
+          {explained(asSentence(r), touched)}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function DiffLines({ diff, truncated }: { diff: string; truncated: boolean }) {
   return (
     <>
@@ -312,7 +326,8 @@ export function ChangeUnderCheck({ runId, risk, away = null }: { runId: string; 
     <div data-testid="change-under-check" style={{ display: 'grid', gap: 12 }}>
       {risk && (
         <div style={{ fontSize: 13.5, color: risk.level === 'low' ? theme.passed : theme.waiting, lineHeight: 1.5 }}>
-          <strong>{strings.risk.label[risk.level]}:</strong> {explained(risk.reasons.join(' '))}
+          <strong>{strings.risk.label[risk.level]}:</strong>
+          <Reasons reasons={risk.reasons} />
         </div>
       )}
       <ChangesBox review={review} roomy />

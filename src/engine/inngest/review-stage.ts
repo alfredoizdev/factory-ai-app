@@ -167,7 +167,7 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
   }
 
   // "Found no problems" is said only when every reader gave a verdict; a missing part of the review is always said.
-  const what = real > 0 ? strings.review.problems(real) : rows.length > 0 ? strings.review.noneWasReal(rows.length) : unreadable === 0 ? strings.review.noProblems : null
+  const what = real > 0 ? strings.review.found(real, focuses.length) : rows.length > 0 ? strings.review.noneWasReal(rows.length) : unreadable === 0 ? strings.review.noneFound(focuses.length) : null
   const summary = [what, unreadable > 0 ? strings.review.someUnreadable(unreadable) : null].filter((s): s is string => s !== null).join(' ')
   const outcome = await step.run(id(`review-close-${block.id}`), () => closeReview(runId, opened.nodeId, summary, unreadable))
   return none(outcome, fixed)

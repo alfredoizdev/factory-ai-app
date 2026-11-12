@@ -121,7 +121,7 @@ export function FindingsList({ findings, touched = [] }: { findings: readonly Fi
       {findings.length === 0 && <p style={{ margin: 0, fontSize: 13, color: theme.dim }}>{strings.findings.none}</p>}
       {findings.length > 0 && (
         <dl data-testid="legend" aria-label={strings.findings.legendTitle} style={{ margin: 0, display: 'grid', gap: 6 }}>
-          {(['checked', 'ai', 'not_checked'] as const).map(how => (
+          {(['checked', 'ai', 'not_checked'] as const).filter(how => findings.some(f => f.how === how)).map(how => (
             <div key={how} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 8px' }}>
               <dt style={{ margin: 0 }}><HowMark how={how} inLegend /></dt>
               <dd style={{ margin: 0, fontSize: 12, color: theme.dim, lineHeight: 1.4, flex: '1 1 180px' }}>{strings.findings.howMeans[how]}</dd>

@@ -11,6 +11,14 @@ const fenced = (lines: readonly string[]): string[] => [
   REPORT_END,
 ]
 
+/** A reason as a full sentence: a capital first letter and a full stop (reasons stored before they were sentences included). */
+export const asSentence = (text: string): string => {
+  const t = text.trim()
+  if (!t) return t
+  const capital = t[0]!.toUpperCase() + t.slice(1)
+  return /[.!?…]$/.test(capital) ? capital : `${capital}.`
+}
+
 /** One entry of the register as an agent reads it. */
 type StandingLine = { number: number; text: string; kind?: 'rule' | 'decision' | 'core'; paths?: readonly string[] }
 const MAX_STANDING_TEXT = 300
@@ -228,6 +236,12 @@ export const strings = {
     },
     noProblems: 'The reviewer found no problems.',
     problems: (n: number) => `The reviewer found ${n} ${n === 1 ? 'problem' : 'problems'}.`,
+    // The card's closing sentence, said for as many readers as read the change.
+    noneFound: (readers: number) => (readers === 1 ? 'The reviewer found no problems.' : 'The reviewers found no problems.'),
+    found: (n: number, readers: number) => `${readers === 1 ? 'The reviewer' : 'The reviewers'} found ${n} ${n === 1 ? 'problem' : 'problems'}.`,
+    // One line per reader in the run's log, saying which one it was.
+    readerSaid: (focus: 'logic' | 'security' | 'effects', n: number) =>
+      `${{ logic: 'The reviewer checking that it does what you asked', security: 'The reviewer checking that it is safe', effects: 'The reviewer checking that it does not break anything else' }[focus]} found ${n === 0 ? 'no problems' : `${n} ${n === 1 ? 'problem' : 'problems'}`}.`,
     checking: (n: number, of: number) => `Checking problem ${n} of ${of}.`,
     fixing: 'Fixing it.',
     unreadable: 'The reviewer answered, but not in the form asked for, so its review was not used as a verdict.',
@@ -237,7 +251,7 @@ export const strings = {
     reviewerChangedFiles: 'The reviewer changed files in the copy, which a reviewer must never do. Its review was not used.',
     model: (model: string, buildModel: string) => `Reviewing with ${model}, a different model from Build's ${buildModel}.`,
     approve: {
-      clean: 'The reviewer found no problems. The final yes is yours.',
+      clean: 'The review found no problems. The final yes is yours.',
       // Every report was looked at and none was a real problem.
       noneWasReal: (n: number) => `The reviewers sent ${n} ${n === 1 ? 'report' : 'reports'}. None was a real problem. The final yes is yours.`,
       none: 'No review ran, so there is nothing to sum up. The final yes is yours.',
@@ -593,7 +607,10 @@ export const strings = {
     noTests: 'No tests were run, so nothing shows it works.',
     testsFailed: 'The tests did not pass.',
     testsChanged: 'It changed its own tests.',
+    // Kept for reasons stored before they were split in two; shown as a full sentence (see `asSentence`).
     reviewOpen: 'the reviewer still had problems it wanted fixed',
+    reviewStillOpen: 'A problem the reviewers found is still open.',
+    fixUnchecked: 'A problem was fixed, but the app could not check the fix.',
     reviewUnreadable: "A reviewer's answer could not be read, so the review is not complete.",
     nothingChanged: 'It changed no files.',
     unreadable: 'What it changed could not be read, so it is treated as high risk.',
@@ -1160,7 +1177,10 @@ export const strings = {
     reopenedByReviewer: (round: number) => `The reviewer found problems and sent the work back to Build for round ${round}.`,
     reopened: (round: number, note: string | null) => (note ? `Sent back for round ${round}: ${note}` : `Sent back for round ${round}.`),
     assessed: (level: 'low' | 'high', reasons: readonly string[]) =>
-      `${level === 'low' ? 'Measured as low risk' : 'Needs you'}: ${reasons.join(' ')}`,
+      `${level === 'low' ? 'Measured as low risk' : 'Needs you'}: ${reasons.map(asSentence).join(' ')}`,
+    // Reviewers' reports were checked against the code: how many, and how many pointed at something that is not there.
+    findingsChecked: (total: number, notThere: number) =>
+      `${total} ${total === 1 ? 'report was' : 'reports were'} checked against the code${notThere > 0 ? `: ${notThere} pointed at something that is not there` : ''}.`,
     measured: (counts: string | null, exitCode: number | null) => {
       const head = counts ? `Tests measured: ${counts}.` : 'Tests measured.'
       return exitCode === null ? head : `${head} Exit code ${exitCode}.`

@@ -312,3 +312,33 @@ test('why a check ended without proof is for a developer: the event bar shows no
   expect(screen.queryByText(/unsafe_path/)).toBeNull()
   expect(fold([{ type: 'node.started', payload: { blockId: review.id } }, checked])[review.id]).toEqual(fold([{ type: 'node.started', payload: { blockId: review.id } }])[review.id])
 })
+
+test('the event bar has no empty lines: reports checked are said in words, and a problem\'s ending is left to the list', async () => {
+  const { describeEvent, EventBarList } = await import('@/ui/EventBar')
+  const review = blocks.find(b => b.kind === 'review')!
+  expect(describeEvent({ sequence: 1, type: 'node.findings_checked', payload: { blockId: review.id, round: 1, reported: 2, refuted: 1, merged: 0 } }, review)).toEqual({ text: strings.events.findingsChecked(3, 1), isClaim: false })
+  render(
+    <EventBarList
+      blocks={blocks}
+      onPoint={() => undefined}
+      events={[
+        { sequence: 1, type: 'node.findings_checked', payload: { blockId: review.id, round: 1, reported: 2, refuted: 0, merged: 0 } },
+        { sequence: 2, type: 'node.finding_resolved', payload: { blockId: review.id, findingId: 'f', state: 'corrected', outcome: 'done' } },
+        { sequence: 3, type: 'node.review_unreadable', payload: { blockId: review.id, focus: 'logic' } },
+      ]}
+    />,
+  )
+  const lines = screen.getAllByTestId('event-line')
+  expect(lines).toHaveLength(1)
+  for (const l of lines) expect(l.textContent?.replace(review.label, '').replace(/◎.*/, '').trim()).not.toBe('')
+})
+
+test('one line per reviewer says which reviewer it was', async () => {
+  const { describeEvent } = await import('@/ui/EventBar')
+  const review = blocks.find(b => b.kind === 'review')!
+  const safe = describeEvent({ sequence: 1, type: 'node.reviewed', payload: { blockId: review.id, focus: 'security', verdict: 'ok', findings: [] } }, review)
+  const logic = describeEvent({ sequence: 2, type: 'node.reviewed', payload: { blockId: review.id, focus: 'logic', verdict: 'changes', findings: [{}, {}] } }, review)
+  expect(safe.text).not.toBe(logic.text)
+  expect(safe).toEqual({ text: strings.review.readerSaid('security', 0), isClaim: true })
+  expect(logic.text).toBe(strings.review.readerSaid('logic', 2))
+})

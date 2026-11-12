@@ -162,6 +162,17 @@ describe('how many reviewers read the change', () => {
     expect(await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)).then(rs => rs.filter(r => r.blockId === 'review'))).toHaveLength(1)
   })
 
+  test('the card says "the reviewers" when more than one read it, and "the reviewer" when one did', async () => {
+    const three = await newRun()
+    const high = workdir(false)
+    await drive(three, reviewers(() => says()).provider, high.dir, high.base)
+    expect((await node(three, 'review')).summary).toBe('The reviewers found no problems.')
+    const one = await newRun()
+    const low = workdir(true)
+    await drive(one, reviewers(() => says()).provider, low.dir, low.base)
+    expect((await node(one, 'review')).summary).toBe('The reviewer found no problems.')
+  })
+
   test('a small change that measures low is read by one', async () => {
     const runId = await newRun()
     const { dir, base } = workdir(true)
@@ -778,6 +789,10 @@ describe('what still needs the person holds the gate', () => {
     const runId = await lowRiskRun([finding({ severity: 'high' })], { verify: () => [{ type: 'done', summary: 'v', source: 'provider', repro: null }] }, FIX_IT)
     expect((await findingsOf(runId))[0]!.state).toBe('fixed_unchecked')
     expect((await node(runId, 'human')).state).toBe('waiting_approval')
+    // The reason says what is true: it was fixed, and the fix could not be checked.
+    const reasons = (await payloads(runId, 'node.assessed', 'human')).at(-1)!.reasons as string[]
+    expect(reasons).toContain(strings.risk.fixUnchecked)
+    expect(reasons).not.toContain(strings.risk.reviewStillOpen)
   })
 
   test('with auto-approve on, a finding that was not checked for being too many does not', async () => {

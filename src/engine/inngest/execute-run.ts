@@ -656,7 +656,11 @@ export async function testFactsOf(runId: string): Promise<TestFacts> {
     testsPassed: runsOfTests.length > 0 && runsOfTests.every(t => t.exitCode === 0 && !t.signal),
     // Unknown (null) counts as changed: what could not be checked is not assumed untouched.
     testsChanged: runsOfTests.some(t => t.changedTestFiles === null || (t.changedTestFiles?.length ?? 0) > 0),
-    reviewOpen: distinctProblems(await findingsOf(runId)).some(needsPerson),
+    // Which way a problem still needs the person: still open, or fixed with nothing that could check the fix.
+    ...(await (async () => {
+      const waiting = distinctProblems(await findingsOf(runId)).filter(needsPerson)
+      return { reviewOpen: waiting.some(r => r.state !== 'fixed_unchecked'), reviewUnchecked: waiting.some(r => r.state === 'fixed_unchecked') }
+    })()),
     reviewUnreadable: (await unreadableInLatestReview(runId)) > 0,
   }
 }

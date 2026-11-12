@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { strings } from '@/ui/strings'
 import { assessRisk, classifyChange, MAX_CORE_REASONS, MAX_LOW_RISK_FILES, MAX_LOW_RISK_LINES } from '@/engine/risk'
 
 const ok = { testsRan: true, testsPassed: true, testsChanged: false }
@@ -119,5 +120,16 @@ describe('core areas the person marked', () => {
     writeFileSync(join(dir, 'src/app/page.tsx'), 'A\n')
     expect(assessRisk(dir, base, ok).level).toBe('low')
     expect(assessRisk(dir, base, ok, ['src/app/']).level).toBe('high')
+  })
+})
+
+describe('what is still open after the review', () => {
+  const base = { testsRan: true, testsPassed: true, testsChanged: false }
+  test('a problem still open and a fix the app could not check are said apart, each as a full sentence', () => {
+    const open = classifyChange([{ path: 'a.ts', lines: 1 }], { ...base, reviewOpen: true })
+    expect(open.reasons).toEqual([strings.risk.reviewStillOpen])
+    const unchecked = classifyChange([{ path: 'a.ts', lines: 1 }], { ...base, reviewUnchecked: true })
+    expect(unchecked.reasons).toEqual([strings.risk.fixUnchecked])
+    for (const r of [strings.risk.reviewStillOpen, strings.risk.fixUnchecked, strings.risk.reviewUnreadable]) expect(r).toMatch(/^[A-Z].*\.$/)
   })
 })

@@ -376,3 +376,10 @@ test('done: after the merge the card says publishing until the site has answered
   expect(screen.queryByTestId('ship-publishing')).toBeNull()
   expect(screen.getByText(strings.followUp.hint)).toBeVisible()
 })
+
+test('each reason is a line of its own and a full sentence, even one stored before reasons were', async () => {
+  vi.stubGlobal('fetch', routes())
+  render(<Card risk={{ level: 'high', reasons: ['It changes package.json.', 'the reviewer still had problems it wanted fixed'] }} />)
+  const lines = await screen.findAllByTestId('risk-reason')
+  expect(lines.map(l => l.textContent)).toEqual(['It changes package.json.', 'The reviewer still had problems it wanted fixed.'])
+})
