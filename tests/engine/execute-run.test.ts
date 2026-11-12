@@ -4,7 +4,8 @@ import { db, migrateDb } from '@/db/client'
 import { nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph, type Graph } from '@/domain/graph'
 import { appendEvent, eventsSince } from '@/engine/events'
-import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
+import { afterFixes, orchestrateRun, type ExecutorDeps, type PlannedBlock, type StepApi } from '@/engine/inngest/execute-run'
+import { MAX_REVIEW_ROUNDS } from '@/engine/review'
 import { failRunAfterError } from '@/engine/inngest/execute-run'
 import { cancelRun, createRun, failUnstartedRun, publishVersion, saveDraft } from '@/engine/run'
 import { createDemoProvider } from '@/providers/demo'
@@ -453,4 +454,36 @@ test('an approval event with no recorded decision behind it opens nothing, and s
   expect((await getNodeRun(runId, 'ship')).state).toBe('queued')
   const steps = (await eventsSince(runId, 0)).filter(e => e.type === 'node.step').map(e => (e.payload as { text: string }).text)
   expect(steps).toContain(strings.gate.ignoredEvent)
+})
+
+describe('what goes back after a review that fixed something', () => {
+  const block = (id: string, kind: string, enabled = true) => ({ id, kind, enabled }) as unknown as PlannedBlock
+  const plan = [block('input', 'input'), block('build', 'build'), block('tests', 'tests'), block('review', 'review'), block('approve', 'approve')]
+  const ids = (blocks: PlannedBlock[]) => blocks.map(b => b.id)
+
+  test('there are two reviews', () => {
+    expect(MAX_REVIEW_ROUNDS).toBe(2)
+  })
+
+  test('a review is left: Tests and Review go back, never Build, and the next one reads the fixes', () => {
+    const again = afterFixes(plan, 3, 1, 0)!
+    expect(ids(again.reopen)).toEqual(['tests', 'review'])
+    expect(again).toMatchObject({ start: 2, reading: true, reruns: true })
+  })
+
+  test('no review is left: only Tests go back, once more', () => {
+    const again = afterFixes(plan, 3, MAX_REVIEW_ROUNDS, 1)!
+    expect(ids(again.reopen)).toEqual(['tests'])
+    expect(again).toMatchObject({ start: 2, reading: false, reruns: true })
+  })
+
+  test('the checks are not re-run more often than the reviews', () => {
+    expect(afterFixes(plan, 3, MAX_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS)).toBeNull()
+  })
+
+  test('without an enabled Tests block only Review goes back, and after the last review nothing', () => {
+    const none = [block('build', 'build'), block('tests', 'tests', false), block('review', 'review')]
+    expect(ids(afterFixes(none, 2, 1, 0)!.reopen)).toEqual(['review'])
+    expect(afterFixes(none, 2, MAX_REVIEW_ROUNDS, 0)).toBeNull()
+  })
 })

@@ -15,6 +15,7 @@ import { answerQuestion, LEAVE, openQuestion, OTHER } from '@/engine/questions'
 import type { Repro, ReproRun } from '@/engine/repro'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
+import { recordDecision } from '@/engine/approvals'
 import type { Finding, Focus } from '@/engine/review'
 import type { StageResult } from '@/engine/inngest/review-stage'
 import { MAX_FIX_ATTEMPTS } from '@/engine/tree-snapshot'
@@ -68,12 +69,14 @@ function recordingStep(onWait: () => Promise<{ data: Record<string, never> } | n
   return self
 }
 
-async function newRun(): Promise<string> {
+async function newRun(tweak?: (g: ReturnType<typeof defaultGraph>) => void): Promise<string> {
   const projectId = ulid()
   const workflowId = ulid()
   await db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: now(), repoPath: '/repo' })
   await db.insert(workflows).values({ id: workflowId, projectId, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: now(), updatedAt: now() })
-  await saveDraft(workflowId, defaultGraph())
+  const graph = defaultGraph()
+  tweak?.(graph)
+  await saveDraft(workflowId, graph)
   await publishVersion(workflowId)
   const { runId } = await createRun({ workflowId, request: 'do it' })
   await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))
@@ -259,8 +262,12 @@ const repro: Repro = { command: 'node check.js', marker: 'PROBLEM-SEEN', files: 
 const seenRun = (over: Partial<ReproRun> = {}): ReproRun => ({ exitCode: 1, markerSeen: true, outputTail: 'PROBLEM-SEEN', at: now(), ...over })
 
 type Script = {
-  /** Findings the logic reviewer reports. */
+  /** Findings the logic reviewer reports on the first review. */
   found: Finding[]
+  /** What the logic reviewer reports on the n-th review of the run (2 and up). Default: nothing. */
+  later?: (pass: number) => Finding[]
+  /** Runs inside the n-th Tests block (1-based). Returned events replace the passing result. */
+  duringTests?: (n: number) => Promise<AgentEvent[] | void> | AgentEvent[] | void
   /** What the verifier answers for a finding (by its problem text). Default: it reproduced it. */
   verify?: (problem: string) => AgentEvent[]
   /** What the app's own run of the reproduction shows. Default: the problem happened. */
@@ -277,7 +284,7 @@ type Script = {
 const reproduces = (): AgentEvent[] => [{ type: 'done', summary: 'v', source: 'provider', repro }]
 
 function scripted(script: Script) {
-  const calls: { role?: string; workdir?: string; problem?: string; repro?: Repro; kind: string }[] = []
+  const calls: { role?: string; workdir?: string; problem?: string; repro?: Repro; kind: string; focus?: Focus; since?: { paths: string[]; diff: string } }[] = []
   const copies: string[] = []
   const reproRuns: string[] = []
   const provider: AgentProvider = {
@@ -285,7 +292,7 @@ function scripted(script: Script) {
     isDemo: false,
     needsWorkspace: true,
     async *execute(input) {
-      calls.push({ role: input.role, workdir: input.workdir, problem: input.finding?.problem, repro: input.repro, kind: input.blockKind })
+      calls.push({ role: input.role, workdir: input.workdir, problem: input.finding?.problem, repro: input.repro, kind: input.blockKind, focus: input.focus, since: input.reviewSince })
       if (input.role === 'verifier') {
         await script.duringVerify?.()
         for (const ev of (script.verify ?? reproduces)(input.finding!.problem)) yield ev
@@ -297,9 +304,14 @@ function scripted(script: Script) {
         else yield { type: 'done', summary: 'fixed', source: 'provider' }
         return
       }
-      if (input.blockKind === 'tests') yield passingTests
+      if (input.blockKind === 'tests') {
+        const replaced = await script.duringTests?.(calls.filter(c => c.kind === 'tests').length)
+        for (const ev of replaced ?? [passingTests]) yield ev
+        if (replaced) return
+      }
       if (input.blockKind === 'review') {
-        for (const ev of input.focus === 'logic' ? says(...script.found) : says()) yield ev
+        const pass = calls.filter(c => c.kind === 'review' && c.focus === 'logic').length
+        for (const ev of input.focus === 'logic' ? says(...(pass === 1 ? script.found : (script.later?.(pass) ?? []))) : says()) yield ev
         return
       }
       yield { type: 'done', summary: 'ok', source: 'system' }
@@ -358,7 +370,8 @@ describe('a finding is verified, then fixed or asked about', () => {
     const line = (await listRegister(projectId)).find(e => e.kind === 'finding')!
     expect(line).toMatchObject({ number: row!.entryNumber, outcome: 'done', runId, paths: ['a.tsx'] })
     expect(await payloads(runId, 'node.finding_resolved', 'review')).toEqual([{ blockId: 'review', findingId: row!.id, state: 'corrected', outcome: 'done' }])
-    expect((await eventsSince(runId, 0)).some(e => e.type === 'node.reopened')).toBe(false)
+    // Nothing goes back to Build; the fix is followed by one more look, in which nothing is found.
+    expect((await eventsSince(runId, 0)).some(e => e.type === 'node.reopened' && (e.payload as { blockId?: string }).blockId === 'build')).toBe(false)
     const approve = await payloads(runId, 'node.completed', 'approve')
     // The check that showed the problem now passes: it counts as fixed, and nothing is left for the person.
     expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 1, discarded: 0, needsYou: 0 }))
@@ -966,14 +979,16 @@ describe('a small fix that strays into something that matters is held', () => {
     await money(runId)
     const { dir, base } = workdir(true)
     const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); stray(d) } })
+    const first = stageResults.length
     await drive(runId, s.provider, dir, base, answering(runId, 'keep'), s.deps)
+    const fixedStage = stageResults.slice(first).find(r => r.fixed)!
     expect(text(dir, 'a.tsx')).toBe(`${original}fix\n`)
     expect(existsSync(join(dir, 'src/billing/charge.ts'))).toBe(true)
     expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
     expect((await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')!.outcome).toBe('asked_yes')
-    expect(stage()).toMatchObject({ fixed: true })
-    expect(inStore(s.deps.snapshotStore!, dir, 'cat-file', '-p', `${stage().fixesSince}:a.tsx`)).toBe(original)
-    expect(inStore(s.deps.snapshotStore!, dir, 'ls-tree', '-r', '--name-only', stage().fixesSince!)).not.toContain('charge.ts')
+    expect(fixedStage).toMatchObject({ fixed: true })
+    expect(inStore(s.deps.snapshotStore!, dir, 'cat-file', '-p', `${fixedStage.fixesSince}:a.tsx`)).toBe(original)
+    expect(inStore(s.deps.snapshotStore!, dir, 'ls-tree', '-r', '--name-only', fixedStage.fixesSince!)).not.toContain('charge.ts')
   })
 
   test('a core path the task had already changed before the fix is not asked about again', async () => {
@@ -1044,7 +1059,6 @@ describe('a small fix that strays into something that matters is held', () => {
 })
 
 describe('taking a fix back only touches what the fix changed', () => {
-  const stage = () => stageResults.at(-1)!
   const resolveTo = async (runId: string, option: string, step: ReturnType<typeof recordingStep>, s: ReturnType<typeof scripted>, dir: string, base: string, words?: string) => {
     await answerQuestion((await openQuestion(runId))!.id, { option, ...(words ? { text: words } : {}) }, { send })
     step.onWait = async () => ({ data: {} })
@@ -1151,13 +1165,15 @@ describe('taking a fix back only touches what the fix changed', () => {
       fix: (d, n) => (n === 1 ? (edit(d, 'fix 1'), stray(d)) : edit(d, 'fix 2')),
     })
     const step = recordingStep()
+    const first = stageResults.length
     await drive(runId, s.provider, dir, base, step, s.deps)
     writeFileSync(join(dir, 'person.txt'), 'made while waiting\n')
     await resolveTo(runId, 'undo', step, s, dir, base)
     const rows = await findingsOf(runId)
     expect(rows.map(r => r.state).sort()).toEqual(['corrected', 'discarded'])
-    expect(stage()).toMatchObject({ fixed: true })
-    const since = stage().fixesSince!
+    const fixedStage = stageResults.slice(first).find(r => r.fixed)!
+    expect(fixedStage).toMatchObject({ fixed: true })
+    const since = fixedStage.fixesSince!
     expect(inStore(s.deps.snapshotStore!, dir, 'ls-tree', '-r', '--name-only', since)).toContain('person.txt') // taken after the first fix was undone
     expect(text(dir, 'a.tsx')).toBe(`${original}fix 2\n`)
   })
@@ -1369,6 +1385,200 @@ describe('round 3: every try is measured against its own start', () => {
     expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(1)
     expect(text(dir, 'a.tsx')).toBe(`${original}FIX\n`)
     expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixFailed })
+  })
+})
+
+describe('after fixes, the checks run again and the change is read once more', () => {
+  const kinds = (s: { calls: { role?: string; kind: string }[] }) =>
+    s.calls.filter(c => !c.role && ['build', 'tests', 'review'].includes(c.kind)).map(c => c.kind).filter((k, i, all) => all[i - 1] !== k)
+  const readers = (s: { calls: { role?: string; kind: string; focus?: Focus }[] }) => s.calls.filter(c => !c.role && c.kind === 'review').map(c => c.focus)
+  const reopens = async (runId: string) =>
+    (await eventsSince(runId, 0)).filter(e => e.type === 'node.reopened').map(e => e.payload as { blockId: string; round: number; by: string; note: string })
+  const second = finding({ type: 'effect', line: 5, problem: 'a different problem' })
+  const refuted: AgentEvent[] = [{ type: 'done', summary: 'r', source: 'provider', repro: null, refuted: { why: 'it does not' } }]
+  const states = async (runId: string) => (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).map(n => `${n.blockId}:${n.state}`).sort()
+
+  test('one fix, then a clean second look: Tests and Review run again, Build does not, and the second reader gets what the fix changed', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: (d, n) => edit(d, `fix ${n}`) })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(kinds(s)).toEqual(['build', 'tests', 'review', 'tests', 'review'])
+    expect(await reopens(runId)).toEqual([
+      { blockId: 'tests', round: 2, by: 'fixes', note: strings.run.reopenedAfterFixes(2) },
+      { blockId: 'review', round: 2, by: 'fixes', note: strings.run.reopenedAfterFixes(2) },
+    ])
+    const reviews = s.calls.filter(c => !c.role && c.kind === 'review')
+    expect(reviews[0]!.since).toBeUndefined()
+    expect(reviews.at(-1)!.since?.paths).toEqual(['a.tsx'])
+    expect(reviews.at(-1)!.since?.diff).toContain('+fix 1')
+    expect(step.ids).toEqual(expect.arrayContaining(['review-since-review-r2', 'review-depth-review-r2', 'reopen-fixes-review', 'review-open-review-r2']))
+    expect(new Set(step.ids).size).toBe(step.ids.length)
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
+    expect((await findingsOf(runId)).map(r => r.state)).toEqual(['corrected'])
+  })
+
+  test('how many read the second time is measured on what the fixes changed: a big fix gets three even when the task was small', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: (d, n) => { edit(d, `fix ${n}`); for (let i = 0; i < 9; i++) writeFileSync(join(d, `gen${i}.txt`), 'x\n') } })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(readers(s)).toEqual(['logic', 'logic', 'security', 'effects'])
+  })
+
+  test('and a small fix gets one reader even when the whole task was big', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    for (let i = 0; i < 9; i++) writeFileSync(join(dir, `task${i}.txt`), 'x\n')
+    const s = scripted({ found: [finding()], fix: (d, n) => edit(d, `fix ${n}`) })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(readers(s)).toEqual(['logic', 'security', 'effects', 'logic'])
+  })
+
+  test('fixes in both reviews: after the last review nothing is read again, but Tests run once more and then the run goes to the human check', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], later: pass => (pass === 2 ? [second] : []), fix: (d, n) => edit(d, `fix ${n}`) })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(kinds(s)).toEqual(['build', 'tests', 'review', 'tests', 'review', 'tests'])
+    expect(readers(s)).toEqual(['logic', 'logic'])
+    expect(await reopens(runId)).toEqual([
+      { blockId: 'tests', round: 2, by: 'fixes', note: strings.run.reopenedAfterFixes(2) },
+      { blockId: 'review', round: 2, by: 'fixes', note: strings.run.reopenedAfterFixes(2) },
+      { blockId: 'tests', round: 3, by: 'fixes', note: strings.run.reopenedChecksAfterFixes(3) },
+    ])
+    expect((await findingsOf(runId)).map(r => r.state)).toEqual(['corrected', 'corrected'])
+    expect((await node(runId, 'review')).state).toBe('passed')
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
+    expect(new Set(step.ids).size).toBe(step.ids.length)
+  })
+
+  test('without a Tests block only Review is reopened, and after the last review nothing is', async () => {
+    const runId = await newRun(g => { g.blocks.find(b => b.kind === 'tests')!.enabled = false })
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], later: pass => (pass === 2 ? [second] : pass === 3 ? [finding({ line: 1, problem: 'never read' })] : []), fix: (d, n) => edit(d, `fix ${n}`) })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(s.calls.some(c => c.kind === 'tests')).toBe(false)
+    expect(s.calls.filter(c => !c.role && c.kind === 'review' && c.focus === 'logic')).toHaveLength(2)
+    expect((await reopens(runId)).map(r => `${r.blockId}:${r.round}`)).toEqual(['review:2'])
+    expect((await findingsOf(runId)).map(r => r.state)).toEqual(['corrected', 'corrected'])
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  })
+
+  test('nothing fixed, nothing reopened: a refuted problem, a fixer that fails and a problem that was left alone', async () => {
+    for (const script of [
+      { found: [finding()], verify: () => refuted },
+      { found: [finding()], fixerFails: true },
+    ]) {
+      const runId = await newRun()
+      const { dir, base } = workdir(true)
+      const s = scripted(script)
+      await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+      expect(await reopens(runId)).toEqual([])
+      expect(kinds(s)).toEqual(['build', 'tests', 'review'])
+      expect((await node(runId, 'human')).state).toBe('waiting_approval')
+    }
+  })
+
+  test('when the tests fail the second time, the run fails as a failing Tests block always does: Build is not run again', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const failing: AgentEvent[] = [
+      { type: 'evidence', kind: 'test_run', data: { command: 'npm test', exitCode: 1, signal: null, started: true, durationMs: 5, counts: null, outputTail: 'FAIL', changedTestFiles: [] } },
+      { type: 'error', source: 'system', cause: 'tests_failed', message: 'The tests failed.' },
+    ]
+    const s = scripted({ found: [finding()], fix: (d, n) => edit(d, `fix ${n}`), duringTests: n => (n === 2 ? failing : undefined) })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(kinds(s)).toEqual(['build', 'tests', 'review', 'tests'])
+    expect(s.calls.filter(c => !c.role && c.kind === 'build')).toHaveLength(1)
+    expect((await node(runId, 'tests')).state).toBe('failed')
+    expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('failed')
+    expect((await node(runId, 'human')).state).not.toBe('waiting_approval')
+  })
+
+  test('the person asking for changes starts again at Build with a fresh budget of reviews', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], later: pass => (pass === 2 || pass === 3 ? [second] : []), fix: (d, n) => edit(d, `fix ${n}`) })
+    let asked = false
+    const step = recordingStep(async () => {
+      if (!asked) {
+        asked = true
+        await recordDecision(runId, 'changes', { actor: 'test', reason: 'make it red', diffHash: null })
+        return { data: {} }
+      }
+      throw new Parked()
+    })
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(kinds(s)).toEqual(['build', 'tests', 'review', 'tests', 'review', 'tests', 'build', 'tests', 'review', 'tests', 'review'])
+    const all = await reopens(runId)
+    expect(all.filter(r => r.by === 'person' && r.blockId === 'build')).toHaveLength(1)
+    expect(all.filter(r => r.by === 'fixes').map(r => `${r.blockId}:${r.round}`)).toEqual(['tests:2', 'review:2', 'tests:3', 'tests:5', 'review:5'])
+    const reviews = s.calls.filter(c => !c.role && c.kind === 'review')
+    expect(reviews.map(r => r.since !== undefined)).toEqual([false, true, false, true])
+    expect(new Set(step.ids).size).toBe(step.ids.length)
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  })
+
+  test('forgetting the reopen steps and driving again changes nothing and runs nothing', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], later: pass => (pass === 2 ? [second] : []), fix: (d, n) => edit(d, `fix ${n}`) })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    const before = { events: (await eventsSince(runId, 0)).length, states: await states(runId), calls: s.calls.length, a: text(dir, 'a.tsx') }
+    step.forget('reopen-fixes-review')
+    step.forget('reopen-fixes-review-r2')
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect({ events: (await eventsSince(runId, 0)).length, states: await states(runId), calls: s.calls.length, a: text(dir, 'a.tsx') }).toEqual(before)
+  })
+
+  test('a run cancelled between the two reviews stops: nothing is reopened and nothing runs again', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: (d, n) => edit(d, `fix ${n}`) })
+    const inner = recordingStep()
+    const step: StepApi = {
+      ...inner,
+      run: (id, fn) => inner.run(id, id === 'reopen-fixes-review' ? async () => { await cancelRun(runId); return fn() } : fn),
+    }
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(await reopens(runId)).toEqual([])
+    expect(kinds(s)).toEqual(['build', 'tests', 'review'])
+    expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('cancelled')
+  })
+
+  test('a problem fixed in the first review and not reported again stays fixed in the summary', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: (d, n) => edit(d, `fix ${n}`) })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect((await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 1, discarded: 0, needsYou: 0 }))
+  })
+
+  test('a problem reported again in the second review shows as that review\'s outcome, not twice', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    let verified = 0
+    const s = scripted({ found: [finding()], later: pass => (pass === 2 ? [finding()] : []), fix: (d, n) => edit(d, `fix ${n}`), verify: () => (++verified === 1 ? reproduces() : refuted) })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect((await findingsOf(runId)).map(r => r.state)).toEqual(['corrected', 'refuted'])
+    expect((await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 1, needsYou: 0 }))
+  })
+
+  test('a problem asked about in the first review is asked about again in the second: the answer to the first is not reused', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], later: pass => (pass === 2 ? [finding()] : []), fix: (d, n) => edit(d, `fix ${n}`) })
+    await drive(runId, s.provider, dir, base, answering(runId, 'fix'), s.deps)
+    const asked = await questionRows(runId)
+    expect(asked).toHaveLength(2)
+    expect(new Set(asked.map(q => q.findingId)).size).toBe(2)
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(2)
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
 })
 

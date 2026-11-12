@@ -61,8 +61,8 @@ export type AgentExecutionInput = {
   finding?: { type: FindingType; file?: string; line?: number; problem: string }
   /** The reproduction a fixer must make pass. */
   repro?: Repro
-  /** A review block: a tree id; review only what changed since it, not since the base commit. */
-  reviewSince?: string
+  /** A review block after fixes were made: the paths the fixes changed since the first review and that change as a unified diff. */
+  reviewSince?: { paths: string[]; diff: string }
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

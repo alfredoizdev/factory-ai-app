@@ -44,7 +44,7 @@ async function promptsOfOne(runId: string): Promise<Prompt[]> {
     if (e.type === 'node.plan_decided' && p.action === 'replan' && text) out.push({ kind: 'replan', text, at: e.createdAt })
     // One reopen event per reopened block: the note is taken once, from the first block of the round.
     const round = `${String(p.by)}-${String(p.round)}`
-    if (e.type === 'node.reopened' && text && !rounds.has(round) && !(e.nodeRunId && planNodes.has(e.nodeRunId))) {
+    if (e.type === 'node.reopened' && p.by !== 'fixes' && text && !rounds.has(round) && !(e.nodeRunId && planNodes.has(e.nodeRunId))) {
       rounds.add(round)
       out.push({ kind: p.by === 'reviewer' ? 'reviewer' : 'changes', text, at: e.createdAt })
     }

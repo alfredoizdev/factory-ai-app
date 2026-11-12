@@ -20,6 +20,8 @@ export type Finding = {
 export type Review = { verdict: 'ok' | 'changes'; findings: Finding[] }
 
 export const MAX_FINDINGS = 10
+/** How many times the change is read between two decisions of the person: the first review and one more after fixes. The checks run again after fixes at most as often. */
+export const MAX_REVIEW_ROUNDS = 2
 const MAX_PROBLEM = 300
 const MAX_AFFECTS = 5
 const MAX_AFFECT = 80

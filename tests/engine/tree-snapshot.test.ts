@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, chmodSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, changedSince, looseChanges, releaseAttempts, restoreTree, snapshotTree, startAttempt, takeSnap, undoChange } from '@/engine/tree-snapshot'
+import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, changedSince, diffSince, looseChanges, measureSince, releaseAttempts, restoreTree, snapshotTree, startAttempt, takeSnap, undoChange } from '@/engine/tree-snapshot'
 
 // A snapshot of the task's folder that the person's own git state never feels, and an undo that only touches what a fix changed.
 
@@ -398,3 +398,42 @@ describe('round 2', () => {
   })
 })
 
+
+describe('diffSince and measureSince: what changed since a snapshot, read only', () => {
+  test('a unified diff from the snapshot to the folder now, with new files; the real git state and the folder are untouched', () => {
+    const dir = repo()
+    const tree = snapshotTree(dir, opts())
+    expect(diffSince(dir, tree, opts())).toBe('')
+    put(dir, 'a.txt', 'a2\n')
+    put(dir, 'added/new.txt', 'hello\n')
+    rmSync(join(dir, 'src/c.txt'))
+    const before = stateOf(dir)
+    const diff = diffSince(dir, tree, opts())
+    expect(diff).toContain('diff --git a/a.txt b/a.txt')
+    expect(diff).toContain('-a1')
+    expect(diff).toContain('+a2')
+    expect(diff).toContain('+hello')
+    expect(diff).toContain('-c1')
+    expect(diff).not.toContain('SECRET') // ignored files are not part of it
+    expect(stateOf(dir)).toEqual(before)
+    expect(read(dir, 'a.txt')).toBe('a2\n')
+  })
+
+  test('measureSince gives the paths, the diff and the lines changed per path from one snapshot', () => {
+    const dir = repo()
+    const tree = snapshotTree(dir, opts())
+    put(dir, 'a.txt', 'a1\nmore\nlines\n')
+    put(dir, 'new.txt', 'x\n')
+    const m = measureSince(dir, tree, opts())
+    expect(m.paths).toEqual(['a.txt', 'new.txt'])
+    expect(m.files).toEqual([{ path: 'a.txt', lines: 2 }, { path: 'new.txt', lines: 1 }])
+    expect(m.diff).toContain('+more')
+    expect(m.paths).toEqual(changedSince(dir, tree, opts()))
+  })
+
+  test('something that is not a tree id is refused', () => {
+    const dir = repo()
+    expect(() => diffSince(dir, '--output=/tmp/x', opts())).toThrow()
+    expect(() => measureSince(dir, 'HEAD', opts())).toThrow()
+  })
+})

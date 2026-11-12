@@ -33,8 +33,8 @@ import {
 } from '@/engine/inngest/execute-run'
 import { MAX_FINDINGS, focusesFor, whereOf, type Finding, type Focus, type Review } from '@/engine/review'
 import { clip, redact } from '@/engine/redact'
-import { SENSITIVE, assessRisk } from '@/engine/risk'
-import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, looseChanges, releaseAttempts, restoreTree, startAttempt, takeSnap, undoChange, type Options as SnapOptions, type Snap } from '@/engine/tree-snapshot'
+import { SENSITIVE, assessRisk, classifyChange, type ChangedFile } from '@/engine/risk'
+import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, looseChanges, measureSince, releaseAttempts, restoreTree, startAttempt, takeSnap, undoChange, type Options as SnapOptions, type Snap } from '@/engine/tree-snapshot'
 import { strings } from '@/ui/strings'
 
 // The Review block, for a provider that works on files: one reader on a small change, three on anything else, each
@@ -68,7 +68,7 @@ type Context = {
   deps: ExecutorDeps
   workspace: Workspace
   round: number
-  /** A tree id: read only what changed since it, not since the base commit. */
+  /** A second look after fixes: the tree as it was before the first fix. What changed since is measured once, at the start of the round. */
   reviewSince: string | null
 }
 
@@ -81,8 +81,11 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
   let fixesSince: string | null = null
   const none = (outcome: Outcome['outcome'], fixed = false): StageResult => ({ outcome, fixed, fixesSince })
 
-  // How deep to read is measured once for the round, from the change as it stands.
-  const risk = await step.run(id(`review-depth-${block.id}`), () => depthOf(runId, workspace))
+  // After fixes: what they changed, found once for the round (null when it cannot be read: the whole change is read then).
+  const since = ctx.reviewSince ? await step.run(id(`review-since-${block.id}`), () => sinceOf(ctx.reviewSince!, workspace, ctx.deps)) : null
+  const sinceForReaders = since ? { paths: since.paths, diff: since.diff } : null
+  // How deep to read is measured once for the round, from the change as it stands: after fixes, from what the fixes changed.
+  const risk = await step.run(id(`review-depth-${block.id}`), () => depthOf(runId, workspace, since?.files))
   const focuses = focusesFor(risk)
   const opened = await step.run(id(`review-open-${block.id}`), async () => {
     const node = await openProviderNode(runId, block, [focuses.length === 1 ? strings.review.depth.one : strings.review.depth.three])
@@ -92,7 +95,7 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
 
   const found: { focus: Focus; finding: Finding }[] = []
   for (const focus of focuses) {
-    const reading = await step.run(id(`review-${block.id}-${focus}`), () => readFor(ctx, opened.nodeId, focus))
+    const reading = await step.run(id(`review-${block.id}-${focus}`), () => readFor(ctx, opened.nodeId, focus, sinceForReaders))
     if ('outcome' in reading) return none(reading.outcome)
     if ('failed' in reading) {
       // A reader that failed, or changed a file, makes the block fail; nothing any reader said is used.
@@ -499,10 +502,29 @@ async function resolveFinding(ctx: Context, nodeId: string, row: FindingRow, end
   })
 }
 
-async function depthOf(runId: string, workspace: Workspace): Promise<'low' | 'high'> {
+/** The most of the fixes' change carried through a step (it is cut again in the prompt). */
+const MAX_SINCE_DIFF_CARRIED = 100_000
+
+type Since = { paths: string[]; diff: string; files: ChangedFile[] }
+
+/** What the fixes changed since the tree before the first one. Null when it cannot be read. */
+async function sinceOf(tree: string, workspace: Workspace, deps: ExecutorDeps): Promise<Since | null> {
+  if (!workspace.workdir) return null
+  try {
+    const m = measureSince(workspace.workdir, tree, deps.snapshotStore ? { store: deps.snapshotStore } : {})
+    return { paths: m.paths, diff: clip(redact(m.diff), MAX_SINCE_DIFF_CARRIED), files: m.files }
+  } catch {
+    return null
+  }
+}
+
+async function depthOf(runId: string, workspace: Workspace, changed?: readonly ChangedFile[]): Promise<'low' | 'high'> {
   // A change that cannot be measured is read as carefully as a risky one.
   if (!workspace.workdir || !workspace.baseCommit) return 'high'
-  return assessRisk(workspace.workdir, workspace.baseCommit, await testFactsOf(runId)).level
+  const tests = await testFactsOf(runId)
+  // The same rules, on the files the fixes changed.
+  if (changed) return classifyChange(changed, tests).level
+  return assessRisk(workspace.workdir, workspace.baseCommit, tests).level
 }
 
 /** What the builder said it did, from the build node's stored sentence. */
@@ -514,11 +536,11 @@ async function builderSummaryOf(ctx: Context): Promise<string | undefined> {
 }
 
 /** One reader: up to MAX_ATTEMPTS tries, its steps on the shared node, its verdict recorded with its focus. */
-async function readFor(ctx: Context, nodeId: string, focus: Focus): Promise<Reading> {
+async function readFor(ctx: Context, nodeId: string, focus: Focus, since: { paths: string[]; diff: string } | null): Promise<Reading> {
   const { runId, plan, block, deps } = ctx
   const provider = deps.resolveProvider(plan.providerId)
   const builderSummary = await builderSummaryOf(ctx)
-  const workspace: Workspace = { ...ctx.workspace, review: { focus, ...(builderSummary ? { builderSummary } : {}), ...(ctx.reviewSince ? { since: ctx.reviewSince } : {}) } }
+  const workspace: Workspace = { ...ctx.workspace, review: { focus, ...(builderSummary ? { builderSummary } : {}), ...(since ? { since } : {}) } }
   const say = (text: string, attempt: number, extra: Record<string, unknown> = {}) =>
     withTx(runId, async tx => {
       const node = await freshNode(nodeId, tx)

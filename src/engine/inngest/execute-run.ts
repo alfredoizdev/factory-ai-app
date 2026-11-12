@@ -1,5 +1,5 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
-import { defaultReviewerModel, type Focus, type Review } from '@/engine/review'
+import { MAX_REVIEW_ROUNDS, defaultReviewerModel, type Focus, type Review } from '@/engine/review'
 import { distinctProblems, findingsOf, needsPerson } from '@/engine/findings'
 import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
@@ -127,7 +127,7 @@ export type Workspace = {
   /** Rules, decisions and core areas this task was given when it started. */
   standing?: Standing[]
   /** A review block: which reader this call is, and what it is told besides the request. */
-  review?: { focus: Focus; builderSummary?: string; since?: string }
+  review?: { focus: Focus; builderSummary?: string; since?: { paths: string[]; diff: string } }
 }
 export type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
 
@@ -738,19 +738,28 @@ async function passLowRiskGate(runId: string, block: PlannedBlock): Promise<Outc
   })
 }
 
-// The person asked for changes: every block from the builder to the human check goes back to queued for the next
-// round, in one transaction, each with a node.reopened event carrying the round and the person's note. Blocks that
-// were skipped stay skipped. The run is running again. Nothing in the worktree is touched: the next round builds on it.
-async function reopenForRevision(
+// Blocks go back to queued for another round, in one transaction, each with a node.reopened event carrying the round
+// and a note. Blocks that were skipped stay skipped. Nothing in the worktree is touched: the next round works on it.
+//   'person': the person asked for changes at the human check, where the run waits; the run is running again.
+//   'fixes': problems were fixed during the review, so the run is already running; the note is the app's own sentence.
+// A reopen for fixes is made once per round: when it was made already (the step ran before) it writes nothing more.
+async function reopenBlocks(
   runId: string,
   blocks: readonly PlannedBlock[],
   round: number,
   note: string | null,
+  by: 'person' | 'fixes',
 ): Promise<boolean> {
   return withTx(runId, async tx => {
-    // The person sends work back from the gate, where the run waits.
+    if (by === 'fixes') {
+      const earlier = (await tx.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.reopened')))).some(e => {
+        const p = JSON.parse(e.payloadJson) as { by?: unknown; round?: unknown }
+        return p.by === 'fixes' && p.round === round
+      })
+      if (earlier) return true
+    }
     const status = (await runStatusOf(tx, runId))
-    if (status !== 'waiting_approval') return false
+    if (status !== (by === 'person' ? 'waiting_approval' : 'running')) return false
     const clean = note ? clip(redact(note), 500) : null
     for (const block of blocks) {
       const node = (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
@@ -758,14 +767,18 @@ async function reopenForRevision(
       await tx.update(nodeRuns)
         .set({ state: 'queued', attempt: 1, summary: null, failureCause: null, startedAt: null, finishedAt: null })
         .where(eq(nodeRuns.id, node.id))
-        
-      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by: 'person' } }, tx)
+      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by } }, tx)
     }
-    await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
-    await appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
+    if (by === 'person') {
+      await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
+      await appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
+    }
     return true
   })
 }
+
+// The person asked for changes: every block from the builder to the human check goes back to queued for the next round.
+const reopenForRevision = (runId: string, blocks: readonly PlannedBlock[], round: number, note: string | null) => reopenBlocks(runId, blocks, round, note, 'person')
 
 /** How many unrecorded decisions a gate tolerates before it stops listening (the run stays waiting). */
 export const MAX_IGNORED_DECISIONS = 20
@@ -940,6 +953,30 @@ function provider_needsRules(plan: Plan): boolean {
   return plan.providerId !== DEMO_PROVIDER_ID
 }
 
+/**
+ * What happens after a review that fixed something, decided from the plan and two counts only.
+ * Another review is allowed: the blocks from the first enabled Tests block (or the Review block itself when there is none)
+ * through the Review block go back, never Build, and the next review reads what the fixes changed. No review is left:
+ * only the Tests blocks go back, so that the result the person relies on is about the code as it is now. Null: nothing goes back.
+ */
+export function afterFixes(
+  blocks: readonly PlannedBlock[],
+  reviewAt: number,
+  reviews: number,
+  rerunsOfTests: number,
+): { start: number; reopen: PlannedBlock[]; reading: boolean; reruns: boolean } | null {
+  const testsAt = blocks.findIndex((b, i) => i < reviewAt && b.kind === 'tests' && b.enabled)
+  const range = (from: number) => blocks.slice(from, reviewAt + 1)
+  if (reviews < MAX_REVIEW_ROUNDS) {
+    const start = testsAt === -1 ? reviewAt : testsAt
+    return { start, reopen: range(start).filter(b => b.kind !== 'build'), reading: true, reruns: testsAt !== -1 }
+  }
+  if (testsAt !== -1 && rerunsOfTests < MAX_REVIEW_ROUNDS) {
+    return { start: testsAt, reopen: range(testsAt).filter(b => b.kind === 'tests' && b.enabled), reading: false, reruns: true }
+  }
+  return null
+}
+
 // Deliberately tolerant: it never reads run.created, so a run missing that event still executes.
 export async function orchestrateRun(runId: string, step: StepApi, deps: ExecutorDeps = defaultDeps): Promise<void> {
   const loaded = await step.run('plan', () => loadPlan(runId))
@@ -987,6 +1024,13 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   // builder, in the same worktree, with their note. Step ids carry the round so Inngest memoises each round apart
   // (round 1 keeps the original ids, so a run already in flight replays unchanged).
   let round = 1
+  // Rounds the person asked for (they have their own limit); the reviews and re-run checks made since the person last decided; and what the next review is given.
+  let personRound = 1
+  let reviews = 0
+  let rerunsOfTests = 0
+  let reviewSince: string | null = null
+  // Blocks that already passed and are not run again in this pass.
+  let notAgain: ReadonlySet<string> = new Set()
   let revisionNote: string | null = null
   // Round 1 sees the images sent with the request; a later round sees only those sent with its request for changes.
   let revisionImages: string[] = await step.run('images', () => imagePathsFor(runId))
@@ -995,6 +1039,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   const id = (name: string) => (round === 1 ? name : `${name}-r${round}`)
   for (let index = from; index < plan.blocks.length; index++) {
     const block = plan.blocks[index]!
+    if (notAgain.has(block.id)) continue
     let result: Outcome
     const route = block.kind === 'human' ? undefined : provider.route?.(block.kind, { testCommand: block.testCommand ?? prepared.testCommand })
     if (!block.enabled) {
@@ -1068,7 +1113,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           decided = await step.run(id(`read-decision-${block.id}-${attempt}`), () => readRecordedDecision(runId, block))
         }
         if (decided === null) return
-        if (decided.decision === 'changes' && round <= MAX_REVISIONS) {
+        if (decided.decision === 'changes' && personRound <= MAX_REVISIONS) {
           // Back to the builder, in the same worktree, with the note. Everything from the builder to here is redone.
           const builder = plan.blocks.findIndex(b => b.kind === 'build' && b.enabled)
           const start = builder === -1 ? index : builder
@@ -1077,6 +1122,11 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           const reopened = await step.run(id(`reopen-${block.id}`), () => reopenForRevision(runId, plan.blocks.slice(start, index + 1), next, note))
           if (!reopened) return // cancelled meanwhile
           round = next
+          personRound += 1
+          reviews = 0
+          rerunsOfTests = 0
+          reviewSince = null
+          notAgain = new Set()
           revisionNote = note
           revisionImages = await step.run(id(`images-${block.id}`), () => imagePathsFor(runId, decided!.approvalId))
           from = start
@@ -1087,10 +1137,27 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
       }
     } else if (block.kind === 'review' && provider.needsWorkspace) {
       // One reader or three; what they found is checked against the code, then each finding is verified by running
-      // it, and fixed or asked about. Nothing goes back to the builder: Tests is not re-run here yet.
-      const stage = await runReviewStage({ runId, plan, block, step, id, deps, workspace: prepared, round, reviewSince: null })
+      // it, and fixed or asked about. Nothing goes back to the builder. When something was fixed, the checks run again
+      // and the change is read once more (see afterFixes).
+      const stage = await runReviewStage({ runId, plan, block, step, id, deps, workspace: prepared, round, reviewSince })
+      reviews += 1
       result = { outcome: stage.outcome }
       if (stage.outcome === 'parked') return // waiting on the person's answer: the run stays waiting
+      if (stage.outcome === 'passed' && stage.fixed) {
+        const again = afterFixes(plan.blocks, index, reviews, rerunsOfTests)
+        if (again) {
+          const next = round + 1
+          const note = again.reading ? strings.run.reopenedAfterFixes(next) : strings.run.reopenedChecksAfterFixes(next)
+          const reopened = await step.run(id(`reopen-fixes-${block.id}`), () => reopenBlocks(runId, again.reopen, next, note, 'fixes'))
+          if (!reopened) return // cancelled meanwhile
+          round = next
+          reviewSince = again.reading ? stage.fixesSince : null
+          if (again.reruns) rerunsOfTests += 1
+          notAgain = new Set(plan.blocks.slice(again.start, index + 1).filter(b => !again.reopen.includes(b)).map(b => b.id))
+          from = again.start
+          continue rounds
+        }
+      }
     } else {
       const note = revisionNote
       const images = revisionImages

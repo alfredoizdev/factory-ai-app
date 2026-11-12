@@ -34,6 +34,8 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
     const round = typeof payload.round === 'number' ? payload.round : 2
     // Sent back by the reviewer: its problems are a model's claim, and are shown on the Review card as such.
     if (payload.by === 'reviewer') return { text: strings.events.reopenedByReviewer(round), isClaim: false }
+    // Sent back after fixes: the app's own sentence, kept in the note.
+    if (payload.by === 'fixes') return { text: str(payload.note) ?? strings.run.reopenedAfterFixes(round), isClaim: false }
     // The note is the person's own words, so it is shown as written: not a claim, not the app's sentence.
     return { text: strings.events.reopened(round, str(payload.note) ?? null), isClaim: false }
   }

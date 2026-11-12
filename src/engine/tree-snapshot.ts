@@ -167,6 +167,33 @@ export function changedSince(workdir: string, tree: string, options: Options = {
   return changedBetween(workdir, tree, snapshotTree(workdir, options), options)
 }
 
+/** A change since a snapshot: the paths, the unified diff, and the lines added plus removed per path (a binary file counts as one). */
+export type Measured = { paths: string[]; diff: string; files: { path: string; lines: number }[] }
+
+/**
+ * What differs between the snapshot and the folder now, read from ONE new snapshot so the three views agree. Read only:
+ * the new tree goes into the app's own store, and the real index, HEAD and refs are never touched.
+ */
+export function measureSince(workdir: string, tree: string, options: Options = {}): Measured {
+  checkId(tree, 'tree')
+  const now = snapshotTree(workdir, options)
+  const flags = ['--no-renames', '--no-color', '--no-ext-diff', '--no-textconv']
+  const paths = changedBetween(workdir, tree, now, options)
+  const diff = git(workdir, options, ['-c', 'core.quotepath=off', 'diff-tree', '-r', '-p', ...flags, tree, now])
+  const counted = new Map<string, number>()
+  for (const line of git(workdir, options, ['diff-tree', '-r', '-z', '--numstat', ...flags, tree, now]).split('\0').filter(Boolean)) {
+    const [added, removed, ...rest] = line.split('\t')
+    const n = (v: string | undefined) => (v === undefined || v === '-' ? 1 : Number(v))
+    counted.set(rest.join('\t'), n(added) + n(removed))
+  }
+  return { paths, diff, files: paths.map(path => ({ path, lines: Math.max(1, counted.get(path) ?? 1) })) }
+}
+
+/** A unified diff from the snapshot to the folder now (empty when nothing differs). */
+export function diffSince(workdir: string, tree: string, options: Options = {}): string {
+  return measureSince(workdir, tree, options).diff
+}
+
 const asSnap = (s: Snap | string): Snap => (typeof s === 'string' ? { tree: s, ignored: [], skipped: 0 } : s)
 
 /** What a fix changed: the paths that differ between the two snapshots, ignored sensitive files included. Sorted. */
