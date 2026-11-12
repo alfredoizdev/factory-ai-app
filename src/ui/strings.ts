@@ -989,6 +989,27 @@ export const strings = {
           '{"verdict":"changes","findings":[{"type":"logic","file":"path/to/file","line":12,"problem":"what is wrong and how to fix it","severity":"medium","affects":["what else it touches"],"decisions":[]}]}',
         ].join('\n'),
       noBase: 'This run does not know where its change started, so it cannot be reviewed.',
+      noFinding: 'There is no reported problem to check, so nothing was checked.',
+      verified: 'The checker wrote a script that shows the problem.',
+      notReproduced: 'The checker could not make the problem happen.',
+      refuted: 'The checker read the code and it does not do what the reviewer said.',
+      verifierUnreadable: 'The checker answered, but not in the form asked for, so nothing was confirmed.',
+      // Read by the model, not shown to the person, so it may name files.
+      verifyPrompt: (o: { request: string; finding: { type: string; file?: string; line?: number; problem: string } }) =>
+        [
+          'You are checking whether a problem a code reviewer reported is real. Assume the finding is false until you have shown otherwise.',
+          `Someone asked for this change: ${o.request}`,
+          `The reviewer reported (${o.finding.type}): ${o.finding.problem}`,
+          o.finding.file ? `It says this is at ${o.finding.file}${o.finding.line ? `, line ${o.finding.line}` : ''}.` : 'It does not say where.',
+          'This directory is a throwaway copy of the project: you may create and run files here, and nothing you do affects the real project.',
+          'Open the code it points at and read what it really does. If the code does not do what the finding says, the finding is refuted.',
+          'Otherwise write the smallest script that fails because of the problem and prints a unique marker line before failing. Run it and make sure it fails for that reason and no other.',
+          'Keep it to at most 5 small files, and do not touch the project\'s own files.',
+          'End your reply with one JSON object and nothing after it, exactly in this form:',
+          '{"reproduced":true|false,"command":"…","marker":"…","files":["path"]}',
+          'command is the one shell command that runs your script from this directory, marker is the line it prints, and files lists the paths you created.',
+          'When you could not reproduce it: {"reproduced":false}. When the code does not do what the finding says: {"reproduced":false,"refuted":true,"why":"what the code really does"}.',
+        ].join('\n'),
       plannerChangedFiles: 'The planner changed files, which planning must never do, so its plan was not used.',
       rulesNote: (notes: readonly string[]) =>
         ['The person set these rules for this project on earlier tasks. Follow them unless this request says otherwise:', ...notes.map(n => `- ${n}`)].join('\n'),

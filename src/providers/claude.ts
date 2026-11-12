@@ -1,11 +1,13 @@
 import { projectEnv } from '@/engine/child-env'
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { dirname } from 'node:path'
+import { lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { dirname, join, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
 import { parsePlan, workList } from '@/engine/plan'
+import { MAX_REPRO_BYTES, parseRepro, parseVerifierAnswer } from '@/engine/repro'
 import { parseReview, whereOf } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
 import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
@@ -51,6 +53,8 @@ export type ClaudeDeps = {
   changedTestFiles?: typeof gitChangedTestFiles
   /** A fingerprint of the worktree's files (tracked changes and untracked files): the reviewer must leave it unchanged. */
   snapshot?: (workdir: string) => string
+  /** A file the verifier named, read from its copy: its content, or null when it is missing, too big or outside the copy. */
+  readCopyFile?: (workdir: string, path: string) => string | null
 }
 
 // Approve is summed up by the executor from the reviews, not run by the agent; Ship happens from the result card.
@@ -87,6 +91,57 @@ export function reviewerArgs(prompt: string, model?: string): string[] {
 function gitSnapshot(workdir: string): string {
   const git = (args: string[]) => execFileSync('git', args, { cwd: workdir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 })
   return createHash('sha256').update(git(['status', '--porcelain', '--untracked-files=all'])).update(git(['diff', 'HEAD'])).digest('hex')
+}
+
+function readFromCopy(workdir: string, path: string): string | null {
+  try {
+    const file = join(workdir, path)
+    const root = realpathSync(workdir)
+    const real = realpathSync(file)
+    if (!real.startsWith(`${root}${sep}`) || !lstatSync(real).isFile() || lstatSync(real).size > MAX_REPRO_BYTES) return null
+    return readFileSync(real, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The verifier: tries to show that one reported problem is real by writing a small script. It works in a throwaway
+ * copy (`workdir`), never in the task's working copy, and may write there. What it returns is its claim; the app runs
+ * the script itself before anything counts as confirmed.
+ */
+async function* runVerifier(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
+  if (!input.workdir) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
+    return
+  }
+  if (!input.finding) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noFinding }
+    return
+  }
+  if (input.model !== undefined && !MODEL_NAME.test(input.model)) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.badModel(input.model) }
+    return
+  }
+  const workdir = input.workdir
+  const prompt = strings.providers.claude.verifyPrompt({ request: input.request, finding: input.finding })
+  for await (const ev of runClaude(deps, workdir, claudeArgs(prompt, undefined, input.model), controls)) {
+    if (ev.type !== 'done') {
+      yield ev
+      if (ev.type === 'error') return
+      continue
+    }
+    const text = ev.fullText ?? ev.summary
+    const answer = parseVerifierAnswer(text)
+    if (!answer) {
+      yield { type: 'done', source: 'system', summary: strings.providers.claude.verifierUnreadable, usage: ev.usage, repro: null }
+      return
+    }
+    const repro = answer.reproduced ? parseRepro(text, p => deps.readCopyFile(workdir, p)) : null
+    const summary = repro ? strings.providers.claude.verified : answer.refuted ? strings.providers.claude.refuted : strings.providers.claude.notReproduced
+    yield { type: 'done', source: 'provider', summary, usage: ev.usage, repro, ...(answer.refuted ? { refuted: answer.refuted } : {}) }
+    return
+  }
 }
 
 async function* runReviewer(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
@@ -307,6 +362,7 @@ export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
     runTests: deps.runTests ?? nodeRunTests,
     changedTestFiles: deps.changedTestFiles ?? gitChangedTestFiles,
     snapshot: deps.snapshot ?? gitSnapshot,
+    readCopyFile: deps.readCopyFile ?? readFromCopy,
   }
   return {
     id: CLAUDE_PROVIDER_ID,
@@ -314,6 +370,10 @@ export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
     needsWorkspace: true,
     route: routeFor,
     async *execute(input, controls) {
+      if (input.role === 'verifier') {
+        yield* runVerifier(input, controls, full)
+        return
+      }
       if (input.blockKind === 'input') {
         yield { type: 'step', text: strings.providers.claude.recordingRequest }
         yield { type: 'done', source: 'system', summary: strings.summary.input.passed }

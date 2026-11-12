@@ -318,3 +318,111 @@ describe('the reviewer', () => {
     ])
   })
 })
+
+describe('the verifier', () => {
+  const finding = { type: 'logic' as const, file: 'src/a.ts', line: 12, problem: 'it divides by zero' }
+  const verify = { blockKind: 'review' as const, role: 'verifier' as const, request: 'make it blue', workdir: '/copy', finding, model: 'sonnet' }
+  const answer = (o: object) => [{ type: 'result', is_error: false, result: `Tried it. ${JSON.stringify(o)}` }]
+  const run = async (input: object, lines: unknown[], readCopyFile: ((w: string, p: string) => string | null) | 'real' = () => 'file body') => {
+    const child = fakeChild()
+    const spawn = vi.fn(() => child)
+    const pending = collect(createClaudeProvider({ spawn: spawn as never, ...(readCopyFile === 'real' ? {} : { readCopyFile }) }).execute(input as never, { signal: signal() }))
+    finish(child, lines)
+    return { events: await pending, spawn }
+  }
+
+  test('is told to assume the finding is false, where it is, and how to answer', async () => {
+    const { spawn } = await run(verify, answer({ reproduced: false }))
+    const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
+    const prompt = args[args.indexOf('-p') + 1]!
+    expect(prompt).toBe(strings.providers.claude.verifyPrompt({ request: 'make it blue', finding }))
+    expect(prompt).toMatch(/assume .*false/i)
+    expect(prompt).toContain('src/a.ts')
+    expect(prompt).toContain('12')
+    expect(prompt).toContain('it divides by zero')
+    expect(prompt).toContain('{"reproduced":true|false,"command":"…","marker":"…","files":["path"]}')
+  })
+
+  test('runs with write permission, in the copy it was given', async () => {
+    const { spawn } = await run(verify, answer({ reproduced: false }))
+    const [, args, options] = spawn.mock.calls[0] as unknown as [string, string[], { cwd: string }]
+    expect(options.cwd).toBe('/copy')
+    expect(args[args.indexOf('--permission-mode') + 1]).toBe('bypassPermissions')
+    expect(args).not.toContain('--disallowedTools')
+    expect(args[args.indexOf('--model') + 1]).toBe('sonnet')
+  })
+
+  test('a reproduction is carried with the files read from the copy', async () => {
+    const read = vi.fn(() => 'file body')
+    const { events } = await run(verify, answer({ reproduced: true, command: 'node r.js', marker: 'MARK-1', files: ['r.js'] }), read)
+    expect(read).toHaveBeenCalledWith('/copy', 'r.js')
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      source: 'provider',
+      repro: { command: 'node r.js', marker: 'MARK-1', files: [{ path: 'r.js', content: 'file body' }] },
+    })
+  })
+
+  test('reproduced false carries repro null', async () => {
+    const { events } = await run(verify, answer({ reproduced: false }))
+    const done = events.at(-1) as { type: string; repro?: unknown; refuted?: unknown }
+    expect(done.type).toBe('done')
+    expect(done.repro).toBeNull()
+    expect(done.refuted).toBeUndefined()
+  })
+
+  test('refuted carries why', async () => {
+    const { events } = await run(verify, answer({ reproduced: false, refuted: true, why: 'x' }))
+    expect(events.at(-1)).toMatchObject({ type: 'done', repro: null, refuted: { why: 'x' } })
+  })
+
+  test('a file it names that cannot be read from the copy makes the whole repro null', async () => {
+    const { events } = await run(verify, answer({ reproduced: true, command: 'c', marker: 'm', files: ['gone.js'] }), () => null)
+    expect(events.at(-1)).toMatchObject({ type: 'done', repro: null })
+  })
+
+  test('an unsafe path makes the repro null and nothing is read', async () => {
+    const read = vi.fn(() => 'x')
+    const { events } = await run(verify, answer({ reproduced: true, command: 'c', marker: 'm', files: ['../../etc/passwd'] }), read)
+    expect(events.at(-1)).toMatchObject({ type: 'done', repro: null })
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  test('an answer it cannot read is no repro', async () => {
+    const { events } = await run(verify, [{ type: 'result', is_error: false, result: 'done!' }])
+    expect(events.at(-1)).toMatchObject({ type: 'done', source: 'system', repro: null })
+  })
+
+  test('by default a named file is read from the copy only: a link to somewhere else is not followed', async () => {
+    const { mkdtempSync, writeFileSync, symlinkSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const copy = mkdtempSync(join(tmpdir(), 'factory-copy-'))
+    const elsewhere = mkdtempSync(join(tmpdir(), 'factory-else-'))
+    try {
+      writeFileSync(join(copy, 'ok.js'), 'inside')
+      writeFileSync(join(elsewhere, 'secret'), 'secret')
+      symlinkSync(join(elsewhere, 'secret'), join(copy, 'link.js'))
+      const base = { reproduced: true, command: 'c', marker: 'm' }
+      const good = await run({ ...verify, workdir: copy }, answer({ ...base, files: ['ok.js'] }), 'real')
+      expect(good.events.at(-1)).toMatchObject({ repro: { files: [{ path: 'ok.js', content: 'inside' }] } })
+      const bad = await run({ ...verify, workdir: copy }, answer({ ...base, files: ['link.js'] }), 'real')
+      expect(bad.events.at(-1)).toMatchObject({ type: 'done', repro: null })
+    } finally {
+      rmSync(copy, { recursive: true, force: true })
+      rmSync(elsewhere, { recursive: true, force: true })
+    }
+  })
+
+  test('without a copy to work in, or a finding, nothing starts', async () => {
+    const spawn = vi.fn()
+    const provider = createClaudeProvider({ spawn: spawn as never })
+    expect(await collect(provider.execute({ ...verify, workdir: undefined }, { signal: signal() }))).toEqual([
+      { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir },
+    ])
+    expect(await collect(provider.execute({ ...verify, finding: undefined }, { signal: signal() }))).toEqual([
+      { type: 'error', source: 'system', message: strings.providers.claude.noFinding },
+    ])
+    expect(spawn).not.toHaveBeenCalled()
+  })
+})

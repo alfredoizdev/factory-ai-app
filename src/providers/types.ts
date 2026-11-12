@@ -1,6 +1,7 @@
 import type { BlockKind } from '@/domain/graph'
 import type { Job } from '@/engine/plan'
-import type { Focus, Review } from '@/engine/review'
+import type { Repro } from '@/engine/repro'
+import type { FindingType, Focus, Review } from '@/engine/review'
 import type { TestRun } from '@/engine/test-runner'
 import type { Standing } from '@/engine/register'
 
@@ -15,7 +16,9 @@ export type AgentEvent =
   // `fullText`: the provider's whole final answer, for a block that reads structure from it. `review`: a reviewer's
   // verdict and findings, read from that answer — still the model's claim, never a measurement.
   // `plan`: a planner's jobs, read from its answer — its proposal, which the person checks before anything is built.
-  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[] }
+  // `repro`: a verifier's reproduction (null: it did not reproduce the problem); `refuted`: it showed the cited code
+  // does not do what the finding says. Both are the model's claims until the app runs the repro itself.
+  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string } }
   // Same rule for a failure: 'system' marks a sentence the app composed from facts. `cause` names a failure the
   // executor must not retry (re-running failing tests twice proves nothing new).
   | { type: 'error'; message: string; source?: 'provider' | 'system'; cause?: 'tests_failed' }
@@ -52,6 +55,12 @@ export type AgentExecutionInput = {
   focus?: Focus
   /** A review block: what the builder said it did. */
   builderSummary?: string
+  /** Set for a verifier (confirms one finding in a throwaway copy, `workdir`) or, later, a fixer. Absent: the block's own agent. */
+  role?: 'verifier' | 'fixer'
+  /** The finding a verifier or fixer works on. */
+  finding?: { type: FindingType; file?: string; line?: number; problem: string }
+  /** The reproduction a fixer must make pass. */
+  repro?: Repro
   /** A review block: a tree id; review only what changed since it, not since the base commit. */
   reviewSince?: string
 }
