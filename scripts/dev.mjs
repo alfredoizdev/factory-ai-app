@@ -16,6 +16,11 @@ const listening = port =>
     s.once('error', () => resolve(false))
   })
 
+if (await listening(4100)) {
+  console.log(`AI Factory is already running: open ${APP}\nTo restart it, stop the other one first (Ctrl+C in its terminal).`)
+  process.exit(0)
+}
+
 if (mode === 'local') {
   const db = spawnSync('npm', ['run', 'db:local'], { stdio: 'inherit' })
   if (db.status !== 0) {
