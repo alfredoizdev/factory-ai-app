@@ -5,7 +5,7 @@ import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
 import { bySeverity, citedPath, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, type FindingRow } from '@/engine/findings'
 import { QUESTION_ANSWERED } from '@/engine/inngest/client'
-import { LEAVE, askPerson, takeAnswer, type Question } from '@/engine/questions'
+import { LEAVE, askPerson, consumeAnswer, type Question } from '@/engine/questions'
 import { addEntry, corePaths, standingFor, touchesCore } from '@/engine/register'
 import { corrected, makeCopy as realMakeCopy, removeCopy, reproduced, runRepro as realRunRepro, type NoRepro, type Repro, type ReproRun } from '@/engine/repro'
 import {
@@ -490,13 +490,13 @@ async function askAndWait(ctx: Context, nodeId: string, row: FindingRow, tag: ''
     return question
   })
   if (asked === null) return 'cancelled'
-  let answer: Question | null = asked.state === 'answered' ? await step.run(id(`read-answer-${tag}${row.id}-first`), () => takeAnswer(asked.id)) : null
-  // The event only says "look": the answer is read from its row. One that is not there yet is ignored and the wait goes on.
+  let answer: Question | null = asked.state === 'answered' ? await step.run(id(`read-answer-${tag}${row.id}-first`), () => consumeAnswer(asked.id)) : null
+  // The event only says "look": the answer is read from its row, and reading it marks it taken (the relay tells the run again until then). One that is not there yet is ignored and the wait goes on.
   for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && answer === null; attempt++) {
     const arrived = await step.waitForEvent(id(`question-${tag}${row.id}-${attempt}`), { event: QUESTION_ANSWERED, timeout: APPROVAL_WAIT, match: 'data.runId' })
     // No answer (the wait expired) leaves the run waiting on the person; nothing is decided for them.
     if (!arrived) return 'parked'
-    const read = await step.run(id(`read-answer-${tag}${row.id}-${attempt}`), async () => ((await isCancelled(runId)) ? ('cancelled' as const) : takeAnswer(asked.id)))
+    const read = await step.run(id(`read-answer-${tag}${row.id}-${attempt}`), async () => ((await isCancelled(runId)) ? ('cancelled' as const) : consumeAnswer(asked.id)))
     if (read === 'cancelled') return 'cancelled'
     answer = read
   }

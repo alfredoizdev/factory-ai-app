@@ -3,8 +3,8 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { events, nodeRuns, projectNotes, projects, questions, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { askPerson, answerQuestion, decisionText, LEAVE, openQuestion, OTHER, QuestionError, takeAnswer, type Question } from '@/engine/questions'
-import { deliverPending, relayTick, markWaiting } from '@/engine/relay'
+import { askPerson, answerQuestion, consumeAnswer, decisionText, LEAVE, openQuestion, OTHER, QuestionError, takeAnswer, type Question } from '@/engine/questions'
+import { deliverPending, relayTick, markWaiting, seedWaiting, RESEND_AFTER_MS } from '@/engine/relay'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import { POST } from '@/app/api/runs/[runId]/questions/[questionId]/route'
 import { strings } from '@/ui/strings'
@@ -263,6 +263,76 @@ describe('delivery', () => {
     markWaiting(runId)
     await relayTick(async e => void relayed.push(e), 'approval', 'plan', 'question')
     expect(relayed).toContainEqual({ name: 'question', data: { runId, questionId: q.id } })
+  })
+})
+
+describe('an answer the run has not taken yet', () => {
+  const g = globalThis as { __factoryWaiting?: Set<string>; __factoryWaitingSeeded?: boolean }
+  /** As when the app starts again: nothing in memory, the database read once. */
+  const restart = async () => {
+    // Runs left waiting by earlier tests belong to no one here: only the run under test can make the relay look.
+    await db.update(runs).set({ machineId: 'gone' }).where(eq(runs.status, 'waiting_approval'))
+    g.__factoryWaiting?.clear()
+    g.__factoryWaitingSeeded = false
+    await seedWaiting()
+  }
+  const told = (relayed: { name: string; data: Record<string, unknown> }[], id: string) => relayed.filter(e => e.name === 'question' && e.data.questionId === id).length
+
+  test('an answer given while the run\'s own app was closed is told to the run when the app starts again', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const q = await askPerson(runId, nodeRunId, ask())
+    await db.update(runs).set({ machineId: 'elsewhere' }).where(eq(runs.id, runId))
+    await answerQuestion(q.id, { option: 'a' }, deps) // recorded on another computer: not told
+    await db.update(runs).set({ machineId: (await import('@/engine/machine')).thisMachine().id }).where(eq(runs.id, runId))
+    await restart()
+    const relayed: { name: string; data: Record<string, unknown> }[] = []
+    await relayTick(async e => void relayed.push(e), 'approval', 'plan', 'question')
+    expect(told(relayed, q.id)).toBe(1)
+  })
+
+  test('an answer told before the run was listening is told again, until the run has taken it', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const q = await askPerson(runId, nodeRunId, ask())
+    await answerQuestion(q.id, { option: 'a' }, deps) // told at once, as on this computer
+    expect((await db.select().from(questions).where(eq(questions.id, q.id)))[0]!.deliveredAt).not.toBeNull()
+    await restart()
+    const relayed: { name: string; data: Record<string, unknown> }[] = []
+    const tick = () => relayTick(async e => void relayed.push(e), 'approval', 'plan', 'question')
+    await tick()
+    expect(told(relayed, q.id)).toBe(0) // just told: not again yet
+    await db.update(questions).set({ deliveredAt: new Date(Date.now() - RESEND_AFTER_MS - 1000).toISOString() }).where(eq(questions.id, q.id))
+    await tick()
+    expect(told(relayed, q.id)).toBe(1)
+    expect((await consumeAnswer(q.id))!.answerOption).toBe('a')
+    expect((await db.select().from(questions).where(eq(questions.id, q.id)))[0]!.consumedAt).not.toBeNull()
+    await db.update(questions).set({ deliveredAt: new Date(Date.now() - RESEND_AFTER_MS - 1000).toISOString() }).where(eq(questions.id, q.id))
+    await restart()
+    await tick()
+    expect(told(relayed, q.id)).toBe(1) // taken: never again
+  })
+
+  test('the app\'s own telling keeps watching until the run has taken the answer', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const q = await askPerson(runId, nodeRunId, ask())
+    g.__factoryWaiting?.clear()
+    await answerQuestion(q.id, { option: 'a' }, deps)
+    expect(g.__factoryWaiting?.has(runId)).toBe(true)
+    await relayTick(async () => undefined, 'approval', 'plan', 'question')
+    expect(g.__factoryWaiting?.has(runId)).toBe(true)
+    await consumeAnswer(q.id)
+    await relayTick(async () => undefined, 'approval', 'plan', 'question')
+    expect(g.__factoryWaiting?.has(runId)).toBe(false)
+  })
+
+  test('a run that was cancelled is not told', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const q = await askPerson(runId, nodeRunId, ask())
+    await db.update(runs).set({ machineId: 'elsewhere' }).where(eq(runs.id, runId))
+    await answerQuestion(q.id, { option: 'a' }, deps)
+    await db.update(runs).set({ machineId: (await import('@/engine/machine')).thisMachine().id, status: 'cancelled' }).where(eq(runs.id, runId))
+    const relayed: { name: string; data: Record<string, unknown> }[] = []
+    await deliverPending(async e => void relayed.push(e), 'approval', 'plan', 'question')
+    expect(told(relayed, q.id)).toBe(0)
   })
 })
 

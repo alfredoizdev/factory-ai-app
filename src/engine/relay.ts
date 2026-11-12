@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { approvals, events, questions, runs } from '@/db/schema'
 import { thisMachine } from '@/engine/machine'
@@ -10,6 +10,11 @@ import { thisMachine } from '@/engine/machine'
 // statement that claims the row.
 
 export const RELAY_EVERY_MS = 5000
+/**
+ * An answer told to the run that the run has not taken this long after is told again: the run may not have been
+ * listening yet when it was told (it was asked and answered within a moment), and nothing else would tell it.
+ */
+export const RESEND_AFTER_MS = 30_000
 
 // The runs of this computer that wait on a person, kept in memory so the relay asks the database nothing while there
 // are none (an idle app must let Neon sleep). Filled once at start, added to when a run parks here, and pruned after
@@ -22,11 +27,23 @@ export function markWaiting(runId: string): void {
   waiting.add(runId)
 }
 
-/** Which of this computer's runs wait, read once when the app starts (runs that parked before a restart). */
+/** An answer the run has not taken yet (whether or not it was told): the row is the truth, the event only says "look". */
+const untaken = and(eq(questions.state, 'answered'), isNull(questions.consumedAt))
+
+/**
+ * Which of this computer's runs wait, read once when the app starts: runs that parked before a restart, and runs whose
+ * question was answered (here while the app was down, or on another computer) but that have not taken the answer yet.
+ */
 export async function seedWaiting(): Promise<void> {
   if (g.__factoryWaitingSeeded) return
-  const rows = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.machineId, thisMachine().id), eq(runs.status, 'waiting_approval')))
+  const mine = eq(runs.machineId, thisMachine().id)
+  const rows = await db.select({ id: runs.id }).from(runs).where(and(mine, eq(runs.status, 'waiting_approval')))
   for (const r of rows) waiting.add(r.id)
+  const answered = await db
+    .select({ id: questions.runId })
+    .from(questions)
+    .where(and(untaken, inArray(questions.runId, db.select({ id: runs.id }).from(runs).where(and(mine, eq(runs.status, 'running'))))))
+  for (const a of answered) waiting.add(a.id)
   g.__factoryWaitingSeeded = true
 }
 
@@ -37,8 +54,8 @@ export async function relayTick(send: Send, approvalEvent: string, planEvent: st
   const ids = [...waiting]
   const still = await db.select({ id: runs.id }).from(runs).where(and(inArray(runs.id, ids), eq(runs.status, 'waiting_approval')))
   const keep = new Set(still.map(r => r.id))
-  // An answer that could not be told yet keeps its run watched, though the run is no longer waiting.
-  const untold = await db.select({ id: questions.runId }).from(questions).where(and(inArray(questions.runId, ids), eq(questions.state, 'answered'), isNull(questions.deliveredAt)))
+  // An answer the run has not taken yet keeps its run watched, though the run is no longer waiting: it may need telling again.
+  const untold = await db.select({ id: questions.runId }).from(questions).where(and(inArray(questions.runId, ids), untaken))
   for (const q of untold) keep.add(q.id)
   for (const id of ids) if (!keep.has(id)) waiting.delete(id)
   return told
@@ -88,10 +105,13 @@ export async function deliverPending(send: Send, approvalEvent: string, planEven
     }
   }
   if (questionEvent) {
+    // Not told yet, or told a while ago and still not taken; only for a run that is going (a cancelled run waits on nothing).
+    const going = db.select({ id: runs.id }).from(runs).where(and(eq(runs.machineId, thisMachine().id), eq(runs.status, 'running')))
+    const stale = new Date(Date.now() - RESEND_AFTER_MS).toISOString()
     const answered = await db
       .update(questions)
       .set({ deliveredAt: now() })
-      .where(and(eq(questions.state, 'answered'), isNull(questions.deliveredAt), inArray(questions.runId, mine)))
+      .where(and(untaken, or(isNull(questions.deliveredAt), lt(questions.deliveredAt, stale)), inArray(questions.runId, going)))
       .returning({ id: questions.id, runId: questions.runId })
     for (const a of answered) {
       try {

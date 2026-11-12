@@ -43,6 +43,13 @@
       "when": 1794498495446,
       "tag": "0005_free_ezekiel",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794512811967,
+      "tag": "0006_jittery_iron_monger",
+      "breakpoints": true
     }
   ]
 }

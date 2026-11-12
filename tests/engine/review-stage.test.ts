@@ -398,6 +398,23 @@ const counts = async (runId: string) => ({
 })
 const questionRows = (runId: string) => db.select().from(questions).where(eq(questions.runId, runId))
 
+describe('an answer the run took', () => {
+  test('is marked taken when the run reads it, so the relay stops telling the run about it', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(false)
+    const s = scripted({ found: [finding()] })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    const open = (await openQuestion(runId))!
+    await answerQuestion(open.id, { option: LEAVE }, { send })
+    expect((await questionRows(runId))[0]!.consumedAt).toBeNull()
+    step.onWait = async () => ({ data: {} })
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect((await questionRows(runId))[0]!.consumedAt).not.toBeNull()
+  })
+})
+
 describe('a path cited in another way', () => {
   test('a problem cited by its full path inside a core area is asked about, not fixed, and kept as the project names it', async () => {
     const runId = await newRun()

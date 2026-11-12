@@ -317,6 +317,8 @@ export const questions = pgTable(
     answeredAt: text('answered_at'),
     /** When the run's own computer was told about the answer. Null: recorded elsewhere and not told yet (the relay does). */
     deliveredAt: text('delivered_at'),
+    /** When the run read the answer and went on. Null on an answered question: the run has not taken it yet (the relay tells it again). */
+    consumedAt: text('consumed_at'),
     createdAt: text('created_at').notNull(),
   },
   t => [

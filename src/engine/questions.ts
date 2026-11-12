@@ -191,6 +191,16 @@ export async function takeAnswer(questionId: string): Promise<Question | null> {
   return row && row.state === 'answered' ? toQuestion(row) : null
 }
 
+/**
+ * The answer, read by the run that goes on with it: from then on it is taken, and the relay stops telling the run
+ * about it. Null until it is answered. A second read returns the same answer.
+ */
+export async function consumeAnswer(questionId: string): Promise<Question | null> {
+  const answer = await takeAnswer(questionId)
+  if (answer) await db.update(questions).set({ consumedAt: now() }).where(and(eq(questions.id, questionId), isNull(questions.consumedAt)))
+  return answer
+}
+
 /** "<question> — <what they chose>", and their own words after it; for `other`, their words stand for the choice. */
 export function decisionText(q: Question): string {
   const words = q.answerText?.trim() ?? ''
@@ -245,6 +255,8 @@ async function tell(q: Question, send: Send): Promise<void> {
   if (claimed.length === 0) return
   try {
     await send({ name: QUESTION_ANSWERED, data: { runId: q.runId, questionId: q.id } })
+    // Told; the relay still watches until the run has taken it, in case the run was not listening yet.
+    markWaiting(q.runId)
   } catch {
     await db.update(questions).set({ deliveredAt: null }).where(eq(questions.id, q.id))
     markWaiting(q.runId) // so the relay keeps looking until it has been told
