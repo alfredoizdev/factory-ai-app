@@ -107,14 +107,14 @@ const passingTests: AgentEvent = {
 
 type Reply = (focus: Focus, round: number) => AgentEvent[]
 function reviewers(reply: Reply) {
-  const seen: { kind: string; focus?: Focus; note?: string }[] = []
+  const seen: { kind: string; focus?: Focus; note?: string; reminder?: boolean }[] = []
   const asked: Focus[] = []
   const provider: AgentProvider = {
     id: 'files',
     isDemo: false,
     needsWorkspace: true,
     async *execute(input) {
-      seen.push({ kind: input.blockKind, focus: input.focus, note: input.revisionNote })
+      seen.push({ kind: input.blockKind, focus: input.focus, note: input.revisionNote, ...(input.reviewReminder ? { reminder: true } : {}) })
       if (input.blockKind === 'tests') yield passingTests
       if (input.role === 'verifier') {
         yield { type: 'done', summary: 'could not', source: 'provider', repro: null }
@@ -197,22 +197,54 @@ describe('how many reviewers read the change', () => {
 })
 
 describe('a reviewer whose answer could not be read', () => {
-  const unreadable: AgentEvent[] = [{ type: 'done', summary: strings.review.unreadable, source: 'system' }]
+  const unreadable: AgentEvent[] = [{ type: 'done', summary: strings.review.unreadable, source: 'system', unreadable: { why: 'no_json', answer: 'Looks great!' } }]
 
-  test('is said on the card, logged, and never counted as having found nothing', async () => {
+  test('is asked once more, then said on the card, logged with why, and never counted as having found nothing', async () => {
     const runId = await newRun()
     const { dir, base } = workdir(false)
-    const { provider } = reviewers(focus => (focus === 'logic' ? says() : unreadable))
-    await drive(runId, provider, dir, base)
+    const { provider, seen } = reviewers(focus => (focus === 'logic' ? says() : unreadable))
+    const step = recordingStep()
+    await drive(runId, provider, dir, base, step)
+    expect(seen.filter(s => s.kind === 'review').map(s => `${s.focus}${s.reminder ? '+reminder' : ''}`)).toEqual(['logic', 'security', 'security+reminder', 'effects', 'effects+reminder'])
     const steps = (await payloads(runId, 'node.step', 'review')).map(p => p.text)
+    expect(steps.filter(t => t === strings.review.askedAgain)).toHaveLength(2)
     expect(steps.filter(t => t === strings.review.unreadable)).toHaveLength(2)
-    expect((await payloads(runId, 'node.review_unreadable', 'review')).map(p => p.focus)).toEqual(['security', 'effects'])
+    const logged = await payloads(runId, 'node.review_unreadable', 'review')
+    expect(logged.map(p => [p.focus, p.attempt, p.retried ?? false])).toEqual([['security', 1, true], ['security', 2, false], ['effects', 1, true], ['effects', 2, false]])
+    expect(logged.every(p => p.why === 'no_json' && p.answer === 'Looks great!')).toBe(true)
+    // One step per reader, as before: asking again happens inside it.
+    expect(step.ids.filter(i => i.startsWith('review-review-'))).toEqual(['review-review-logic', 'review-review-security', 'review-review-effects'])
     const review = await node(runId, 'review')
     expect(review.summary).not.toBe(strings.review.noProblems)
     expect(review.summary).toContain(strings.review.someUnreadable(2))
     const approve = (await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary as string
     expect(approve).toContain(strings.review.someUnreadable(2))
     expect(approve).not.toBe(strings.review.approve.clean)
+  })
+
+  test('an answer read when asked again counts as the reviewer\'s verdict, and the task does not stop for it', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const tries = new Map<Focus, number>()
+    const { provider } = reviewers(focus => {
+      tries.set(focus, (tries.get(focus) ?? 0) + 1)
+      return focus !== 'effects' && tries.get(focus) === 1 ? unreadable : says()
+    })
+    await drive(runId, provider, dir, base)
+    expect((await payloads(runId, 'node.reviewed', 'review')).map(p => [p.focus, p.verdict])).toEqual([['logic', 'ok'], ['security', 'ok'], ['effects', 'ok']])
+    expect((await payloads(runId, 'node.review_unreadable', 'review')).map(p => [p.focus, p.retried])).toEqual([['logic', true], ['security', true]])
+    const review = await node(runId, 'review')
+    expect(review.summary).toBe(strings.review.noneFound(3))
+    expect((await payloads(runId, 'node.completed', 'review')).at(-1)!.unreadable).toBe(0)
+  })
+
+  test('the reason and the answer stay off the card and out of the event bar', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const { provider } = reviewers(() => unreadable)
+    await drive(runId, provider, dir, base)
+    const steps = (await payloads(runId, 'node.step', 'review')).map(p => String(p.text))
+    expect(steps.some(t => t.includes('Looks great!') || t.includes('no_json'))).toBe(false)
   })
 
   test('when no answer could be read, Approve does not say the review was clean', async () => {

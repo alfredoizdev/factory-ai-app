@@ -26,7 +26,7 @@ import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
 import { claudeProvider } from '@/providers/claude'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { demoProvider } from '@/providers/demo'
-import type { AgentExecutionInput, AgentProvider, VerifierMiss } from '@/providers/types'
+import type { AgentExecutionInput, AgentProvider, ReviewMiss, VerifierMiss } from '@/providers/types'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
 
@@ -127,7 +127,8 @@ export type Workspace = {
   /** Rules, decisions and core areas this task was given when it started. */
   standing?: Standing[]
   /** A review block: which reader this call is, and what it is told besides the request. */
-  review?: { focus: Focus; builderSummary?: string; since?: { paths: string[]; diff: string; more?: number } }
+  /** `reminder`: this reader is asked again after an answer the app could not read. */
+  review?: { focus: Focus; builderSummary?: string; since?: { paths: string[]; diff: string; more?: number }; reminder?: true }
 }
 export type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
 
@@ -249,7 +250,7 @@ export function outcomeOf(state: string): Outcome['outcome'] | null {
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss }
+export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
 export type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
@@ -310,6 +311,7 @@ export async function runAttempt(
               ...(workspace.jobs ? { jobs: workspace.jobs } : {}),
               ...(workspace.review.builderSummary ? { builderSummary: workspace.review.builderSummary } : {}),
               ...(workspace.review.since ? { reviewSince: workspace.review.since } : {}),
+              ...(workspace.review.reminder ? { reviewReminder: true } : {}),
             }
           : {}),
       }
@@ -317,7 +319,7 @@ export async function runAttempt(
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') await onStep(ev.text)
         else if (ev.type === 'evidence') onEvidence(ev.data)
-        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}), ...(ev.noRepro ? { noRepro: ev.noRepro } : {}) }
+        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}), ...(ev.noRepro ? { noRepro: ev.noRepro } : {}), ...(ev.unreadable ? { unreadable: ev.unreadable } : {}) }
         else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
       }
       return { kind: 'ended' }

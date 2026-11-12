@@ -10,7 +10,6 @@ import { addEntry, corePaths, standingFor, touchesCore } from '@/engine/register
 import { corrected, makeCopy as realMakeCopy, removeCopy, reproduced, runRepro as realRunRepro, type NoRepro, type Repro, type ReproRun } from '@/engine/repro'
 import {
   APPROVAL_WAIT,
-  MAX_ATTEMPTS,
   MAX_IGNORED_DECISIONS,
   isCancelled,
   canRetry,
@@ -564,12 +563,16 @@ async function builderSummaryOf(ctx: Context): Promise<string | undefined> {
   return row?.summary ? clip(redact(row.summary), SUMMARY_MAX) : undefined
 }
 
-/** One reader: up to MAX_ATTEMPTS tries, its steps on the shared node, its verdict recorded with its focus. */
+/**
+ * One reader: up to MAX_ATTEMPTS tries, its steps on the shared node, its verdict recorded with its focus. An answer the
+ * app could not read is asked for once more, with a reminder of the form it reads, inside this same step; only a second
+ * unreadable answer leaves this reader's part of the review missing.
+ */
 async function readFor(ctx: Context, nodeId: string, focus: Focus, since: { paths: string[]; diff: string; more?: number } | null): Promise<Reading> {
   const { runId, plan, block, deps } = ctx
   const provider = deps.resolveProvider(plan.providerId)
   const builderSummary = await builderSummaryOf(ctx)
-  const workspace: Workspace = { ...ctx.workspace, review: { focus, ...(builderSummary ? { builderSummary } : {}), ...(since ? { since } : {}) } }
+  const review = { focus, ...(builderSummary ? { builderSummary } : {}), ...(since ? { since } : {}) }
   const say = (text: string, attempt: number, extra: Record<string, unknown> = {}) =>
     withTx(runId, async tx => {
       const node = await freshNode(nodeId, tx)
@@ -579,11 +582,15 @@ async function readFor(ctx: Context, nodeId: string, focus: Focus, since: { path
     })
 
   await say(strings.review.reading[focus], 1)
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  let reminded = false
+  // `attempt` numbers every call of this reader on the card; `failures` counts only the calls that did not finish.
+  for (let attempt = 1, failures = 1; ; attempt++) {
+    const workspace: Workspace = { ...ctx.workspace, review: reminded ? { ...review, reminder: true } : review }
     const result = await runAttempt(provider, block, plan.request, runId, workspace, null, [], text => say(text, attempt), () => {})
     if (result.kind === 'cancelled') return { outcome: 'cancelled' }
     if (result.kind === 'done') {
-      return withTx(runId, async (tx): Promise<Reading> => {
+      const again = !reminded
+      const reading = await withTx(runId, async (tx): Promise<Reading | 'again'> => {
         const node = await freshNode(nodeId, tx)
         if (node.state !== 'running') return { outcome: outcomeOf(node.state) ?? 'cancelled' }
         await recordDoneFacts(tx, node, result)
@@ -591,20 +598,29 @@ async function readFor(ctx: Context, nodeId: string, focus: Focus, since: { path
           await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reviewed', payload: { blockId: block.id, focus, verdict: result.review.verdict, findings: result.review.findings } }, tx)
           return { review: result.review }
         }
+        // For a developer, never shown: why the answer gave no verdict and how it ended (already redacted and clipped).
+        const why = result.unreadable ? { why: result.unreadable.why, answer: result.unreadable.answer } : {}
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.review_unreadable', payload: { blockId: block.id, focus, attempt, ...why, ...(again ? { retried: true } : {}) } }, tx)
+        if (again) {
+          await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: attempt + 1, text: strings.review.askedAgain, retry: true } }, tx)
+          return 'again'
+        }
         // An answer without a verdict is said on the card and kept on the record: this reader's part of the review is missing.
         await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: strings.review.unreadable } }, tx)
-        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.review_unreadable', payload: { blockId: block.id, focus } }, tx)
         return { review: null, unreadable: true }
       })
+      if (reading !== 'again') return reading
+      reminded = true
+      continue
     }
     const failure = describeFailure(result, block)
-    if (canRetry(attempt, result)) {
+    if (canRetry(failures, result)) {
+      failures++
       await say(strings.run.retrying, attempt + 1, { retry: true, previousCause: failure.cause, previousMessage: failure.message, ...(failure.detail ? { previousDetail: failure.detail } : {}) })
       continue
     }
     return { failed: { ...failure, messageSource: result.kind === 'error' ? result.source : 'system', attempt } }
   }
-  return { outcome: 'failed' } // unreachable: the loop always returns
 }
 
 async function failReview(runId: string, nodeId: string, f: Extract<Reading, { failed: unknown }>['failed']): Promise<Outcome['outcome']> {

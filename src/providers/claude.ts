@@ -8,7 +8,7 @@ import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
 import { parsePlan, workList } from '@/engine/plan'
 import { MAX_REPRO_BYTES, checkRepro, parseVerifierAnswer, type NoRepro } from '@/engine/repro'
-import { parseReview } from '@/engine/review'
+import { checkReview } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
 import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
 import { mapStreamLine } from '@/providers/claude-stream'
@@ -195,6 +195,9 @@ async function* runFixer(input: AgentExecutionInput, controls: ExecutionControls
   yield* runClaude(deps, input.workdir, withoutMcp(claudeArgs(prompt, undefined, input.model)), controls)
 }
 
+/** The reviewer's prompt, with the reminder of the one form the app reads when it is asked a second time. */
+const withReminder = (prompt: string, reminder?: boolean): string => (reminder ? `${prompt}\n\n${strings.providers.claude.reviewReminder}` : prompt)
+
 async function* runReviewer(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
   if (!input.workdir) {
     yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
@@ -211,7 +214,7 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
   const workdir = input.workdir
   const before = deps.snapshot(workdir)
   for await (const ev of runClaude(deps, workdir, withoutMcp(reviewerArgs(
-    strings.providers.claude.reviewPrompt({
+    withReminder(strings.providers.claude.reviewPrompt({
       request: input.request,
       baseCommit: input.baseCommit,
       focus: input.focus,
@@ -219,7 +222,7 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
       builderSummary: input.builderSummary,
       standing: input.standing,
       since: input.reviewSince,
-    }),
+    }), input.reviewReminder),
     input.model,
   )), controls)) {
     if (ev.type !== 'done') {
@@ -232,12 +235,14 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
       yield { type: 'error', source: 'system', message: strings.review.reviewerChangedFiles }
       return
     }
-    const read = parseReview(ev.fullText ?? ev.summary)
-    if (!read) {
-      yield { type: 'done', source: 'system', summary: strings.review.unreadable, usage: ev.usage }
+    const text = ev.fullText ?? ev.summary
+    const read = checkReview(text)
+    if (!('review' in read)) {
+      // What a developer needs to see why there was no verdict: the end of the answer, where the JSON object should be.
+      yield { type: 'done', source: 'system', summary: strings.review.unreadable, usage: ev.usage, unreadable: { why: read.why, answer: redact(text).slice(-ANSWER_KEPT) } }
       return
     }
-    const review = cleanReview(read)
+    const review = cleanReview(read.review)
     // The findings travel in `review`, and the list under the card shows them; the card's own lines carry no file or line.
     const summary = review.verdict === 'ok' ? strings.review.noProblems : strings.review.problems(review.findings.length)
     // The verdict is the reviewer's own claim about the code, so it is marked as the provider's words.

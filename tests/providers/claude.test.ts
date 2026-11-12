@@ -400,6 +400,38 @@ describe('the reviewer', () => {
     expect((events[0] as { review?: unknown }).review).toBeUndefined()
   })
 
+  test('an answer without a verdict carries why, and the end of the answer, redacted and clipped, for a developer', async () => {
+    const answerOf = async (result: string) => {
+      const child = fakeChild()
+      const provider = createClaudeProvider({ spawn: (() => child) as never, snapshot: () => 'same' })
+      const pending = collect(provider.execute(review, { signal: signal() }))
+      finish(child, [{ type: 'result', is_error: false, result }])
+      return (await pending)[0] as { summary: string; unreadable?: { why: string; answer: string } }
+    }
+    expect((await answerOf('Looks great!')).unreadable).toEqual({ why: 'no_json', answer: 'Looks great!' })
+    expect((await answerOf('{"verdict":"changes","findings":[]}')).unreadable?.why).toBe('changes_without_findings')
+    const long = await answerOf(`${'x'.repeat(5000)} token ghp_abcdefghijklmnopqrstuvwxyz0123456789 {"findings":[]}`)
+    expect(long.unreadable?.why).toBe('no_verdict')
+    expect(long.unreadable!.answer.length).toBeLessThanOrEqual(1000)
+    expect(long.unreadable!.answer).toContain('{"findings":[]}')
+    expect(long.unreadable!.answer).not.toContain('ghp_')
+    expect(long.summary).toBe(strings.review.unreadable)
+    const read = await answerOf('Fine. {"verdict":"ok","findings":[]}')
+    expect(read).not.toHaveProperty('unreadable')
+  })
+
+  test('a reviewer asked again is reminded, after its prompt, of the one form the app reads', async () => {
+    const child = fakeChild()
+    let prompt = ''
+    const provider = createClaudeProvider({ spawn: ((_c: string, args: string[]) => { prompt = args[1]!; return child }) as never, snapshot: () => 'same' })
+    const pending = collect(provider.execute({ ...review, focus: 'logic', reviewReminder: true }, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result: '{"verdict":"ok","findings":[]}' }])
+    await pending
+    expect(prompt.startsWith(strings.providers.claude.reviewPrompt({ request: 'make it blue', baseCommit: 'abc123', focus: 'logic' }))).toBe(true)
+    expect(prompt.endsWith(strings.providers.claude.reviewReminder)).toBe(true)
+    expect(strings.providers.claude.reviewReminder).toContain('{"verdict":"ok","findings":[]}')
+  })
+
   test('without a base commit there is nothing to review against', async () => {
     const provider = createClaudeProvider({ spawn: vi.fn() as never, snapshot: () => 'same' })
     expect(await collect(provider.execute({ ...review, baseCommit: undefined }, { signal: signal() }))).toEqual([

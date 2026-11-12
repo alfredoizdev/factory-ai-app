@@ -2,6 +2,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { events, nodeRuns } from '@/db/schema'
 import { appendEventSync, lockRun } from '@/engine/events'
+import { jsonObjectsFromEnd } from '@/engine/json-objects'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
 
@@ -32,19 +33,11 @@ export function cleanJobs(raw: unknown): Job[] | null {
   return jobs.length > 0 ? jobs : null
 }
 
-/** The planner's jobs, from the last JSON object with "jobs" in its answer; null when there is none. */
+/** The planner's jobs, from the last JSON object with usable "jobs" in its answer; null when there is none. */
 export function parsePlan(text: string): Job[] | null {
-  const candidates = [...text.matchAll(/\{[\s\S]*?"jobs"[\s\S]*\}/g)].map(m => m[0])
-  for (const raw of candidates.reverse()) {
-    // The greedy match may run past the object's end into later text: try shorter endings until one parses.
-    for (let end = raw.length - 1; end > 0; end = raw.lastIndexOf('}', end - 1)) {
-      try {
-        const jobs = cleanJobs((JSON.parse(raw.slice(0, end + 1)) as { jobs?: unknown }).jobs)
-        if (jobs) return jobs
-      } catch {
-        // not this ending
-      }
-    }
+  for (const value of jsonObjectsFromEnd(text)) {
+    const jobs = cleanJobs(value.jobs)
+    if (jobs) return jobs
   }
   return null
 }

@@ -249,6 +249,7 @@ export const strings = {
     checking: (n: number, of: number) => `Checking problem ${n} of ${of}.`,
     fixing: 'Fixing it.',
     unreadable: 'The reviewer answered, but not in the form asked for, so its review was not used as a verdict.',
+    askedAgain: 'The app could not read the reviewer\'s answer, so it asked the reviewer once more to answer in the form it reads.',
     // Said with the card's closing sentence, and on Approve: a reader that gave no verdict is never counted as finding nothing.
     someUnreadable: (n: number) =>
       n === 1 ? "One reviewer's answer could not be read, so its part of the review is missing." : `${n} reviewers' answers could not be read, so their part of the review is missing.`,
@@ -1291,6 +1292,12 @@ export const strings = {
           '{"verdict":"changes","findings":[{"type":"logic","file":"path/to/file","line":12,"problem":"what is wrong and how to fix it","severity":"medium","affects":["what else it touches"],"decisions":[]}]}',
           'file is the path relative to this directory, as git shows it (src/app/page.tsx, never an absolute path or ./src/app/page.tsx).',
         ].join('\n'),
+      // Read by the model, not shown to the person: added after the review prompt when the reviewer is asked a second time.
+      reviewReminder: [
+        'Your last answer could not be read by the app, so you are asked again.',
+        'Do the same review, then end your reply with exactly one JSON object in the form above, and nothing after it.',
+        'When there is nothing to fix, the object is: {"verdict":"ok","findings":[]}',
+      ].join('\n'),
       noBase: 'This run does not know where its change started, so it cannot be reviewed.',
       noFinding: 'There is no reported problem to check, so nothing was checked.',
       verified: 'The checker wrote a script that shows the problem.',

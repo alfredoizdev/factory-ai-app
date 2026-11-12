@@ -2,6 +2,8 @@
 // "AI says", never as a measurement. It is read from a small JSON object the reviewer is asked to end with; anything
 // that is not that object is not turned into a verdict.
 
+import { jsonObjectsFromEnd } from '@/engine/json-objects'
+
 export type Focus = 'logic' | 'security' | 'effects'
 export const FOCUSES: readonly Focus[] = ['logic', 'security', 'effects']
 export type FindingType = 'logic' | 'security' | 'effect'
@@ -33,23 +35,26 @@ export function focusesFor(risk: 'low' | 'high'): Focus[] {
   return risk === 'high' ? [...FOCUSES] : ['logic']
 }
 
-/** The reviewer's verdict and findings, from the last JSON object in its answer; null when there is none. */
+/** Why an answer is no verdict: no JSON object in it, no object with a verdict, or "changes" with nothing to change. */
+export type UnreadableReview = 'no_json' | 'no_verdict' | 'changes_without_findings'
+
+/** The reviewer's verdict and findings, from the last JSON object with a verdict in its answer; null when there is none. */
 export function parseReview(text: string): Review | null {
-  const candidates = [...text.matchAll(/\{[\s\S]*?"verdict"[\s\S]*\}/g)].map(m => m[0])
-  for (const raw of candidates.reverse()) {
-    // The greedy match may run past the object's end into later text: try shorter endings until one parses.
-    for (let end = raw.length; end > 0; end = raw.lastIndexOf('}', end - 1)) {
-      try {
-        const value = JSON.parse(raw.slice(0, end + (raw[end] === '}' ? 1 : 0))) as { verdict?: unknown; findings?: unknown }
-        const review = validReview(value)
-        if (review) return review
-      } catch {
-        // not this ending
-      }
-      if (end <= 0) break
-    }
+  const checked = checkReview(text)
+  return 'review' in checked ? checked.review : null
+}
+
+/** The verdict, or why there is none. Prose, code with braces or a code fence around the object do not matter. */
+export function checkReview(text: string): { review: Review } | { why: UnreadableReview } {
+  const objects = jsonObjectsFromEnd(text)
+  if (objects.length === 0) return { why: 'no_json' }
+  let why: UnreadableReview = 'no_verdict'
+  for (const value of objects) {
+    const review = validReview(value)
+    if (review) return { review }
+    if (value.verdict === 'changes') why = 'changes_without_findings'
   }
-  return null
+  return { why }
 }
 
 function validReview(value: { verdict?: unknown; findings?: unknown }): Review | null {

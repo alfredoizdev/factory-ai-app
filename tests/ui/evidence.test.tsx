@@ -324,13 +324,15 @@ test('the event bar has no empty lines: reports checked are said in words, and a
       events={[
         { sequence: 1, type: 'node.findings_checked', payload: { blockId: review.id, round: 1, reported: 2, refuted: 0, merged: 0 } },
         { sequence: 2, type: 'node.finding_resolved', payload: { blockId: review.id, findingId: 'f', state: 'corrected', outcome: 'done' } },
-        { sequence: 3, type: 'node.review_unreadable', payload: { blockId: review.id, focus: 'logic' } },
+        { sequence: 3, type: 'node.review_unreadable', payload: { blockId: review.id, focus: 'logic', attempt: 1, why: 'no_json', answer: 'RAW-ANSWER-TAIL', retried: true } },
       ]}
     />,
   )
   const lines = screen.getAllByTestId('event-line')
   expect(lines).toHaveLength(1)
   for (const l of lines) expect(l.textContent?.replace(review.label, '').replace(/◎.*/, '').trim()).not.toBe('')
+  expect(document.body.textContent).not.toContain('RAW-ANSWER-TAIL')
+  expect(document.body.textContent).not.toContain('no_json')
 })
 
 test('one line per reviewer says which reviewer it was', async () => {

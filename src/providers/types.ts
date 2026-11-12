@@ -1,7 +1,7 @@
 import type { BlockKind } from '@/domain/graph'
 import type { Job } from '@/engine/plan'
 import type { NoRepro, Repro } from '@/engine/repro'
-import type { FindingType, Focus, Review } from '@/engine/review'
+import type { FindingType, Focus, Review, UnreadableReview } from '@/engine/review'
 import type { TestRun } from '@/engine/test-runner'
 import type { Standing } from '@/engine/register'
 
@@ -11,6 +11,8 @@ import type { Standing } from '@/engine/register'
 
 /** Why a verifier gave no usable repro, and the last part of what it answered (already redacted). */
 export type VerifierMiss = { why: NoRepro; answer: string }
+/** Why a reviewer's answer gave no verdict, and the last part of what it answered (already redacted). */
+export type ReviewMiss = { why: UnreadableReview; answer: string }
 
 export type AgentEvent =
   | { type: 'step'; text: string }
@@ -23,7 +25,8 @@ export type AgentEvent =
   // `repro`: a verifier's reproduction (null: it did not reproduce the problem); `refuted`: it showed the cited code
   // does not do what the finding says. Both are the model's claims until the app runs the repro itself.
   // `noRepro`: why a verifier's answer gave no repro, with the end of that answer; for a developer, never shown to the person.
-  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss }
+  // `unreadable`: the same for a reviewer's answer that gave no verdict.
+  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
   // Same rule for a failure: 'system' marks a sentence the app composed from facts. `cause` names a failure the
   // executor must not retry (re-running failing tests twice proves nothing new).
   | { type: 'error'; message: string; source?: 'provider' | 'system'; cause?: 'tests_failed' }
@@ -68,6 +71,8 @@ export type AgentExecutionInput = {
   repro?: Repro
   /** A review block after fixes were made: the paths that changed since the first review (at most 200, `more` counts the rest) and that change as a unified diff. */
   reviewSince?: { paths: string[]; diff: string; more?: number }
+  /** A review block, asked again after an answer the app could not read: the prompt ends with a reminder of the form it reads. */
+  reviewReminder?: boolean
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

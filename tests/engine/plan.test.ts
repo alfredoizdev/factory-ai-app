@@ -22,6 +22,11 @@ test('a plan is read from the planner\'s last JSON object, cleaned and bounded',
   expect(workList([{ title: 'A', done: ['x'] }, { title: 'B', done: [] }])).toBe('1. A\n   - Done when: x\n2. B')
 })
 
+test('a plan is read even when the planner quoted code with braces before it', () => {
+  const text = 'The page renders `<p>{sum(2, 2)}</p>` today.\n```json\n{"jobs":[{"title":"Add the sum","done":["shows 4"]}]}\n```'
+  expect(parsePlan(text)).toEqual([{ title: 'Add the sum', done: ['shows 4'] }])
+})
+
 class Parked extends Error {}
 
 async function newRun(): Promise<string> {
