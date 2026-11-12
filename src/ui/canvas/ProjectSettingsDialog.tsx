@@ -30,7 +30,7 @@ export function ProjectSettingsDialog({ settings, onClose, onSaved }: { settings
         style={{ width: 'min(480px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', overflowY: 'auto', display: 'grid', gap: 12, padding: 20, background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.55)', outline: 'none' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ margin: 0, fontSize: 17 }}>{strings.projectSettings.title}</h2>
+          <h2 className="factory-display" style={{ margin: 0, fontSize: 22 }}>{strings.projectSettings.title}</h2>
           <button type="button" aria-label={strings.setup.close} onClick={onClose} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 16 }}>
             ✕
           </button>

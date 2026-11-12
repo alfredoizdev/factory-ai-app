@@ -32,6 +32,10 @@ test('reads the folder, shows what it found, and creates the project with the ch
   expect(found).toHaveTextContent('Next.js')
   expect(found).toHaveTextContent('me/shop')
   expect(found).toHaveTextContent('Vercel')
+  // Found things carry a tick; nothing here is required and missing, so creating is allowed.
+  expect(found.querySelectorAll('[data-level="required"]').length).toBe(1) // only the legend's sample
+  expect(screen.getByTestId('check-folder')).toHaveAttribute('data-checked', 'true')
+  expect(screen.getByTestId('check-folder')).toHaveTextContent(strings.setup.checked)
   expect(screen.getByLabelText(strings.setup.testCommand)).toHaveValue('pnpm test')
   // Lint and Build are suggested; untick Build.
   fireEvent.click(screen.getByRole('checkbox', { name: new RegExp(strings.setup.checkLabel.build) }))
@@ -47,4 +51,23 @@ test('a folder that is not a repository says why', async () => {
   fireEvent.change(screen.getByLabelText(strings.setup.folder), { target: { value: '/tmp' } })
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.setup.read) }))
   expect(await screen.findByRole('alert')).toHaveTextContent(strings.settings.notRepo)
+})
+
+test('what is missing is told apart: optional things in yellow never block, a missing main branch in red does', async () => {
+  const bare = { root: '/Users/me/bare', name: 'bare', packageManager: null, framework: null, commands: {}, defaultBranch: null, github: { repo: null, gh: 'no-remote' }, deploy: [] }
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(bare))))
+  render(<AddProjectDialog onClose={() => {}} onCreated={() => {}} />)
+  fireEvent.change(screen.getByLabelText(strings.setup.folder), { target: { value: '/Users/me/bare' } })
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.setup.read) }))
+  const found = await screen.findByTestId('setup-found')
+  const level = (label: string) => [...found.querySelectorAll('div[data-level]')].find(r => r.textContent?.includes(label))?.getAttribute('data-level')
+  expect(level(strings.setup.gitRepo)).toBe('ok')
+  expect(level(strings.setup.github)).toBe('optional')
+  expect(level(strings.setup.tests)).toBe('optional')
+  expect(level(strings.setup.mainBranch)).toBe('required')
+  expect(screen.getByTestId('fix-required')).toHaveTextContent(strings.setup.fixRequired)
+  expect(screen.getByRole('button', { name: new RegExp(strings.setup.create) })).toBeDisabled()
+  // Changing the folder by hand: the button asks to check it again.
+  fireEvent.change(screen.getByLabelText(strings.setup.folder), { target: { value: '/Users/me/other' } })
+  expect(screen.getByTestId('check-folder')).toHaveAttribute('data-checked', 'false')
 })

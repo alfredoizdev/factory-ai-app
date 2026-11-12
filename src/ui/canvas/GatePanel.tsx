@@ -283,7 +283,7 @@ function ChangesModal({ files, diff, truncated, onClose }: { files: Review['file
       >
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${theme.border}` }}>
           <div style={{ display: 'grid', gap: 2 }}>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>{strings.gate.changesTitle}</div>
+            <div className="factory-display" style={{ fontSize: 19 }}>{strings.gate.changesTitle}</div>
             <div style={{ fontSize: 12, color: theme.dim, fontFamily: MONO }}>
               {files.map(f => `${f.path} +${f.added} −${f.removed}`).join('   ·   ')}
             </div>

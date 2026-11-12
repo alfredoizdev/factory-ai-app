@@ -162,7 +162,7 @@ function BeforeAfterModal({ runId, state, at, onClose }: { runId: string; state:
       >
         <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${theme.border}` }}>
           <div style={{ display: 'grid', gap: 2, flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>{strings.snapshots.beforeAfter}</div>
+            <div className="factory-display" style={{ fontSize: 19 }}>{strings.snapshots.beforeAfter}</div>
             <div style={{ fontSize: 12, color: theme.dim }}>
               {state.route ? `${strings.snapshots.page(state.route)} · ` : ''}
               {strings.snapshots.what}
