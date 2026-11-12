@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
@@ -335,6 +335,16 @@ describe('runRepro', () => {
   test('the grace after the timeout defaults to two seconds', () => {
     expect(REPRO_GRACE_MS).toBe(2000)
   })
+
+  test.skipIf(process.getuid?.() === 0)('a copy that cannot be removed does not change what runRepro returns', async () => {
+    const root = tmp()
+    try {
+      const r = await runRepro(script('chmod 555 .. ; echo MARKER-XYZ-1; exit 1'), repo(), live, { root })
+      expect(reproduced(r)).toBe(true)
+    } finally {
+      chmodSync(root, 0o755)
+    }
+  })
 })
 
 describe('a copy of a task worktree', () => {
@@ -389,6 +399,40 @@ describe('a copy of a task worktree', () => {
     try {
       expect(statSync(join(copy, '.git')).isDirectory()).toBe(true)
       expect(out(copy, 'status', '--porcelain')).toBe('')
+    } finally {
+      rmSync(copy, { recursive: true, force: true })
+    }
+  })
+  test("the person's own git settings do not reach the copy's git: no hooks run and signing cannot break it", async () => {
+    const hooks = tmp()
+    const sentinel = join(tmp(), 'ran')
+    writeFileSync(join(hooks, 'post-commit'), `#!/bin/sh\necho ran > ${sentinel}\n`, { mode: 0o755 })
+    const config = join(tmp(), 'gitconfig')
+    writeFileSync(config, `[core]\n\thooksPath = ${hooks}\n[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /nonexistent/gpg\n`)
+    const { wt } = worktree()
+    const saved = process.env.GIT_CONFIG_GLOBAL
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const copy = await makeCopy(wt, tmp())
+      rmSync(copy, { recursive: true, force: true })
+      expect(existsSync(sentinel)).toBe(false)
+    } finally {
+      if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = saved
+    }
+  })
+
+  test('a nested .git pointer file is removed from the copy and kept in the original', async () => {
+    const dir = repo()
+    mkdirSync(join(dir, 'vendor/lib'), { recursive: true })
+    writeFileSync(join(dir, 'vendor/lib/.git'), `gitdir: ${dir}/.git\n`)
+    mkdirSync(join(dir, 'vendor/own/.git'), { recursive: true })
+    writeFileSync(join(dir, 'vendor/own/.git/HEAD'), 'ref: refs/heads/x\n')
+    const copy = await makeCopy(dir, tmp())
+    try {
+      expect(existsSync(join(copy, 'vendor/lib/.git'))).toBe(false)
+      expect(existsSync(join(copy, 'vendor/own/.git/HEAD'))).toBe(true)
+      expect(existsSync(join(dir, 'vendor/lib/.git'))).toBe(true)
     } finally {
       rmSync(copy, { recursive: true, force: true })
     }

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { lstatSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import { ulid } from 'ulid'
 import { cloneTree } from '@/engine/base'
@@ -98,13 +98,37 @@ export function parseRepro(text: string, readFile: (path: string) => string | nu
 function copyGitEnv(root: string): NodeJS.ProcessEnv {
   const env = { ...process.env }
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_NAMESPACE']) delete env[k]
-  return { ...env, GIT_CEILING_DIRECTORIES: root }
+  // The person's own git settings (hooks, signing, templates) are not for a throwaway copy.
+  return { ...env, GIT_CEILING_DIRECTORIES: root, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+}
+
+/** Removes a throwaway copy. Never throws: a stray process still writing into it must not turn a result into a crash. */
+function removeCopy(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  } catch {
+    // left behind; nothing useful can be done about it here
+  }
+}
+
+/** Removes every `.git` file (a pointer to some repository's data) below `dir`; real `.git` folders are self-contained. */
+function removeGitPointers(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isSymbolicLink()) continue
+    if (entry.isDirectory()) {
+      if (entry.name !== 'node_modules') removeGitPointers(path)
+    } else if (entry.isFile() && entry.name === '.git') {
+      rmSync(path, { force: true })
+    }
+  }
 }
 
 /**
  * A fresh throwaway copy of the working copy, in `root`. The caller removes it. A task's working copy is a git
  * worktree whose `.git` file leads to the real repository's data, so the copy's `.git` is replaced by a repository of
- * its own: nothing a repro runs with git can reach the real task. If that cannot be done no copy is handed out.
+ * its own, and any nested `.git` pointer file (a submodule, a nested worktree) is dropped: nothing a repro runs with
+ * git can reach the real task. If that cannot be done no copy is handed out.
  */
 export async function makeCopy(workdir: string, root: string = VERIFY_ROOT): Promise<string> {
   const copy = join(root, ulid())
@@ -112,12 +136,16 @@ export async function makeCopy(workdir: string, root: string = VERIFY_ROOT): Pro
   try {
     cloneTree(workdir, copy)
     rmSync(join(copy, '.git'), { recursive: true, force: true })
+    removeGitPointers(copy)
     const git = (...args: string[]) => execFileSync('git', args, { cwd: copy, env: copyGitEnv(root), stdio: 'ignore', timeout: 120_000 })
-    git('init', '-q')
+    git('init', '-q', '--template=')
     git('add', '-A')
-    git('-c', 'user.name=factory', '-c', 'user.email=factory@local', 'commit', '-qm', 'base', '--no-verify', '--allow-empty')
+    git(
+      '-c', 'user.name=factory', '-c', 'user.email=factory@local', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null',
+      'commit', '-qm', 'base', '--no-verify', '--allow-empty',
+    )
   } catch (e) {
-    rmSync(copy, { recursive: true, force: true })
+    removeCopy(copy)
     throw e
   }
   return copy
@@ -206,7 +234,7 @@ export async function runRepro(repro: Repro, workdir: string, signal: AbortSigna
   } finally {
     clearTimeout(timer)
     if (onAbort) signal.removeEventListener('abort', onAbort)
-    if (copy) rmSync(copy, { recursive: true, force: true })
+    if (copy) removeCopy(copy)
   }
 }
 
