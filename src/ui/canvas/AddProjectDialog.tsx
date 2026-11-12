@@ -156,6 +156,11 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
             <label style={{ display: 'grid', gap: 4, fontSize: 12.5, color: theme.dim }}>
               {s.testCommand}
               <input value={testCommand} onChange={e => setTestCommand(e.target.value)} placeholder={s.noTests} spellCheck={false} style={{ ...field, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }} />
+              {!analysis.commands.test && testCommand.trim() === '' && (
+                <span data-testid="no-tests-hint" style={{ fontSize: 12, lineHeight: 1.45, color: theme.dim }}>
+                  {s.noTestsFound(EXTRA.some(c => analysis.commands[c]))}
+                </span>
+              )}
             </label>
             {EXTRA.some(c => analysis.commands[c]) && (
               <div style={{ display: 'grid', gap: 6 }}>

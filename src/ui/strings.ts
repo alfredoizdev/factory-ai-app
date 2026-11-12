@@ -73,6 +73,10 @@ export const strings = {
     noDeploy: 'nothing found in the repository',
     testCommand: 'Test command',
     noTests: 'none: no tests will run',
+    noTestsFound: (otherChecks: boolean) =>
+      otherChecks
+        ? 'This project has no tests of its own (no "test" script in its package.json). That is fine: the checks ticked below still verify each change. If you add tests later, write their command here.'
+        : 'This project has no tests of its own (no "test" script in its package.json). Changes will be reviewed, but nothing will verify them automatically. If you add tests later, write their command here.',
     extraChecks: 'Also check each change with:',
     checkLabel: { test: 'Tests', lint: 'Lint', build: 'Build', typecheck: 'Type check' },
     installNote: (pm: string | null) =>
