@@ -5,6 +5,7 @@ import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { projectNotes, projects, runs } from '@/db/schema'
 import { appendEventSync, type DbHandle, lockRun } from '@/engine/events'
+import { projectHere } from '@/engine/machine'
 import { SENSITIVE } from '@/engine/risk'
 import { strings } from '@/ui/strings'
 
@@ -241,7 +242,8 @@ export function normaliseCorePath(raw: string, repoPath: string | null): CorePat
 
 /** Marks core areas the person chose: one path they typed, or the files of a suggestion they confirmed. */
 export async function addCoreArea(projectId: string, a: { path?: string; paths?: string[]; area?: string }): Promise<Entry> {
-  const project = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, projectId)))[0]
+  // The folder this computer has for the project (per computer, not the column from before machines).
+  const project = await projectHere(projectId)
   if (!project) throw new CoreError(strings.memory.notFound)
   const given = a.paths ?? (a.path !== undefined ? [a.path] : [])
   const paths: string[] = []

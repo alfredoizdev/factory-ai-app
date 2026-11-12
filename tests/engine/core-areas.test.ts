@@ -6,6 +6,7 @@ import { db, migrateDb } from '@/db/client'
 import { projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { deleteNote, updateNote } from '@/engine/memory'
+import { setLocal } from '@/engine/machine'
 import { addCoreArea, candidatesFor, CoreError, corePaths, listRegister, normaliseCorePath, addEntry, touchesCore } from '@/engine/register'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import { eq } from 'drizzle-orm'
@@ -23,9 +24,11 @@ function repo(): string {
   writeFileSync(join(dir, 'package.json'), '{}\n')
   return dir
 }
+// As the real app has it: the shared row has no folder (projects.repo_path is not used any more); this computer's folder is its own row.
 async function project(repoPath: string | null = repo()): Promise<string> {
   const id = ulid()
-  await db.insert(projects).values({ id, projectId: id, name: 'p', createdAt: now(), repoPath })
+  await db.insert(projects).values({ id, projectId: id, name: 'p', createdAt: now() })
+  if (repoPath) await setLocal(id, { repoPath })
   return id
 }
 
@@ -89,6 +92,19 @@ describe('core areas', () => {
     expect(e.text).toBe(strings.memory.core.entryText('src/app/'))
     expect(e.number).toBe(1)
     expect(await corePaths(p)).toEqual(['src/app/'])
+  })
+  test('a path that is not in this computer\'s folder for the project is refused', async () => {
+    const p = await project()
+    await expect(addCoreArea(p, { path: 'does/not/exist' })).rejects.toThrow(strings.memory.core.notFound)
+    expect(await listRegister(p)).toEqual([])
+  })
+  test('a folder written in the wrong case is stored as git names it (where the disk ignores case)', async () => {
+    const dir = repo()
+    const p = await project(dir)
+    if (!existsSync(join(dir, 'SRC'))) return
+    expect((await addCoreArea(p, { path: 'SRC/App/' })).paths).toEqual(['src/app/'])
+    const moved = await addCoreArea(p, { path: 'package.json' })
+    expect((await updateNote(p, moved.id, { path: 'SRC/APP' }))!.paths).toEqual(['src/app/'])
   })
   test('a refused path throws the plain sentence and adds nothing; the same area twice is refused', async () => {
     const p = await project()

@@ -1,8 +1,9 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { projectNotes, projects, runs } from '@/db/schema'
+import { projectNotes, runs } from '@/db/schema'
 import { askClaude, type AskModel } from '@/engine/branch-name'
 import type { DbHandle } from '@/engine/events'
+import { projectHere } from '@/engine/machine'
 import { clip, redact } from '@/engine/redact'
 import { addEntry, CoreError, listRegister, MAX_GIVEN, normaliseCorePath, toEntry, type Entry, type EntryKind } from '@/engine/register'
 import { strings } from '@/ui/strings'
@@ -60,7 +61,7 @@ export async function updateNote(projectId: string, id: string, change: { text?:
   }
   if (change.enabled !== undefined) set.enabled = change.enabled
   if (change.path !== undefined && current.kind === 'core') {
-    const repoPath = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, projectId)))[0]?.repoPath ?? null
+    const repoPath = (await projectHere(projectId))?.repoPath ?? null
     const n = normaliseCorePath(change.path, repoPath)
     if (!n.ok) throw new CoreError(n.reason)
     const before = (JSON.parse(current.paths ?? '[]') as string[]).join(', ')
