@@ -42,6 +42,7 @@ type CardData = {
   /** Present on a card that can be taken out of the flow from the card itself. */
   onRemove?: () => void
   failedActions?: { onSee: () => void; onAgain?: () => void }
+  onDetails?: () => void
 }
 type CardNode = Node<CardData, 'block'>
 
@@ -99,6 +100,7 @@ function BlockNode({ data }: NodeProps<CardNode>) {
           onRemove={data.onRemove}
           width={data.cardWidth}
           failedActions={data.failedActions}
+          onDetails={data.onDetails}
         />
       ) : (
         <NotInRunCard block={data.block} selected={data.selected} issues={data.issues} onRemove={data.onRemove} />
@@ -225,10 +227,13 @@ export function Canvas({
   loading = false,
   overlay,
   onFailedClick,
+  onDetails,
   canRetry = false,
 }: {
   /** Asked from a block that failed: to see what went wrong, or to try again. */
   onFailedClick?: (what: 'see' | 'again') => void
+  /** While a run is on screen: opens the details of one of its blocks. */
+  onDetails?: (blockId: string) => void
   /** True when the failed run's work can be picked up again: the block then offers Try again. */
   canRetry?: boolean
   /** Drawn over the flow, inside its own area (never under the sidebar): the open task's title. */
@@ -501,6 +506,7 @@ export function Canvas({
           // added since, so a card showing what happened in the run never offers to delete itself.
           onRemove: canRemove(graph, block) && (!hasRun || !view) ? () => removeFromDraft(block.id) : undefined,
           failedActions,
+          onDetails: hasRun && onDetails && inRun(block) ? () => onDetails(block.id) : undefined,
         },
       }
     }),

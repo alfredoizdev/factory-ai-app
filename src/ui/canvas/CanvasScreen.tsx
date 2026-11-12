@@ -21,6 +21,7 @@ import { WorkingSpinner, type NodeRunView } from './BlockCard'
 import { CommandCard, type CardMode } from './CommandCard'
 import { imagesBusy, readyImageIds, type ComposerImage } from './Composer'
 import { Canvas, RUN_INPUT_ID } from './Canvas'
+import { BlockDetailsDialog } from './BlockDetails'
 import { useRunStream, type RunStatus } from './useRunStream'
 
 /** The run being watched. `blocks` are the frozen version it executes, not the draft. */
@@ -339,6 +340,8 @@ export function CanvasScreen({
   const failureActions = useRef<FailureActions | null>(null)
   // The failed run whose work can be picked up again, once the card has found out.
   const [retryFor, setRetryFor] = useState<string | null>(null)
+  // The block whose details window is open.
+  const [detailsOf, setDetailsOf] = useState<string | null>(null)
 
   // One card follows the run: ask, watch, decide, continue.
   // The run waits on the person at its plan, or at the human check: the card shows the one it waits at.
@@ -644,6 +647,7 @@ export function CanvasScreen({
           highlightedId={highlightedId}
           onFailedClick={mode === 'failed' ? what => (what === 'see' ? failureActions.current?.see() : failureActions.current?.again()) : undefined}
           canRetry={mode === 'failed' && retryFor === run?.runId}
+          onDetails={run ? setDetailsOf : undefined}
           flushRef={flushRef}
           loading={loading}
           overlay={
@@ -655,6 +659,9 @@ export function CanvasScreen({
           }
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
+        {run && detailsOf && (
+          <BlockDetailsDialog key={`${run.runId}-${detailsOf}`} runId={run.runId} blockId={detailsOf} label={run.blocks.find(b => b.id === detailsOf)?.label ?? detailsOf} onClose={() => setDetailsOf(null)} />
+        )}
       </div>
     </div>
   )

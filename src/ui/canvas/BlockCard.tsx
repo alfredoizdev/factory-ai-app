@@ -111,7 +111,10 @@ export function BlockCard({
   collapseLabel = strings.canvas.collapse,
   width,
   failedActions,
+  onDetails,
 }: {
+  /** Present on a block of a run: opens the window with everything recorded about it. */
+  onDetails?: () => void
   /** On a block that failed: reading what went wrong and, when the work can be picked up, trying again. */
   failedActions?: { onSee: () => void; onAgain?: () => void }
   block: Block
@@ -388,6 +391,22 @@ export function BlockCard({
               {strings.failure.tryAgain}
             </button>
           )}
+        </div>
+      )}
+
+      {onDetails && view.state !== 'queued' && !view.notBuilt && (
+        <div className="nodrag nopan" style={{ marginTop: 12, marginBottom: 12 }} onClick={e => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={onDetails}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: '#e6e9ef', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+          >
+            <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11v5.5M12 7.6v.1" />
+            </svg>
+            {strings.details.see}
+          </button>
         </div>
       )}
 
