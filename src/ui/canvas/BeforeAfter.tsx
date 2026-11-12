@@ -61,7 +61,7 @@ export function useSnapshots(runId: string, autoStart: boolean) {
  * Final results: a small before and after of the page the change touched, which opens large. While the pictures are
  * being taken it says so; if they could not be, it says why and offers to try again.
  */
-export function BeforeAfterCard({ runId, autoStart = false, compact = false }: { runId: string; autoStart?: boolean; compact?: boolean }) {
+export function BeforeAfterCard({ runId, autoStart = false, compact = false, canTake = true }: { runId: string; autoStart?: boolean; compact?: boolean; canTake?: boolean }) {
   const { state, error, take } = useSnapshots(runId, autoStart)
   const [open, setOpen] = useState(false)
   const close = useCallback(() => setOpen(false), [])
@@ -77,7 +77,7 @@ export function BeforeAfterCard({ runId, autoStart = false, compact = false }: {
       style={{ display: 'grid', gap: 6, marginTop: compact ? 10 : 0, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118' }}
     >
       <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: theme.dim }}>{strings.snapshots.title}</div>
-      {state.status === 'none' && !error && (
+      {state.status === 'none' && !error && canTake && (
         <button type="button" onClick={() => void take()} style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, background: 'none', border: 'none', color: '#93c5fd', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
           <CompareIcon /> {strings.snapshots.take}
         </button>

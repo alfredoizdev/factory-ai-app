@@ -24,6 +24,7 @@ type Review = Pick<ChangeUnderReview, 'hash' | 'files' | 'diff' | 'truncated'>
  * the change moved meanwhile the server refuses it and this panel reloads what is there now.
  */
 export function GateSection({
+  away = null,
   runId,
   risk,
   note,
@@ -32,6 +33,8 @@ export function GateSection({
   composer,
   onSent,
 }: {
+  /** The run's working copy is on another computer: no preview or pictures from here. */
+  away?: { machine: string | null } | null
   runId: string
   risk?: { level: 'low' | 'high'; reasons: string[] }
   /** The shared composer's text: the note recorded with a decision, and what a request for changes asks for. */
@@ -80,7 +83,8 @@ export function GateSection({
         return
       }
       setOutcome({
-        text: decision === 'approved' ? strings.gate.approved : decision === 'rejected' ? strings.gate.rejected : strings.gate.changesSent,
+        // Decided here for a task running on another computer: recorded, and that computer picks it up.
+        text: away ? strings.machine.sentElsewhere(away.machine) : decision === 'approved' ? strings.gate.approved : decision === 'rejected' ? strings.gate.rejected : strings.gate.changesSent,
         ok: true,
       })
       onSent()
@@ -188,10 +192,11 @@ export function GateSection({
       {expanded && review && <ChangesModal files={review.files} diff={review.diff} truncated={review.truncated} onClose={() => setExpanded(false)} />}
 
       {/* Before and after pictures, taken as soon as the change reaches the person. */}
-      {review && review.files.length > 0 && !decided && <BeforeAfterCard runId={runId} autoStart />}
+      {review && review.files.length > 0 && !decided && <BeforeAfterCard runId={runId} autoStart={!away} canTake={!away} />}
 
       {/* Only a run that changed files has something to preview. */}
-      {review && review.files.length > 0 && !decided && <PreviewButton runId={runId} />}
+      {review && review.files.length > 0 && !decided && !away && <PreviewButton runId={runId} />}
+      {away && !decided && <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.4 }}>{strings.machine.elsewhere(away.machine)}</div>}
 
       {/* Not yes, not no: the arrow in the box sends it back to the builder with what is written there. */}
       {!decided &&

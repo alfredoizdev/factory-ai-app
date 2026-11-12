@@ -8,6 +8,20 @@
       "when": 1794446290242,
       "tag": "0000_thin_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794448532089,
+      "tag": "0001_overjoyed_blacklash",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794448662139,
+      "tag": "0002_bouncy_silverclaw",
+      "breakpoints": true
     }
   ]
 }

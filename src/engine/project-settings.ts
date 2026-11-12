@@ -7,6 +7,7 @@ import { db } from '@/db/client'
 import { projects } from '@/db/schema'
 import { detectTestCommand } from '@/engine/test-runner'
 import { strings } from '@/ui/strings'
+import { projectHere, setLocal } from '@/engine/machine'
 
 // One project = one local repository (design §7). A path is only stored once it is shown to be a repository root
 // with at least one commit, because a worktree is made from it and an agent then works there unattended.
@@ -32,7 +33,7 @@ export type ProjectSettings = {
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
 export async function getProjectSettings(projectId: string): Promise<ProjectSettings> {
-  const row = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]
+  const row = await projectHere(projectId)
   if (!row) throw new ProjectSettingsError(strings.settings.noProject)
   return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk, currentBranch: branchOf(row.repoPath), defaultBranch: mainOf(row.repoPath) }
 }
@@ -79,7 +80,9 @@ export async function setProjectRepo(projectId: string, path: string): Promise<{
   const repoPath = validRepoRoot(path.trim())
   // A command the person chose is kept; the detected one is only a suggestion for an empty field.
   const testCommand = current.testCommand ?? detectTestCommand(repoPath)
-  await db.update(projects).set({ repoPath, testCommand }).where(eq(projects.id, projectId))
+  // The folder is this computer's; the test command is shared by every computer.
+  await db.update(projects).set({ testCommand }).where(eq(projects.id, projectId))
+  await setLocal(projectId, { repoPath })
   return { repoPath, testCommand }
 }
 

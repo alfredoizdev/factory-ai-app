@@ -24,6 +24,7 @@ import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { demoProvider } from '@/providers/demo'
 import type { AgentProvider } from '@/providers/types'
 import { strings } from '@/ui/strings'
+import { projectHere, setLocal } from '@/engine/machine'
 
 // The durable run. Every state change is written as an event in the same transaction as the row it changes;
 // nothing here keeps state the canvas could see that the event log does not hold. Each node is one step, so
@@ -833,7 +834,7 @@ async function loadPlan(runId: string): Promise<Plan> {
       ...ownCommand(b),
     }
   })
-  const project = (await db.select().from(projects).where(eq(projects.id, run.projectId)))[0]
+  const project = await projectHere(run.projectId)
   return {
     providerId: run.providerId,
     request: run.request,

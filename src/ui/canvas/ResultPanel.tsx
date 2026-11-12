@@ -24,7 +24,10 @@ export function ResultSection({
   composer,
   onFollowUp,
   onShipState,
+  away = null,
 }: {
+  /** The run's working copy is on another computer: saving, trying and sending it happen there. */
+  away?: { machine: string | null } | null
   runId: string
   /** The shared composer's text: what to change next, on top of this approved change. */
   note: string
@@ -154,8 +157,8 @@ export function ResultSection({
           ? d.nowSend
           : d.nowSave
   const onBranch = kept && delivery.current === delivery.branch
-  const canApply = !shipped && !delivery.delivered && !onBranch
-  const canPushOnly = kept && !shipped && !delivery.pushed
+  const canApply = !away && !shipped && !delivery.delivered && !onBranch
+  const canPushOnly = !away && kept && !shipped && !delivery.pushed
 
   return (
     <>
@@ -165,7 +168,12 @@ export function ResultSection({
       </div>
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
-        {!kept && (
+        {away && !merged && (
+          <div data-testid="away" style={{ fontSize: 12.5, color: theme.waiting, lineHeight: 1.45 }}>
+            {strings.machine.elsewhere(away.machine)}
+          </div>
+        )}
+        {!kept && !away && (
           <>
             <div style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
               <label htmlFor={`branch-name-${runId}`}>{d.branchName}</label>
@@ -199,7 +207,7 @@ export function ResultSection({
         {kept && (
           <div data-testid="kept" style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
             {/* Sending, checking and publishing: GitHub's pull request, its checks and a merge the person confirms. */}
-            <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} />
+            <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} canOpen={!away} />
             {onBranch ? (
               <>
                 <div data-testid="on-branch" style={{ fontSize: 12.5, color: theme.passed, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
@@ -212,7 +220,7 @@ export function ResultSection({
                 )}
               </>
             ) : (
-              !merged && (
+              !merged && !away && (
                 // Trying it locally is a side trip, not the next step: it stays quiet next to the main button.
                 <div style={{ display: 'grid', gap: 2 }}>
                   <button type="button" disabled={busy !== null} onClick={() => void bring('switch')} style={linkButton}>

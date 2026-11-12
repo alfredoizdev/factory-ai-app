@@ -9,6 +9,7 @@ import { stopPreview } from '@/engine/preview'
 import { SNAP_ROOT } from '@/engine/snapshots'
 import { DEFAULT_WORKTREE_ROOT } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
+import { projectHere, setLocal } from '@/engine/machine'
 
 // Deleting a task removes what the app keeps about it: its record (every event, step, measurement and decision goes
 // with it) and the agent's working copy. What it produced in the person's project, its saved branch, is theirs and
@@ -33,7 +34,7 @@ export async function deleteRun(runId: string, options: { worktreeRoot?: string;
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) throw new RunDeleteError(strings.errors.runNotFound, 404)
   if (LIVE.has(run.status)) throw new RunDeleteError(strings.history.stillLive, 409)
-  const repo = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, run.projectId)))[0]?.repoPath ?? null
+  const repo = (await projectHere(run.projectId))?.repoPath ?? null
   const files = (await db.select({ path: attachments.path }).from(attachments).where(eq(attachments.runId, runId))).map(a => a.path)
 
   stopPreview(runId)

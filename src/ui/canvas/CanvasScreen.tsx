@@ -23,7 +23,15 @@ import { Canvas, RUN_INPUT_ID } from './Canvas'
 import { useRunStream, type RunStatus } from './useRunStream'
 
 /** The run being watched. `blocks` are the frozen version it executes, not the draft. */
-export type RunInfo = { runId: string; providerId: string; blocks: Block[]; title?: string }
+export type RunInfo = {
+  runId: string
+  providerId: string
+  blocks: Block[]
+  title?: string
+  /** False when the run's working copy is on another computer. Absent: here (older pages, tests). */
+  here?: boolean
+  machine?: string | null
+}
 
 const LIVE: ReadonlySet<RunStatus> = new Set<RunStatus>(['queued', 'running', 'waiting_approval'])
 
@@ -502,6 +510,7 @@ export function CanvasScreen({
           startOptions={agent === CLAUDE_PROVIDER_ID ? startOptions : []}
           startFrom={startFrom}
           onStartFrom={setStartFrom}
+          away={run && run.here === false ? { machine: run.machine ?? null } : null}
           taskName={taskName}
           onTaskName={setTaskName}
           loading={loading}

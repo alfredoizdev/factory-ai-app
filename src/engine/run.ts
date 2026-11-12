@@ -12,6 +12,7 @@ import { onHoldAmong } from '@/engine/ship'
 import { cleanTitle, titleOf } from '@/engine/title'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
+import { projectHere, thisMachine } from '@/engine/machine'
 
 // The boundary between designing and running. The draft is mutable; publishing freezes a version;
 // a run binds to a frozen version and never reads the draft again.
@@ -174,7 +175,7 @@ export async function createRun(input: {
   // Refused before anything is written: a real run with nowhere to work would only fail later, after a row exists.
   let baseCommit: string | null = null
   if (providerId === CLAUDE_PROVIDER_ID) {
-    const project = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, wf.projectId)))[0]
+    const project = await projectHere(wf.projectId)
     if (!project?.repoPath) throw new RepoNotSetError()
     // Fixed now, as a commit: the agent's copy starts there even if the person switches branches meanwhile.
     const main = defaultBranch(project.repoPath)
@@ -214,6 +215,8 @@ export async function createRun(input: {
           title: input.title ? cleanTitle(input.title) : null,
           titleByPerson: !!(input.title && cleanTitle(input.title)),
           providerId,
+          // The run executes here: its working copy and its Inngest are on this computer.
+          machineId: thisMachine().id,
           baseCommit,
           createdAt: now(),
         })

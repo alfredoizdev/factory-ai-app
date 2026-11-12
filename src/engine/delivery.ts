@@ -10,6 +10,8 @@ import { clip, redact } from '@/engine/redact'
 import { branchFromWords, fallbackWords, type CommitMessage } from '@/engine/branch-name'
 import { branchNameFor } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
+import { projectHere, setLocal } from '@/engine/machine'
+import { elsewhere, runPlace } from '@/engine/machine'
 
 // Bringing an approved change into the person's own project. Two things, both local, nothing pushed anywhere:
 // the change is committed on the run's own branch (factory/<run>), so it is kept and can be merged or pushed later;
@@ -35,6 +37,10 @@ export type Delivery = {
   pushed: boolean
   /** Where to open a pull request for it, when origin is on GitHub. */
   pullRequestUrl: string | null
+  /** False when the run's working copy is on another computer: the actions that need it are not offered here. */
+  here: boolean
+  /** The name of the computer it is on, when known. */
+  machine: string | null
 }
 
 export class DeliveryError extends Error {
@@ -63,7 +69,7 @@ async function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run
 }
 
 async function repoOf(projectId: string): Promise<string | null> {
-  return (await db.select().from(projects).where(eq(projects.id, projectId)))[0]?.repoPath ?? null
+  return (await projectHere(projectId))?.repoPath ?? null
 }
 
 /** The branch a checkout is on, or null when it is detached or cannot be read. */
@@ -83,7 +89,10 @@ export async function deliveryState(runId: string): Promise<Delivery> {
   const kept = (await recordOf(runId, 'run.kept'))
   const done = await deliveredRecord(runId)
   const pushedRecord = (await recordOf(runId, 'run.pushed'))
+  const place = await runPlace(runId)
   return {
+    here: place.here,
+    machine: place.machine,
     eligible: found.eligible,
     kept: !!kept,
     delivered: !!done,
@@ -182,6 +191,8 @@ export async function requestOf(runId: string): Promise<string | null> {
 export type KeepOptions = { name?: string | null; fallbackName?: string | null; message?: CommitMessage | null }
 
 export async function keepOnBranch(runId: string, options: KeepOptions = {}): Promise<Delivery> {
+  const away = await elsewhere(runId)
+  if (away) throw new DeliveryError(away, 409)
   const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
@@ -219,11 +230,13 @@ export async function keepOnBranch(runId: string, options: KeepOptions = {}): Pr
  * it on its own branch. Once. Refused, with nothing changed, when their checkout has unsaved work.
  */
 export async function deliverToProject(runId: string, options: KeepOptions = {}): Promise<Delivery> {
+  const away = await elsewhere(runId)
+  if (away) throw new DeliveryError(away, 409)
   const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   if (!found.eligible) throw new DeliveryError(strings.delivery.notEligible, 409)
   if (await deliveredRecord(runId)) return deliveryState(runId)
-  const project = (await db.select().from(projects).where(eq(projects.id, found.run.projectId)))[0]
+  const project = await projectHere(found.run.projectId)
   const repo = project?.repoPath
   if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
 
@@ -280,6 +293,8 @@ function checkoutIn(repo: string, branch: string): void {
  * Remembers the branch it was on, for switchBack. Refused while the change is not kept yet, or over unsaved work.
  */
 export async function switchToBranch(runId: string): Promise<Delivery> {
+  const away = await elsewhere(runId)
+  if (away) throw new DeliveryError(away, 409)
   const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   const kept = (await recordOf(runId, 'run.kept'))
@@ -307,6 +322,8 @@ export async function switchToBranch(runId: string): Promise<Delivery> {
 
 /** Returns the person's project to the branch it was on before switchToBranch. Refused over unsaved work. */
 export async function switchBack(runId: string): Promise<Delivery> {
+  const away = await elsewhere(runId)
+  if (away) throw new DeliveryError(away, 409)
   const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   const switched = (await recordOf(runId, 'run.switched'))
@@ -342,6 +359,8 @@ const gitAsync = (cwd: string, args: string[]) =>
  * credentials. Their other branches are not sent. Refused before the change is kept, or with no origin.
  */
 export async function pushBranch(runId: string): Promise<Delivery> {
+  const away = await elsewhere(runId)
+  if (away) throw new DeliveryError(away, 409)
   const found = (await approvedAndFinished(runId))
   if (!found) throw new DeliveryError(strings.errors.runNotFound, 404)
   const kept = (await recordOf(runId, 'run.kept'))

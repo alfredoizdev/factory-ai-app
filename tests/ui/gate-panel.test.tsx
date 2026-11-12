@@ -259,3 +259,16 @@ test('waiting: the changes open large in a window over the page, which Escape cl
   fireEvent.keyDown(window, { key: 'Escape' })
   expect(screen.queryByRole('dialog')).toBeNull()
 })
+
+test('done, on another computer: says where the working copy is, and offers nothing that needs it', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/ship')) return new Response(JSON.stringify({ pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null, onHold: false }))
+    if (url.endsWith('/branch-name')) return new Response(JSON.stringify({ name: 'ai/x' }))
+    return new Response(JSON.stringify({ ...approved, here: false, machine: 'Studio iMac' }))
+  }))
+  const { ResultSection } = await import('@/ui/canvas/ResultPanel')
+  render(<ResultSection runId="r1" note="" imageIds={[]} imagesBusy={false} composer={() => null} onFollowUp={() => {}} away={{ machine: 'Studio iMac' }} />)
+  expect(await screen.findByTestId('away')).toHaveTextContent(strings.machine.elsewhere('Studio iMac'))
+  expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.keepButton) })).toBeNull()
+  expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.switchButton) })).toBeNull()
+})

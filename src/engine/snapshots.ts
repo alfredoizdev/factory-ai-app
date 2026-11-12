@@ -11,6 +11,8 @@ import { appendEventSync } from '@/engine/events'
 import { previewState, startPreview, startServer, stopPreview, untilReady } from '@/engine/preview'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
+import { projectHere, setLocal } from '@/engine/machine'
+import { elsewhere } from '@/engine/machine'
 
 // Before and after: pictures of the person's site as it was and with the change, taken by a real browser on this
 // computer. Both versions are started with the project's own dev server — the change from the run's working copy, the
@@ -103,10 +105,12 @@ const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, en
  * it goes. Once at a time per run. Whatever it started (the version before, a copy of it, a browser) it stops.
  */
 export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot, root = SNAP_ROOT): Promise<SnapshotState> {
+  const away = await elsewhere(runId)
+  if (away) throw new SnapshotError(away)
   if (working.has(runId)) return snapshotState(runId)
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run?.worktreePath || !existsSync(run.worktreePath)) throw new SnapshotError(strings.snapshots.noWorkingCopy)
-  const project = (await db.select().from(projects).where(eq(projects.id, run.projectId)))[0]
+  const project = await projectHere(run.projectId)
   const repo = project?.repoPath
   const from = run.deliveryBase ?? run.baseCommit
   if (!repo || !from) throw new SnapshotError(strings.snapshots.noWorkingCopy)

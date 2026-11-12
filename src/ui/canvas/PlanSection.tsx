@@ -22,7 +22,7 @@ const toJobs = (drafts: readonly Draft[]): Job[] =>
  * The plan, waiting for the person: the jobs the planner proposed, each editable, removable, with a way to add one,
  * and one button to build it as it stands. The box below asks the planner for a different plan instead.
  */
-export function PlanSection({ runId, note, composer, onSent }: { runId: string; note: string; composer: (send: ComposerSend) => ReactNode; onSent: () => void }) {
+export function PlanSection({ runId, note, composer, onSent }: { runId: string; note: string; composer: (send: ComposerSend) => ReactNode; onSent: () => void; away?: { machine: string | null } | null }) {
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
   const [busy, setBusy] = useState<'build' | 'replan' | null>(null)
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null)
@@ -51,8 +51,10 @@ export function PlanSection({ runId, note, composer, onSent }: { runId: string; 
     setOutcome(null)
     try {
       const res = await fetch(`/api/runs/${runId}/plan`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-      const answer = (await res.json().catch(() => null)) as { error?: string } | null
+      const answer = (await res.json().catch(() => null)) as { error?: string; delivered?: boolean; machine?: string | null } | null
       if (!res.ok) return setOutcome({ ok: false, text: answer?.error ?? strings.run.startFailed })
+      // Decided here for a task running on another computer: that computer picks it up.
+      if (answer && answer.delivered === false && 'machine' in answer) return setOutcome({ ok: true, text: strings.machine.sentElsewhere(answer.machine ?? null) })
       setOutcome({ ok: true, text: what === 'build' ? strings.plan.building_sent : strings.plan.replanned })
       if (what === 'replan') onSent()
     } catch {

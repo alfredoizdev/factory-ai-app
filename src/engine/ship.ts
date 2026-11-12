@@ -7,6 +7,8 @@ import { DeliveryError, deliveryState, pushBranch } from '@/engine/delivery'
 import { appendEventSync } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
+import { projectHere, setLocal } from '@/engine/machine'
+import { elsewhere } from '@/engine/machine'
 
 // Shipping an approved change through GitHub: push its branch, open a pull request, wait for whatever checks that
 // repository runs, and — only when the person says so — squash-merge it into the main branch. Nothing here assumes a
@@ -76,7 +78,7 @@ export const CHECKS_GRACE_MS = 60_000
 async function repoOf(runId: string): Promise<{ repo: string; branch: string }> {
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) throw new ShipError(strings.errors.runNotFound, 404)
-  const repo = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, run.projectId)))[0]?.repoPath
+  const repo = (await projectHere(run.projectId))?.repoPath
   if (!repo) throw new ShipError(strings.run.noRepository)
   const state = (await deliveryState(runId))
   if (!state.kept || !state.branch) throw new ShipError(strings.delivery.keepFirst)
@@ -98,6 +100,8 @@ function ghFailure(e: unknown): ShipError {
  * Once: a pull request already open for the branch is reused.
  */
 export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promise<ShipState> {
+  const away = await elsewhere(runId)
+  if (away) throw new ShipError(away)
   const { repo, branch } = (await repoOf(runId))
   if (!(await recordOf(runId, 'run.pr_opened'))) {
     try {

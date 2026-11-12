@@ -453,6 +453,11 @@ export const strings = {
     save: 'Save the name',
     cancel: 'Keep the old name',
   },
+  machine: {
+    elsewhere: (name: string | null) =>
+      name ? `This task's working copy is on ${name}. Open the app there to do this.` : 'This task\'s working copy is on another computer. Open the app there to do this.',
+    sentElsewhere: (name: string | null) => (name ? `Sent. ${name} picks it up when the app is open there.` : 'Sent. The task\'s computer picks it up when the app is open there.'),
+  },
   memory: {
     title: 'Project memory',
     what: 'Rules every new task on this project starts with. The app learns them from what you say on tasks (only what should hold for later), or you write them here.',

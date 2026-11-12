@@ -8,6 +8,7 @@ import { projects, workflowVersions } from '@/db/schema'
 import { baseIsStale, copyBaseInto, lockHashOf, nodeModulesDirs, prepareBase } from '@/engine/base'
 import { createProject, listProjects } from '@/engine/projects'
 import { ProjectSettingsError } from '@/engine/project-settings'
+import { projectHere } from '@/engine/machine'
 
 beforeAll(() => migrateDb())
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
@@ -48,7 +49,8 @@ test('the prepared base installs once, and a task copy with the same lockfile ge
   const root = mkdtempSync(join(tmpdir(), 'factory-bases-'))
   const { projectId } = await createProject({ path: dir, name: 'Shop', testCommand: null, checks: [] })
   await prepareBase(projectId, { install: fakeInstall, root })
-  const project = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]!
+  // The base is this computer's own.
+  const project = (await projectHere(projectId))!
   expect(project).toMatchObject({ baseStatus: 'ready', baseCommit: git(dir, 'rev-parse', 'main') })
   expect(nodeModulesDirs(join(root, projectId))).toEqual(['node_modules', 'packages/ui/node_modules'])
 
@@ -82,7 +84,7 @@ test('a failed install leaves the base failed, with what it said', async () => {
   const root = mkdtempSync(join(tmpdir(), 'factory-bases-'))
   const { projectId } = await createProject({ path: dir, name: 'Shop', testCommand: null, checks: [] })
   await prepareBase(projectId, { install: async () => ({ command: 'pnpm install', ok: false, durationMs: 1, outputTail: 'ERR_PNPM_FETCH_404 left-pad' }), root })
-  expect((await db.select().from(projects).where(eq(projects.id, projectId)))[0]).toMatchObject({ baseStatus: 'failed', baseMessage: expect.stringContaining('ERR_PNPM_FETCH_404') })
+  expect(await projectHere(projectId)).toMatchObject({ baseStatus: 'failed', baseMessage: expect.stringContaining('ERR_PNPM_FETCH_404') })
 })
 
 test('no package.json, no lock fingerprint', () => {

@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, pgTable, primaryKey, text, uniqueIndex } from 'drizzle-orm/pg-core'
 
 // IDs are ULIDs (the demo workflow is the literal 'demo'); timestamps are ISO UTC strings.
 // Every row carries projectId so a future multi-user version is not a rewrite.
@@ -69,6 +69,13 @@ export const runs = pgTable(
     /** The project rules this task was given when it started (JSON list of texts); null before it started. */
     memoryJson: text('memory_json'),
     providerId: text('provider_id').notNull(),
+    /** The computer the run executes on (its working copy and its Inngest live there). Null: not known. */
+    machineId: text('machine_id'),
+    /**
+     * The change last shown at the human check (files, diff, hash), as read on the run's computer: what another
+     * computer shows and binds a decision to, since the working copy is not there.
+     */
+    reviewJson: text('review_json'),
     // The run's own working copy (one per run, never per job). Null for demo runs, which touch no repository.
     worktreePath: text('worktree_path'),
     branch: text('branch'),
@@ -132,6 +139,8 @@ export const events = pgTable(
     type: text('type').notNull(),
     payloadJson: text('payload_json').notNull(),
     createdAt: text('created_at').notNull(),
+    /** For a person's word on the plan (node.plan_decided): when the run's computer was told. Null otherwise. */
+    deliveredAt: text('delivered_at'),
   },
   t => [uniqueIndex('events_run_sequence_uq').on(t.runId, t.sequence)],
 )
@@ -197,6 +206,8 @@ export const approvals = pgTable(
     createdAt: text('created_at').notNull(),
     /** When the run acted on this decision. A decision is acted on once; the next round needs a new one. */
     consumedAt: text('consumed_at'),
+    /** When the run's own computer was told about it. Null: recorded elsewhere and not told yet (the relay does). */
+    deliveredAt: text('delivered_at'),
   },
   t => [index('approvals_run_idx').on(t.runId)],
 )
@@ -239,4 +250,30 @@ export const projectNotes = pgTable(
     createdAt: text('created_at').notNull(),
   },
   t => [index('project_notes_project_idx').on(t.projectId)],
+)
+
+/** The computers that have opened this data: a name a person can read, for "its working copy is on …". */
+export const machines = pgTable('machines', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  createdAt: text('created_at').notNull(),
+})
+
+/**
+ * What a project is on one computer: its folder there, and the base prepared from it. Each computer has its own; the
+ * project's other settings are shared. (projects.repo_path and projects.base_* are from before and are not used.)
+ */
+export const projectMachines = pgTable(
+  'project_machines',
+  {
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    machineId: text('machine_id').notNull(),
+    repoPath: text('repo_path'),
+    baseStatus: text('base_status').notNull().default('none'),
+    baseCommit: text('base_commit'),
+    baseLockHash: text('base_lock_hash'),
+    baseMessage: text('base_message'),
+    baseUpdatedAt: text('base_updated_at'),
+  },
+  t => [primaryKey({ columns: [t.projectId, t.machineId] })],
 )

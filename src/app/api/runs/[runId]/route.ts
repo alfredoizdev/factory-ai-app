@@ -5,6 +5,7 @@ import type { Graph } from '@/domain/graph'
 import { deleteRun, RunDeleteError } from '@/engine/run-delete'
 import { requireOwnPage } from '@/engine/same-origin'
 import { setRunTitle, titleOf } from '@/engine/title'
+import { runPlace } from '@/engine/machine'
 import { strings } from '@/ui/strings'
 
 export const dynamic = 'force-dynamic'
@@ -16,7 +17,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
   if (!run) return Response.json({ error: strings.errors.runNotFound }, { status: 404 })
   const version = (await db.select().from(workflowVersions).where(eq(workflowVersions.id, run.versionId)))[0]
   if (!version) return Response.json({ error: strings.errors.runNotFound }, { status: 404 })
-  return Response.json({ runId: run.id, providerId: run.providerId, title: titleOf(run), blocks: (JSON.parse(version.graphJson) as Graph).blocks })
+  const place = await runPlace(run.id)
+  return Response.json({ runId: run.id, providerId: run.providerId, title: titleOf(run), here: place.here, machine: place.machine, blocks: (JSON.parse(version.graphJson) as Graph).blocks })
 }
 
 // Renames the task. Only from the app's own page.

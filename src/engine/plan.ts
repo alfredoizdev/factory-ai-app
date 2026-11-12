@@ -93,7 +93,8 @@ export class PlanError extends Error {
  * Records the person's word on a plan waiting for them: build it (with their edited jobs), or plan again with a note.
  * Only while the plan block waits; the caller then tells the run to look.
  */
-export async function decidePlan(runId: string, decision: { action: 'build'; jobs: unknown } | { action: 'replan'; note: string }): Promise<void> {
+/** `delivered`: the recording computer tells the run itself, so the relay must not tell it again. */
+export async function decidePlan(runId: string, decision: { action: 'build'; jobs: unknown } | { action: 'replan'; note: string }, delivered = false): Promise<void> {
   await db.transaction(
     async tx => {
       await lockRun(tx, runId)
@@ -109,11 +110,13 @@ export async function decidePlan(runId: string, decision: { action: 'build'; job
         const jobs = cleanJobs(decision.jobs)
         if (!jobs) throw new PlanError(strings.plan.needAJob)
         await appendEventSync({ runId, nodeRunId: node.id, type: 'node.planned', payload: { blockId: node.blockId, jobs, by: 'person' } }, tx)
-        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_decided', payload: { blockId: node.blockId, action: 'build' } }, tx)
+        const word = await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_decided', payload: { blockId: node.blockId, action: 'build' } }, tx)
+        if (delivered) await tx.update(events).set({ deliveredAt: new Date().toISOString() }).where(eq(events.id, word.id))
       } else {
         const note = clip(redact(decision.note.trim()), 1000)
         if (note === '') throw new PlanError(strings.plan.needANote)
-        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_decided', payload: { blockId: node.blockId, action: 'replan', note } }, tx)
+        const word = await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_decided', payload: { blockId: node.blockId, action: 'replan', note } }, tx)
+        if (delivered) await tx.update(events).set({ deliveredAt: new Date().toISOString() }).where(eq(events.id, word.id))
       }
     },
   )

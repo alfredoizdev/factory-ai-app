@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { join } from 'node:path'
 import { and, desc, eq, isNull } from 'drizzle-orm'
@@ -12,6 +12,7 @@ import { stopPreview } from '@/engine/preview'
 import { claimAttachments } from '@/engine/attachments'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
+import { runPlace, thisMachine } from '@/engine/machine'
 
 // The human check, guarded. A decision is a row first (who, when, which way, why, on which change), then an event.
 // The executor acts on the row, never on the event alone, so a forged event opens nothing. A decision is bound to
@@ -46,7 +47,22 @@ export const NO_CHANGE = 'no-change'
 /** What the run changed, read from its worktree; null when it has none. */
 export async function changeUnderReview(runId: string): Promise<ChangeUnderReview | null> {
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
-  if (!run?.worktreePath || !run.baseCommit) return null
+  if (!run) return null
+  // On another computer the working copy is not there: the change as its own computer last read it.
+  if (run.machineId !== thisMachine().id || !run.worktreePath || !existsSync(run.worktreePath)) {
+    return run.reviewJson ? (JSON.parse(run.reviewJson) as ChangeUnderReview) : null
+  }
+  const read = readChange(run.worktreePath, run.baseCommit)
+  if (read) {
+    const json = JSON.stringify(read)
+    if (json !== run.reviewJson) await db.update(runs).set({ reviewJson: json }).where(eq(runs.id, runId))
+  }
+  return read
+}
+
+function readChange(worktreePath: string, baseCommit: string | null): ChangeUnderReview | null {
+  const run = { worktreePath, baseCommit }
+  if (!run.worktreePath || !run.baseCommit) return null
   const cwd = run.worktreePath
   const git = (args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024 })
   const base = run.baseCommit
@@ -90,7 +106,8 @@ export function localActor(): string {
 }
 
 /** Writes the decision row. Exported for the executor's tests; the app goes through decideGate. */
-export async function recordDecision(runId: string, decision: Decision, fields: { actor: string; reason?: string | null; diffHash: string | null }) {
+/** `delivered`: the recording computer tells the run itself (it is the run's), so the relay must not tell it again. */
+export async function recordDecision(runId: string, decision: Decision, fields: { actor: string; reason?: string | null; diffHash: string | null; delivered?: boolean }) {
   const node = (await waitingHumanNode(runId))
   if (!node) throw new GateError(strings.gate.notWaiting, 409)
   const row = {
@@ -103,6 +120,7 @@ export async function recordDecision(runId: string, decision: Decision, fields: 
     reason: fields.reason?.trim() ? clip(redact(fields.reason.trim()), 500) : null,
     diffHash: fields.diffHash,
     createdAt: new Date().toISOString(),
+    deliveredAt: fields.delivered ? new Date().toISOString() : null,
   }
   await db.insert(approvals).values(row)
   return row
@@ -128,15 +146,20 @@ export async function decideGate(
   // Bound to what was shown: approving a change nobody looked at is the gate being bypassed by timing.
   const current = (await changeUnderReview(runId))?.hash ?? NO_CHANGE
   if (input.diffHash !== current) throw new GateError(strings.gate.changedSinceSeen, 409)
-  const row = (await recordDecision(runId, input.decision, { actor: (deps.actor ?? localActor)(), reason: input.reason, diffHash: current }))
+  const here = (await runPlace(runId)).here
+  const row = await recordDecision(runId, input.decision, { actor: (deps.actor ?? localActor)(), reason: input.reason, diffHash: current, delivered: here })
   // Images sent with a request for changes go to that round only.
   if (input.decision === 'changes') (await claimAttachments(input.attachments ?? [], runId, row.id))
-  try {
-    await deps.send({ runId, decision: input.decision })
-  } catch {
-    // Not delivered, so it decided nothing: the row would claim a decision the run never received.
-    await db.delete(approvals).where(eq(approvals.id, row.id))
-    throw new GateError(strings.gate.notDelivered, 409)
+  // On the run's own computer the run is told at once. From another computer the decision is only recorded: the run's
+  // computer picks it up (relay.ts) and tells its own Inngest.
+  if (here) {
+    try {
+      await deps.send({ runId, decision: input.decision })
+    } catch {
+      // Not delivered, so it decided nothing: the row would claim a decision the run never received.
+      await db.delete(approvals).where(eq(approvals.id, row.id))
+      throw new GateError(strings.gate.notDelivered, 409)
+    }
   }
   // The decision is made; a preview of the change has nothing left to inform.
   stopPreview(runId)

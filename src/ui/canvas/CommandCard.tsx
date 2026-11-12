@@ -52,11 +52,13 @@ export const CommandCard = forwardRef<
     onStartFrom?: (branch: string) => void
     /** The task is still loading: placeholders instead of a card that would change under the person's eyes. */
     loading?: boolean
+    /** Set when the open run's working copy is on another computer: what needs it is not offered here. */
+    away?: { machine: string | null } | null
     /** The name for a new task, optional. Absent: no field. */
     taskName?: string
     onTaskName?: (v: string) => void
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName }, ref) {
+>(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
@@ -170,12 +172,13 @@ export const CommandCard = forwardRef<
           {strings.card.working}
         </div>
       )}
-      {!loading && mode === 'plan' && runId && <PlanSection runId={runId} note={text} composer={withSend} onSent={onSent} />}
+      {!loading && mode === 'plan' && runId && <PlanSection away={away} runId={runId} note={text} composer={withSend} onSent={onSent} />}
       {!loading && mode === 'waiting' && runId && (
-        <GateSection runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} />
+        <GateSection away={away} runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} />
       )}
       {!loading && mode === 'done' && runId && (
         <ResultSection
+          away={away}
           onShipState={onShipState}
           runId={runId}
           note={text}

@@ -8,6 +8,8 @@ import { projects, runs } from '@/db/schema'
 import { clip, redact } from '@/engine/redact'
 import { stripAnsi } from '@/engine/test-runner'
 import { strings } from '@/ui/strings'
+import { projectHere, setLocal } from '@/engine/machine'
+import { elsewhere } from '@/engine/machine'
 
 // A live preview of a run's change: the project's own dev server, started from the run's worktree, on this
 // computer only. It runs the project's `dev` script and nothing else — the request cannot choose the command — with
@@ -130,12 +132,14 @@ export function previewState(key: string): PreviewState {
 
 /** Starts the preview for a run, or returns the one already running. Resolves once it is starting; poll for ready. */
 export async function startPreview(runId: string): Promise<PreviewState> {
+  const away = await elsewhere(runId)
+  if (away) throw new PreviewError(away)
   const existing = registry.get(runId)
   if (existing && existing.status !== 'failed' && existing.status !== 'stopped') return previewState(runId)
 
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run?.worktreePath || !existsSync(run.worktreePath)) throw new PreviewError(strings.preview.noWorktree)
-  const project = (await db.select().from(projects).where(eq(projects.id, run.projectId)))[0]
+  const project = await projectHere(run.projectId)
   return startServer(runId, run.worktreePath, project?.repoPath ?? null)
 }
 

@@ -49,7 +49,10 @@ export function ShipSection({
   runId,
   button,
   onState,
+  canOpen = true,
 }: {
+  /** False on a computer without the run's working copy: sending it for checks happens there. */
+  canOpen?: boolean
   runId: string
   button: (busy: unknown) => CSSProperties
   /** Told every time the shipping state is read, so the Ship card on the canvas can show the same progress. */
@@ -116,7 +119,7 @@ export function ShipSection({
   const hint: CSSProperties = { fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }
   return (
     <div data-testid="ship-section" style={{ display: 'grid', gap: 6 }}>
-      {!state.pr && (
+      {!state.pr && canOpen && (
         <>
           <button type="button" disabled={busy !== null} onClick={() => void act('open')} style={button(busy)}>
             {busy === 'open' ? <WorkingSpinner blockId="ship-open" size={16} /> : <ShipIcon />} {busy === 'open' ? strings.ship.opening : strings.ship.shipIt}

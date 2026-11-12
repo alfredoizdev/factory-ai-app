@@ -8,6 +8,7 @@ import { projects } from '@/db/schema'
 import { defaultBranch, freshestStart } from '@/engine/branches'
 import { installDependencies, type InstallResult } from '@/engine/install'
 import { clip, redact } from '@/engine/redact'
+import { projectHere, setLocal, type LocalProject } from '@/engine/machine'
 
 // The prepared base: once per project, a copy of its main branch with the dependencies installed. A task's working
 // copy then gets those dependencies by copy (on macOS a copy-on-write clone, near instant) instead of installing them
@@ -57,8 +58,9 @@ export function nodeModulesDirs(root: string): string[] {
 
 export const basePathOf = (projectId: string, root = BASE_ROOT) => join(root, projectId)
 
-async function setBase(projectId: string, fields: Partial<typeof projects.$inferInsert>): Promise<void> {
-  await db.update(projects).set({ ...fields, baseUpdatedAt: new Date().toISOString() }).where(eq(projects.id, projectId))
+// The base is this computer's: each computer prepares its own from its own folder.
+async function setBase(projectId: string, fields: Partial<LocalProject>): Promise<void> {
+  await setLocal(projectId, { ...fields, baseUpdatedAt: new Date().toISOString() })
 }
 
 const inFlight = new Set<string>()
@@ -72,7 +74,7 @@ export async function prepareBase(
   deps: { install?: (dir: string) => Promise<InstallResult | null>; root?: string } = {},
 ): Promise<void> {
   if (inFlight.has(projectId)) return
-  const project = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]
+  const project = await projectHere(projectId)
   if (!project?.repoPath) return
   inFlight.add(projectId)
   const repo = project.repoPath
@@ -136,7 +138,7 @@ export type BaseCopy = { copied: true; ms: number } | { copied: false; reason: '
 
 /** Gives a task's working copy the base's installed dependencies, when its lockfile is the base's. */
 export async function copyBaseInto(projectId: string, workdir: string, root = BASE_ROOT): Promise<BaseCopy> {
-  const project = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]
+  const project = await projectHere(projectId)
   const base = basePathOf(projectId, root)
   if (project?.baseStatus !== 'ready' || !project.baseLockHash || !existsSync(base)) return { copied: false, reason: 'no-base' }
   if (lockHashOf(workdir) !== project.baseLockHash) return { copied: false, reason: 'different-lockfile' }
@@ -156,7 +158,7 @@ export async function copyBaseInto(projectId: string, workdir: string, root = BA
 
 /** True when the base was installed from a different lockfile than the one at `commit`: it should be rebuilt. */
 export async function baseIsStale(projectId: string, commit: string): Promise<boolean> {
-  const project = (await db.select().from(projects).where(eq(projects.id, projectId)))[0]
+  const project = await projectHere(projectId)
   if (!project?.repoPath || project.baseStatus !== 'ready') return false
   const at = lockHashAt(project.repoPath, commit)
   return at !== null && at !== project.baseLockHash

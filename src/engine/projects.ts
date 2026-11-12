@@ -1,10 +1,11 @@
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
-import { projects, workflows } from '@/db/schema'
+import { projectMachines, projects, workflows } from '@/db/schema'
 import { defaultGraph, LANE_SPACING, STAGE_ORDER, type Block } from '@/domain/graph'
 import { ProjectSettingsError, validRepoRoot } from '@/engine/project-settings'
 import { publishVersion, saveDraft } from '@/engine/run'
+import { projectHere, setLocal, thisMachine } from '@/engine/machine'
 import { strings } from '@/ui/strings'
 
 // Projects: one repository each, with its own flow and its own tasks.
@@ -21,7 +22,8 @@ export type ProjectSummary = {
 export async function listProjects(): Promise<ProjectSummary[]> {
   const rows = (await db.select().from(projects).orderBy(asc(projects.createdAt)))
   const out: ProjectSummary[] = []
-  for (const p of rows) {
+  for (const shared of rows) {
+    const p = (await projectHere(shared.id)) ?? shared
     const wf = (await db.select().from(workflows).where(eq(workflows.projectId, p.id)).orderBy(asc(workflows.createdAt)))[0]
     if (wf) out.push({ projectId: p.id, name: p.name, repoPath: p.repoPath, workflowId: wf.id, baseStatus: p.baseStatus, baseMessage: p.baseMessage })
   }
@@ -49,7 +51,10 @@ export async function createProject(input: {
   const repoPath = validRepoRoot(input.path.trim())
   const name = input.name.trim()
   if (!NAME.test(name)) throw new ProjectSettingsError(strings.projects.badName)
-  if ((await db.select().from(projects).where(eq(projects.repoPath, repoPath)))[0]) throw new ProjectSettingsError(strings.projects.alreadyProject)
+  // A folder is one project on this computer: its path, this computer's or from before machines existed.
+  const mine = await db.select({ id: projectMachines.projectId }).from(projectMachines).where(and(eq(projectMachines.machineId, thisMachine().id), eq(projectMachines.repoPath, repoPath)))
+  const legacy = await db.select({ id: projects.id }).from(projects).where(eq(projects.repoPath, repoPath))
+  if (mine.length > 0 || legacy.length > 0) throw new ProjectSettingsError(strings.projects.alreadyProject)
   const testCommand = input.testCommand?.trim() || null
   if (testCommand && !COMMAND.test(testCommand)) throw new ProjectSettingsError(strings.projects.badCommand)
   for (const c of input.checks) if (!COMMAND.test(c.command.trim()) || !NAME.test(c.label.trim())) throw new ProjectSettingsError(strings.projects.badCommand)
@@ -68,7 +73,8 @@ export async function createProject(input: {
     position: { x: testsColumn, y: (i + 1) * 340 },
   }))
   await db.transaction(async tx => {
-    await tx.insert(projects).values({ id: projectId, projectId, name, repoPath, testCommand, autoApproveLowRisk: input.autoApproveLowRisk === true, createdAt: now })
+    await tx.insert(projects).values({ id: projectId, projectId, name, testCommand, autoApproveLowRisk: input.autoApproveLowRisk === true, createdAt: now })
+    await setLocal(projectId, { repoPath }, tx)
     await tx.insert(workflows).values({ id: workflowId, projectId, name, draftJson: JSON.stringify(graph), createdAt: now, updatedAt: now })
   })
   await saveDraft(workflowId, { blocks: [...graph.blocks, ...extra] })

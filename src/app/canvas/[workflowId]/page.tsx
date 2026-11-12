@@ -5,6 +5,7 @@ import { db } from '@/db/client'
 import { projects, runs, workflowVersions, workflows } from '@/db/schema'
 import type { Graph } from '@/domain/graph'
 import { CanvasScreen, type RunInfo } from '@/ui/canvas/CanvasScreen'
+import { projectHere, runPlace } from '@/engine/machine'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,10 +21,10 @@ export default async function CanvasPage({ params }: { params: Promise<{ workflo
   const version = latest ? (await db.select().from(workflowVersions).where(eq(workflowVersions.id, latest.versionId)))[0] : undefined
   const run: RunInfo | null =
     latest && version
-      ? { runId: latest.id, providerId: latest.providerId, title: latest.title ?? undefined, blocks: (JSON.parse(version.graphJson) as Graph).blocks }
+      ? { runId: latest.id, providerId: latest.providerId, title: latest.title ?? undefined, ...(await runPlace(latest.id)), blocks: (JSON.parse(version.graphJson) as Graph).blocks }
       : null
 
-  const project = (await db.select().from(projects).where(eq(projects.id, wf.projectId)))[0]
+  const project = await projectHere(wf.projectId)
   const settings = project ? (await getProjectSettings(project.id)) : { projectId: wf.projectId, repoPath: null, testCommand: null, autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
 
   return <CanvasScreen workflowId={workflowId} graph={graph} run={run} settings={settings} draftUpdatedAt={wf.updatedAt} />
