@@ -334,10 +334,6 @@ export function FailureDialog({
                             <span style={{ fontSize: 13, color: theme.dim }}>{f.output}</span>
                             <pre
                               data-testid="failure-output"
-                              // Opened at its end: that is where a command says what broke.
-                              ref={el => {
-                                if (el) el.scrollTop = el.scrollHeight
-                              }}
                               style={{ margin: 0, maxHeight: 'min(50vh, 460px)', overflow: 'auto', padding: 12, borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
                               {b.output ?? f.noOutput}
                             </pre>
