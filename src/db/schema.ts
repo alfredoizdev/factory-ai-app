@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { boolean, index, integer, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 
 // IDs are ULIDs (the demo workflow is the literal 'demo'); timestamps are ISO UTC strings.
 // Every row carries projectId so a future multi-user version is not a rewrite.
@@ -6,7 +6,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 // claims, evidence and usage records. The exceptions are runs.workflowId and runs.versionId (restrict), so
 // deleting or pruning a workflow or version can never erase run history. See those columns.
 
-export const projects = sqliteTable('projects', {
+export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
   name: text('name').notNull(),
@@ -16,7 +16,7 @@ export const projects = sqliteTable('projects', {
   testCommand: text('test_command'),
   // The person's choice: a run whose change is measured as low risk does not stop at the human check. Off unless
   // they turn it on; never a default.
-  autoApproveLowRisk: integer('auto_approve_low_risk', { mode: 'boolean' }).notNull().default(false),
+  autoApproveLowRisk: boolean('auto_approve_low_risk').notNull().default(false),
   // The prepared base: a copy of the main branch with its dependencies installed once, which every task's working
   // copy starts from instead of installing again. 'none' until prepared; 'installing', 'ready' or 'failed' after.
   baseStatus: text('base_status').notNull().default('none'),
@@ -28,7 +28,7 @@ export const projects = sqliteTable('projects', {
   createdAt: text('created_at').notNull(),
 })
 
-export const workflows = sqliteTable('workflows', {
+export const workflows = pgTable('workflows', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
@@ -37,7 +37,7 @@ export const workflows = sqliteTable('workflows', {
   updatedAt: text('updated_at').notNull(),
 })
 
-export const workflowVersions = sqliteTable(
+export const workflowVersions = pgTable(
   'workflow_versions',
   {
     id: text('id').primaryKey(),
@@ -50,7 +50,7 @@ export const workflowVersions = sqliteTable(
   t => [index('workflow_versions_workflow_idx').on(t.workflowId)],
 )
 
-export const runs = sqliteTable(
+export const runs = pgTable(
   'runs',
   {
     id: text('id').primaryKey(),
@@ -65,7 +65,7 @@ export const runs = sqliteTable(
     /** A short name for the task, the person's or suggested from the request: how it is told apart on screen. */
     title: text('title'),
     /** True once the person named the task: a later suggestion never replaces their words. */
-    titleByPerson: integer('title_by_person', { mode: 'boolean' }).notNull().default(false),
+    titleByPerson: boolean('title_by_person').notNull().default(false),
     /** The project rules this task was given when it started (JSON list of texts); null before it started. */
     memoryJson: text('memory_json'),
     providerId: text('provider_id').notNull(),
@@ -87,7 +87,7 @@ export const runs = sqliteTable(
   t => [index('runs_workflow_idx').on(t.workflowId)],
 )
 
-export const nodeRuns = sqliteTable(
+export const nodeRuns = pgTable(
   'node_runs',
   {
     id: text('id').primaryKey(),
@@ -105,7 +105,7 @@ export const nodeRuns = sqliteTable(
   t => [index('node_runs_run_idx').on(t.runId), uniqueIndex('node_runs_run_block_uq').on(t.runId, t.blockId)],
 )
 
-export const jobs = sqliteTable(
+export const jobs = pgTable(
   'jobs',
   {
     id: text('id').primaryKey(),
@@ -121,7 +121,7 @@ export const jobs = sqliteTable(
   t => [index('jobs_run_idx').on(t.runId)],
 )
 
-export const events = sqliteTable(
+export const events = pgTable(
   'events',
   {
     id: text('id').primaryKey(),
@@ -137,7 +137,7 @@ export const events = sqliteTable(
 )
 
 // Claims: anything a language model says. Never merged with evidence.
-export const claims = sqliteTable(
+export const claims = pgTable(
   'claims',
   {
     id: text('id').primaryKey(),
@@ -151,7 +151,7 @@ export const claims = sqliteTable(
 )
 
 // Evidence: only what a non-model process produced (test runs, exit codes, git diffs, CI checks).
-export const evidence = sqliteTable(
+export const evidence = pgTable(
   'evidence',
   {
     id: text('id').primaryKey(),
@@ -167,7 +167,7 @@ export const evidence = sqliteTable(
 )
 
 // tokens and costCents are nullable on purpose: null means "not reported", never 0.
-export const usageRecords = sqliteTable(
+export const usageRecords = pgTable(
   'usage_records',
   {
     id: text('id').primaryKey(),
@@ -182,7 +182,7 @@ export const usageRecords = sqliteTable(
 
 // Every decision a person makes at a human check: who, when, which way, why, and on which exact change. The gate
 // acts only on a row here — an approval event with no row behind it opens nothing.
-export const approvals = sqliteTable(
+export const approvals = pgTable(
   'approvals',
   {
     id: text('id').primaryKey(),
@@ -203,7 +203,7 @@ export const approvals = sqliteTable(
 
 // Images a person attached to a request, a request for changes, or a follow-up. The file lives under the app's own
 // data folder; the agent is given read access to it and told where it is.
-export const attachments = sqliteTable(
+export const attachments = pgTable(
   'attachments',
   {
     id: text('id').primaryKey(),
@@ -225,7 +225,7 @@ export const attachments = sqliteTable(
  * Learned from what the person said on a task (a fast model keeps only what is general), or written by them. Each says
  * where it came from; the person can edit, switch off or delete any of them.
  */
-export const projectNotes = sqliteTable(
+export const projectNotes = pgTable(
   'project_notes',
   {
     id: text('id').primaryKey(),
@@ -235,7 +235,7 @@ export const projectNotes = sqliteTable(
     source: text('source').notNull(),
     /** The task it was learned on; null when written by hand. Not a foreign key: deleting the task keeps the lesson. */
     runId: text('run_id'),
-    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    enabled: boolean('enabled').notNull().default(true),
     createdAt: text('created_at').notNull(),
   },
   t => [index('project_notes_project_idx').on(t.projectId)],

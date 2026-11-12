@@ -1,37 +1,48 @@
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+import type { PgDatabase, PgQueryResultHKT, PgTransaction } from 'drizzle-orm/pg-core'
+import type { ExtractTablesWithRelations } from 'drizzle-orm'
 import * as schema from './schema'
 
-// FACTORY_DB_PATH overrides the location (tests use ':memory:').
-const path = process.env.FACTORY_DB_PATH ?? './.factory/factory.db'
-if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
+// The app's database is Postgres on Neon (DATABASE_URL_UNPOOLED, a direct connection: the app runs as one long-lived
+// process on the person's computer). Tests use PGlite, a real Postgres in memory, so they never touch Neon.
+// Both give the same Drizzle API; every call is async.
 
-const sqlite = new Database(path)
-sqlite.pragma('journal_mode = WAL')
-// SQLite ignores foreign keys unless enabled on every connection.
-sqlite.pragma('foreign_keys = ON')
+export type Db = PgDatabase<PgQueryResultHKT, typeof schema>
+export type Tx = PgTransaction<PgQueryResultHKT, typeof schema, ExtractTablesWithRelations<typeof schema>>
+/** Anything a query can run on: the database itself, or an open transaction. */
+export type DbHandle = Db | Tx
 
-export const db = drizzle(sqlite, { schema })
+const g = globalThis as { __factoryDb?: { db: Db; migrate: () => Promise<void> } }
 
-// Applies migrations to any connection. Foreign keys are switched off around the migrator,
-// outside its transaction: SQLite ignores that pragma inside a transaction, and table rebuilds
-// (DROP TABLE) would otherwise fire cascades and delete child rows. Integrity is verified afterwards.
-export function applyMigrations(conn: Database.Database, migrationsFolder: string): void {
-  conn.pragma('foreign_keys = OFF')
-  try {
-    migrate(drizzle(conn), { migrationsFolder })
-    const violations = conn.pragma('foreign_key_check') as unknown[]
-    if (violations.length > 0) {
-      throw new Error(`Migration left ${violations.length} foreign key violation(s): ${JSON.stringify(violations)}`)
-    }
-  } finally {
-    conn.pragma('foreign_keys = ON')
+function connect(): { db: Db; migrate: () => Promise<void> } {
+  if (process.env.VITEST) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PGlite } = require('@electric-sql/pglite') as typeof import('@electric-sql/pglite')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { drizzle } = require('drizzle-orm/pglite') as typeof import('drizzle-orm/pglite')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { migrate } = require('drizzle-orm/pglite/migrator') as typeof import('drizzle-orm/pglite/migrator')
+    const client = new PGlite()
+    const db = drizzle(client, { schema }) as unknown as Db
+    return { db, migrate: () => migrate(drizzle(client, { schema }), { migrationsFolder: './drizzle-pg' }) }
   }
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Pool } = require('pg') as typeof import('pg')
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { drizzle } = require('drizzle-orm/node-postgres') as typeof import('drizzle-orm/node-postgres')
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { migrate } = require('drizzle-orm/node-postgres/migrator') as typeof import('drizzle-orm/node-postgres/migrator')
+  const url = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL
+  if (!url) throw new Error('DATABASE_URL_UNPOOLED is not set. Run `neon env pull` to write it into .env.local.')
+  const pool = new Pool({ connectionString: url, max: 5 })
+  const db = drizzle(pool, { schema }) as unknown as Db
+  return { db, migrate: () => migrate(drizzle(pool, { schema }), { migrationsFolder: './drizzle-pg' }) }
 }
 
-export function migrateDb(): void {
-  applyMigrations(sqlite, './drizzle')
+// One connection per process, kept across hot reloads.
+const conn = (g.__factoryDb ??= connect())
+export const db: Db = conn.db
+
+/** Applies the Postgres migrations (`npm run db:migrate`; tests call it once per file). */
+export function migrateDb(): Promise<void> {
+  return conn.migrate()
 }
