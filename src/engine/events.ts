@@ -47,6 +47,9 @@ export type NodeEventType =
   // of the person, and answered.
   | 'node.findings_checked'
   | 'node.finding_resolved'
+  // For a developer, never shown: why the check of one finding ended without proof (a short machine reason, and the
+  // end of the verifier's answer when it gave one).
+  | 'node.finding_checked'
   | 'node.question_asked'
   | 'node.question_answered'
 export type EventType = RunEventType | NodeEventType

@@ -112,11 +112,14 @@ export function EventBar({ event, block, onPoint }: { event: Wire; block: Block;
   )
 }
 
+/** Events kept for a developer reading the run later, never for the person. */
+const FOR_DEVELOPERS: ReadonlySet<string> = new Set(['node.finding_checked'])
+
 /** The list of lines. Events whose block the run does not contain are left out: a line must name a real block. */
 export function EventBarList({ events, blocks, onPoint }: { events: readonly Wire[]; blocks: readonly Block[]; onPoint: (blockId: string) => void }) {
   const byId = new Map(blocks.map(b => [b.id, b]))
   const lines = events.flatMap(event => {
-    if (!event.type.startsWith('node.')) return []
+    if (!event.type.startsWith('node.') || FOR_DEVELOPERS.has(event.type)) return []
     const id = str(((event.payload ?? {}) as Record<string, unknown>).blockId)
     const block = id === undefined ? undefined : byId.get(id)
     return block ? [{ event, block }] : []

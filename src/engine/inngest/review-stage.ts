@@ -7,7 +7,7 @@ import { bySeverity, findingsOf, mergeDuplicates, recordFindings, riskOf, setFin
 import { QUESTION_ANSWERED } from '@/engine/inngest/client'
 import { LEAVE, askPerson, takeAnswer, type Question } from '@/engine/questions'
 import { addEntry, corePaths, standingFor, touchesCore } from '@/engine/register'
-import { corrected, makeCopy as realMakeCopy, removeCopy, reproduced, runRepro as realRunRepro, type Repro, type ReproRun } from '@/engine/repro'
+import { corrected, makeCopy as realMakeCopy, removeCopy, reproduced, runRepro as realRunRepro, type NoRepro, type Repro, type ReproRun } from '@/engine/repro'
 import {
   APPROVAL_WAIT,
   MAX_ATTEMPTS,
@@ -168,6 +168,8 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
 }
 
 type End = { state: FindingRow['state']; outcome: 'done' | 'asked_yes' | 'asked_no' | 'discarded' | 'unchecked' | 'open'; reason: string; evidence?: ReproRun }
+/** Why a check ended without proof: what the verifier's answer lacked (NoRepro), or where the stage itself stopped. */
+type UnbackedWhy = NoRepro | 'no_folder' | 'copy_failed' | `verifier_${Exclude<AttemptResult['kind'], 'done' | 'cancelled'>}` | 'no_repro' | 'app_run_not_reproduced'
 type Verified = { verdict: 'confirmed' | 'unbacked' | 'refuted' | 'cancelled'; reason?: string; repro?: Repro }
 
 const asFinding = (r: FindingRow) => ({ type: r.type, ...(r.file !== undefined ? { file: r.file } : {}), ...(r.line !== undefined ? { line: r.line } : {}), problem: r.problem })
@@ -212,17 +214,23 @@ async function verifyFinding(ctx: Context, nodeId: string, row: FindingRow, n: n
   }
   if (await isCancelled(runId)) return { verdict: 'cancelled' }
   await sayOnCard(ctx, nodeId, strings.review.checking(n, of))
-  const unbacked = async (reason: string, extra: { repro?: Repro; evidence?: Parameters<typeof setFinding>[1]['evidence'] } = {}): Promise<Verified> => {
-    await setFinding(row.id, { state: 'unbacked', reason, ...extra })
+  // `why` is for a developer reading the run later: the person sees `reason` only.
+  const unbacked = async (reason: string, why: UnbackedWhy, extra: { repro?: Repro; evidence?: ReproRun; answer?: string } = {}): Promise<Verified> => {
+    const { answer, ...kept } = extra
+    await withTx(runId, async tx => {
+      await setFinding(row.id, { state: 'unbacked', reason, ...kept }, tx)
+      const measured = kept.evidence ? { exitCode: kept.evidence.exitCode, markerSeen: kept.evidence.markerSeen } : {}
+      await appendEventSync({ runId, nodeRunId: nodeId, type: 'node.finding_checked', payload: { blockId: block.id, findingId: row.id, verdict: 'unbacked', why, ...measured, ...(answer !== undefined ? { answer } : {}) } }, tx)
+    })
     return { verdict: 'unbacked' }
   }
   const taskDir = workspace.workdir
-  if (!taskDir) return unbacked(strings.findings.checkNotRun)
+  if (!taskDir) return unbacked(strings.findings.checkNotRun, 'no_folder')
   let copy: string
   try {
     copy = await (deps.makeCopy ?? realMakeCopy)(taskDir)
   } catch {
-    return unbacked(strings.findings.checkNotRun)
+    return unbacked(strings.findings.checkNotRun, 'copy_failed')
   }
   let result: AttemptResult
   try {
@@ -231,16 +239,16 @@ async function verifyFinding(ctx: Context, nodeId: string, row: FindingRow, n: n
     removeCopy(copy)
   }
   if (result.kind === 'cancelled') return { verdict: 'cancelled' }
-  if (result.kind !== 'done') return unbacked(strings.findings.checkNotRun)
+  if (result.kind !== 'done') return unbacked(strings.findings.checkNotRun, `verifier_${result.kind}`)
   if (result.refuted) {
     await setFinding(row.id, { state: 'refuted', reason: result.refuted.why })
     return { verdict: 'refuted', reason: result.refuted.why }
   }
-  if (!result.repro) return unbacked(strings.findings.notReproduced)
+  if (!result.repro) return unbacked(strings.findings.notReproduced, result.noRepro?.why ?? 'no_repro', result.noRepro ? { answer: result.noRepro.answer } : {})
   const repro = result.repro
   const evidence = await whileRunLasts(runId, signal => (deps.runRepro ?? realRunRepro)(repro, taskDir, signal))
   if (await isCancelled(runId)) return { verdict: 'cancelled' }
-  if (!reproduced(evidence)) return unbacked(strings.findings.notReproduced, { repro, evidence })
+  if (!reproduced(evidence)) return unbacked(strings.findings.notReproduced, 'app_run_not_reproduced', { repro, evidence })
   await setFinding(row.id, { state: 'confirmed', repro, evidence })
   return { verdict: 'confirmed', repro }
 }

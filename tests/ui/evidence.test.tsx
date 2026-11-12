@@ -302,3 +302,13 @@ test('the round a card shows stays the person\'s during the app\'s own pass, and
   const { container } = render(<BlockCard block={tests} view={fold([done, person, done, fixes]).tests!} />)
   expect(container.querySelector('[data-testid="round-tests"]')).toHaveTextContent(strings.gate.round(2))
 })
+
+test('why a check ended without proof is for a developer: the event bar shows no line for it, and the card does not change', async () => {
+  const { EventBarList } = await import('@/ui/EventBar')
+  const review = blocks.find(b => b.kind === 'review')!
+  const checked = { type: 'node.finding_checked' as const, payload: { blockId: review.id, findingId: 'f1', verdict: 'unbacked', why: 'unsafe_path', answer: '{"reproduced":true}' } }
+  render(<EventBarList events={[{ sequence: 1, type: 'node.started', payload: { blockId: review.id } }, { sequence: 2, ...checked }]} blocks={blocks} onPoint={() => {}} />)
+  expect(screen.getAllByTestId('event-line')).toHaveLength(1)
+  expect(screen.queryByText(/unsafe_path/)).toBeNull()
+  expect(fold([{ type: 'node.started', payload: { blockId: review.id } }, checked])[review.id]).toEqual(fold([{ type: 'node.started', payload: { blockId: review.id } }])[review.id])
+})

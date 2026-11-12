@@ -1,6 +1,6 @@
 import type { BlockKind } from '@/domain/graph'
 import type { Job } from '@/engine/plan'
-import type { Repro } from '@/engine/repro'
+import type { NoRepro, Repro } from '@/engine/repro'
 import type { FindingType, Focus, Review } from '@/engine/review'
 import type { TestRun } from '@/engine/test-runner'
 import type { Standing } from '@/engine/register'
@@ -8,6 +8,9 @@ import type { Standing } from '@/engine/register'
 // The contract every agent provider implements. Nothing here may depend on a specific provider, the
 // database or the event log: a provider yields activity and the executor decides what to record.
 // A stream ends with exactly one terminal event (done or error), unless the signal aborts first.
+
+/** Why a verifier gave no usable repro, and the last part of what it answered (already redacted). */
+export type VerifierMiss = { why: NoRepro; answer: string }
 
 export type AgentEvent =
   | { type: 'step'; text: string }
@@ -18,7 +21,8 @@ export type AgentEvent =
   // `plan`: a planner's jobs, read from its answer — its proposal, which the person checks before anything is built.
   // `repro`: a verifier's reproduction (null: it did not reproduce the problem); `refuted`: it showed the cited code
   // does not do what the finding says. Both are the model's claims until the app runs the repro itself.
-  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string } }
+  // `noRepro`: why a verifier's answer gave no repro, with the end of that answer; for a developer, never shown to the person.
+  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss }
   // Same rule for a failure: 'system' marks a sentence the app composed from facts. `cause` names a failure the
   // executor must not retry (re-running failing tests twice proves nothing new).
   | { type: 'error'; message: string; source?: 'provider' | 'system'; cause?: 'tests_failed' }

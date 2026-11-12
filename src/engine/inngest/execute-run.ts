@@ -26,7 +26,7 @@ import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
 import { claudeProvider } from '@/providers/claude'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { demoProvider } from '@/providers/demo'
-import type { AgentExecutionInput, AgentProvider } from '@/providers/types'
+import type { AgentExecutionInput, AgentProvider, VerifierMiss } from '@/providers/types'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
 
@@ -249,7 +249,7 @@ export function outcomeOf(state: string): Outcome['outcome'] | null {
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string } }
+export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss }
 export type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
@@ -315,7 +315,7 @@ export async function runAttempt(
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') await onStep(ev.text)
         else if (ev.type === 'evidence') onEvidence(ev.data)
-        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}) }
+        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}), ...(ev.noRepro ? { noRepro: ev.noRepro } : {}) }
         else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
       }
       return { kind: 'ended' }

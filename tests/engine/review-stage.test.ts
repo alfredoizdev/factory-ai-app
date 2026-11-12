@@ -487,6 +487,37 @@ describe('a finding is verified, then fixed or asked about', () => {
     expect(s.reproRuns).toEqual([])
   })
 
+  test('a verifier that gives no usable repro: the person sees the same sentence, the event log says why for a developer', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const noRepro = { why: 'unsafe_path' as const, answer: '{"reproduced":true,"files":["/tmp/r.mjs"]}' }
+    const s = scripted({ found: [finding({ severity: 'high' })], verify: () => [{ type: 'done', summary: 'v', source: 'provider', repro: null, noRepro }] })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    const row = (await findingsOf(runId))[0]!
+    expect(row).toMatchObject({ reason: strings.findings.notReproduced })
+    expect(s.reproRuns).toEqual([])
+    const checked = (await eventsSince(runId, 0)).filter(e => e.type === 'node.finding_checked').map(e => e.payload)
+    expect(checked).toEqual([expect.objectContaining({ findingId: row.id, verdict: 'unbacked', why: 'unsafe_path', answer: noRepro.answer })])
+  })
+
+  test('every other way a check ends without proof says why in the event log too', async () => {
+    const whys = async (script: Partial<Script>, change?: (deps: Partial<ExecutorDeps>) => void) => {
+      const runId = await newRun()
+      const { dir, base } = workdir(false)
+      const s = scripted({ found: [finding()], ...script })
+      change?.(s.deps)
+      await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+      return (await eventsSince(runId, 0)).filter(e => e.type === 'node.finding_checked').map(e => (e.payload as { why: string }).why)
+    }
+    expect(await whys({ verify: () => [{ type: 'error', message: 'boom', source: 'provider' }] })).toEqual(['verifier_error'])
+    expect(await whys({ verify: () => [{ type: 'done', summary: 'v', source: 'provider', repro: null }] })).toEqual(['no_repro'])
+    expect(await whys({ repro: () => seenRun({ exitCode: 0 }) })).toEqual(['app_run_not_reproduced'])
+    expect(await whys({}, d => { d.makeCopy = async () => { throw new Error('no copy') } })).toEqual(['copy_failed'])
+    // A refuted or a reproduced finding is not a check that ended without proof.
+    expect(await whys({ verify: () => [{ type: 'done', summary: 'r', source: 'provider', repro: null, refuted: { why: 'fine' } }] })).toEqual([])
+    expect(await whys({})).toEqual([])
+  })
+
   test('a copy that cannot be made leaves a high problem unbacked, saying the check could not be run, and asks', async () => {
     const runId = await newRun()
     const { dir, base } = workdir(false)

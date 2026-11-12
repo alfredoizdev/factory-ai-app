@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
   corrected,
+  checkRepro,
   makeCopy,
   MAX_REPRO_BYTES,
   MAX_REPRO_FILES,
@@ -112,6 +113,36 @@ describe('parseRepro', () => {
   test('the last answer wins when the reply holds several', () => {
     const text = `${JSON.stringify({ ...ok, command: 'first' })}\nthen\n${JSON.stringify({ ...ok, command: 'second' })}`
     expect(parseRepro(text, files)?.command).toBe('second')
+  })
+})
+
+describe('checkRepro says why an answer gives no repro', () => {
+  const answer = (o: object) => `I tried it.\n${JSON.stringify(o)}`
+  const files = (p: string) => (p === 'r.mjs' ? 'content' : null)
+  const ok = { reproduced: true, command: 'node r.mjs', marker: 'MARKER-XYZ-1', files: ['r.mjs'] }
+  const why = (text: string, read: (p: string) => string | null = files) => {
+    const r = checkRepro(text, read)
+    return 'why' in r ? r.why : 'ok'
+  }
+
+  test('a usable answer is the same repro parseRepro gives', () => {
+    expect(checkRepro(answer(ok), files)).toEqual({ repro: parseRepro(answer(ok), files) })
+  })
+  test('each refusal has its own short reason', () => {
+    expect(why('no json here')).toBe('no_answer')
+    expect(why(answer({ reproduced: false }))).toBe('not_reproduced_by_verifier')
+    expect(why(answer({ ...ok, command: ' ' }))).toBe('bad_command')
+    expect(why(answer({ ...ok, marker: 'SHORT' }))).toBe('bad_marker')
+    expect(why(answer({ ...ok, command: 'echo MARKER-XYZ-1' }))).toBe('bad_marker')
+    expect(why(answer({ ...ok, files: 'r.mjs' }))).toBe('limits')
+    expect(why(answer({ ...ok, files: Array.from({ length: MAX_REPRO_FILES + 1 }, (_, i) => `f${i}`) }), () => 'x')).toBe('limits')
+    expect(why(answer(ok), () => 'x'.repeat(MAX_REPRO_BYTES + 1))).toBe('limits')
+    expect(why(answer({ ...ok, files: ['gone.mjs'] }))).toBe('missing_file')
+  })
+  test('a script written outside the copy (an absolute path, as a real verifier did with /tmp) is an unsafe path', () => {
+    const real = answer({ reproduced: true, command: 'node /tmp/repro_sum/r.mjs src/app/sum.ts', marker: 'BUG-SUM-WRONG-RESULT got 0', files: ['/tmp/repro_sum/r.mjs'] })
+    expect(why(real, () => 'x')).toBe('unsafe_path')
+    expect(parseRepro(real, () => 'x')).toBeNull()
   })
 })
 

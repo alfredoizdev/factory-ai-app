@@ -67,31 +67,43 @@ export function parseVerifierAnswer(text: string): VerifierAnswer | null {
 }
 
 /**
- * The reproduction in the verifier's answer, or null. `readFile` returns a named file's content from the verifier's
- * copy, or null when it is missing or unreadable. One bad path, one missing file or one limit passed: no repro at all.
+ * Why a verifier's answer gave no reproduction, for a developer reading the run later (never shown to the person).
+ * `no_answer`: no JSON object with "reproduced". `not_reproduced_by_verifier`: it said it could not. The rest name the
+ * check that refused it.
  */
-export function parseRepro(text: string, readFile: (path: string) => string | null): Repro | null {
-  for (const o of objectsWith(text, 'reproduced')) {
-    if (o.reproduced !== true) return null
-    const { command, marker, files: named } = o
-    if (typeof command !== 'string' || command.trim() === '' || typeof marker !== 'string') return null
-    // The marker proves the script itself reached the failing point: a line only it prints, which no error message
-    // that merely quotes the command can contain.
-    if (marker.length < MIN_MARKER_CHARS || /[\r\n]/.test(marker) || command.includes(marker)) return null
-    if (!Array.isArray(named) || named.length > MAX_REPRO_FILES) return null
-    if (!named.every((p): p is string => typeof p === 'string' && safeReproPath(p))) return null
-    const files: Repro['files'] = []
-    let bytes = 0
-    for (const path of named) {
-      const content = readFile(path)
-      if (content === null) return null
-      bytes += Buffer.byteLength(content)
-      if (bytes > MAX_REPRO_BYTES) return null
-      files.push({ path, content })
-    }
-    return { command, marker, files }
+export type NoRepro = 'no_answer' | 'not_reproduced_by_verifier' | 'bad_command' | 'bad_marker' | 'unsafe_path' | 'missing_file' | 'limits'
+
+/**
+ * The reproduction in the verifier's answer, or why there is none. `readFile` returns a named file's content from the
+ * verifier's copy, or null when it is missing or unreadable. One bad path, one missing file or one limit passed: no repro at all.
+ */
+export function checkRepro(text: string, readFile: (path: string) => string | null): { repro: Repro } | { why: NoRepro } {
+  const o = objectsWith(text, 'reproduced')[0]
+  if (!o) return { why: 'no_answer' }
+  if (o.reproduced !== true) return { why: 'not_reproduced_by_verifier' }
+  const { command, marker, files: named } = o
+  if (typeof command !== 'string' || command.trim() === '') return { why: 'bad_command' }
+  // The marker proves the script itself reached the failing point: a line only it prints, which no error message
+  // that merely quotes the command can contain.
+  if (typeof marker !== 'string' || marker.length < MIN_MARKER_CHARS || /[\r\n]/.test(marker) || command.includes(marker)) return { why: 'bad_marker' }
+  if (!Array.isArray(named) || named.length > MAX_REPRO_FILES) return { why: 'limits' }
+  if (!named.every((p): p is string => typeof p === 'string' && safeReproPath(p))) return { why: 'unsafe_path' }
+  const files: Repro['files'] = []
+  let bytes = 0
+  for (const path of named) {
+    const content = readFile(path)
+    if (content === null) return { why: 'missing_file' }
+    bytes += Buffer.byteLength(content)
+    if (bytes > MAX_REPRO_BYTES) return { why: 'limits' }
+    files.push({ path, content })
   }
-  return null
+  return { repro: { command, marker, files } }
+}
+
+/** The reproduction in the verifier's answer, or null (see checkRepro for why). */
+export function parseRepro(text: string, readFile: (path: string) => string | null): Repro | null {
+  const r = checkRepro(text, readFile)
+  return 'repro' in r ? r.repro : null
 }
 
 /** The environment for git inside a copy: nothing inherited may point it back at the real task, and it never looks above the copy. */

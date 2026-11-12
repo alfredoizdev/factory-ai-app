@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import { claudeArgs, createClaudeProvider, MODEL_NAME, routeFor, STOP_GRACE_MS } from '@/providers/claude'
 import type { AgentEvent } from '@/providers/types'
 import type { TestRun } from '@/engine/test-runner'
+import { parseRepro } from '@/engine/repro'
 import { strings } from '@/ui/strings'
 
 type Fake = EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn>; exitCode: number | null; signalCode: null }
@@ -503,6 +504,57 @@ describe('the verifier', () => {
       rmSync(copy, { recursive: true, force: true })
       rmSync(elsewhere, { recursive: true, force: true })
     }
+  })
+
+  test('is told to write its script inside this directory, with paths relative to it, never somewhere else', () => {
+    const prompt = strings.providers.claude.verifyPrompt({ request: 'make it blue', finding })
+    expect(prompt).toMatch(/inside this directory/i)
+    expect(prompt).toMatch(/not in \/tmp/i)
+    expect(prompt).toMatch(/relative to this directory/i)
+    expect(prompt).toMatch(/fresh copy/i)
+  })
+
+  test('is told the script exits non-zero and prints the marker only when it sees the wrong behaviour', () => {
+    const prompt = strings.providers.claude.verifyPrompt({ request: 'make it blue', finding })
+    expect(prompt).toMatch(/exits? with a non-zero code/i)
+    expect(prompt).toMatch(/exits? with 0/i)
+    expect(prompt).toMatch(/only when (it sees )?the wrong behaviour/i)
+  })
+
+  test('is told the marker line is the marker exactly, with any detail on another line', () => {
+    const prompt = strings.providers.claude.verifyPrompt({ request: 'make it blue', finding })
+    expect(prompt).toMatch(/exactly the marker/i)
+    expect(prompt).toMatch(/nothing else on that line/i)
+    expect(prompt).toMatch(/wrong value.*on another line/i)
+  })
+
+  test('the example answer in the prompt is itself a usable repro', () => {
+    const prompt = strings.providers.claude.verifyPrompt({ request: 'make it blue', finding })
+    const example = prompt.split('\n').find(l => l.startsWith('For example:'))!
+    expect(example).toBeDefined()
+    const read = vi.fn(() => 'script')
+    expect(parseRepro(example, read)).not.toBeNull()
+    expect(read).toHaveBeenCalled()
+  })
+
+  test('without a usable repro, the done event says why and keeps the end of its answer, for a developer', async () => {
+    const absolute = { reproduced: true, command: 'node /tmp/repro_sum/r.mjs', marker: 'BUG-SUM-WRONG-RESULT', files: ['/tmp/repro_sum/r.mjs'] }
+    const unsafe = (await run(verify, answer(absolute))).events.at(-1) as { repro?: unknown; noRepro?: { why: string; answer: string } }
+    expect(unsafe).toMatchObject({ type: 'done', repro: null, noRepro: { why: 'unsafe_path' } })
+    expect(unsafe.noRepro!.answer).toContain('/tmp/repro_sum/r.mjs')
+    expect((await run(verify, answer({ ...absolute, files: ['gone.js'] }), () => null)).events.at(-1)).toMatchObject({ noRepro: { why: 'missing_file' } })
+    expect((await run(verify, answer({ reproduced: false }))).events.at(-1)).toMatchObject({ noRepro: { why: 'not_reproduced_by_verifier' } })
+    expect((await run(verify, [{ type: 'result', is_error: false, result: 'done!' }])).events.at(-1)).toMatchObject({ noRepro: { why: 'no_answer', answer: 'done!' } })
+    const long = (await run(verify, [{ type: 'result', is_error: false, result: `${'x'.repeat(5000)} {"reproduced":false}` }])).events.at(-1) as { noRepro: { answer: string } }
+    expect(long.noRepro.answer.length).toBeLessThanOrEqual(1000)
+    expect(long.noRepro.answer).toContain('{"reproduced":false}')
+  })
+
+  test('a refuted answer or a usable repro carries no reason for missing one', async () => {
+    const refuted = (await run(verify, answer({ reproduced: false, refuted: true, why: 'x' }))).events.at(-1) as { noRepro?: unknown }
+    expect(refuted.noRepro).toBeUndefined()
+    const good = (await run(verify, answer({ reproduced: true, command: 'node r.js', marker: 'MARKER-XYZ-1', files: ['r.js'] }))).events.at(-1) as { noRepro?: unknown }
+    expect(good.noRepro).toBeUndefined()
   })
 
   test('without a copy to work in, or a finding, nothing starts', async () => {

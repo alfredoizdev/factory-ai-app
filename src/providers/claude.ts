@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline'
 import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
 import { parsePlan, workList } from '@/engine/plan'
-import { MAX_REPRO_BYTES, parseRepro, parseVerifierAnswer } from '@/engine/repro'
+import { MAX_REPRO_BYTES, checkRepro, parseVerifierAnswer, type NoRepro } from '@/engine/repro'
 import { parseReview } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
 import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
@@ -20,6 +20,8 @@ import { strings } from '@/ui/strings'
 // sentence saying which milestone brings it — nothing here pretends to do work it does not do.
 
 const STDERR_TAIL = 600
+/** How much of a verifier's answer is kept when it gave no usable repro. */
+const ANSWER_KEPT = 1000
 /** How long the builder's processes get to exit after SIGTERM before they are killed outright. */
 export const STOP_GRACE_MS = 3000
 
@@ -132,14 +134,18 @@ async function* runVerifier(input: AgentExecutionInput, controls: ExecutionContr
       continue
     }
     const text = ev.fullText ?? ev.summary
+    // What a developer needs to see why there was no repro: the end of the answer, where the JSON object is.
+    const miss = (why: NoRepro) => ({ why, answer: text.slice(-ANSWER_KEPT) })
     const answer = parseVerifierAnswer(text)
     if (!answer) {
-      yield { type: 'done', source: 'system', summary: strings.providers.claude.verifierUnreadable, usage: ev.usage, repro: null }
+      yield { type: 'done', source: 'system', summary: strings.providers.claude.verifierUnreadable, usage: ev.usage, repro: null, noRepro: miss('no_answer') }
       return
     }
-    const repro = answer.reproduced ? parseRepro(text, p => deps.readCopyFile(workdir, p)) : null
+    const checked = answer.reproduced ? checkRepro(text, p => deps.readCopyFile(workdir, p)) : null
+    const repro = checked && 'repro' in checked ? checked.repro : null
     const summary = repro ? strings.providers.claude.verified : answer.refuted ? strings.providers.claude.refuted : strings.providers.claude.notReproduced
-    yield { type: 'done', source: 'provider', summary, usage: ev.usage, repro, ...(answer.refuted ? { refuted: answer.refuted } : {}) }
+    const noRepro = repro || answer.refuted ? {} : { noRepro: miss(checked && 'why' in checked ? checked.why : 'not_reproduced_by_verifier') }
+    yield { type: 'done', source: 'provider', summary, usage: ev.usage, repro, ...(answer.refuted ? { refuted: answer.refuted } : {}), ...noRepro }
     return
   }
 }
