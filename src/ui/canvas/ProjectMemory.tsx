@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useId, useRef, useState } from 'react'
-import { label as entryLabel, type Entry } from '@/engine/register'
+import { label as entryLabel } from '@/domain/register-labels'
+import type { Entry } from '@/engine/register'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 
