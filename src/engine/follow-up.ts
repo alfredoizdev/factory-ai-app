@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { approvals, runs } from '@/db/schema'
+import { approvals, nodeRuns, runs, workflowVersions } from '@/db/schema'
+import type { Graph } from '@/domain/graph'
 import { and } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
 import { DeliveryError, keepCommit, unfinishedCommit, wasDelivered } from '@/engine/delivery'
@@ -71,6 +72,15 @@ async function continueFailed(parent: typeof runs.$inferSelect, text: string): P
   }
   const { runId } = await createRun({ workflowId: parent.workflowId, request: text, providerId: parent.providerId as RunProviderId })
   await db.update(runs).set({ parentRunId: parent.id, baseCommit: parent.baseCommit, deliveryBase: parent.deliveryBase, title: parent.title }).where(eq(runs.id, runId))
-  await appendEvent({ runId, type: 'run.continues', payload: { fromRun: parent.id, commit } })
+  await appendEvent({ runId, type: 'run.continues', payload: { fromRun: parent.id, commit, skipPlan: await planWasMade(parent) } })
   return { runId }
+}
+
+/** True when the failed run's plan was checked and built from: the run that picks it up does not plan again. */
+async function planWasMade(parent: typeof runs.$inferSelect): Promise<boolean> {
+  const version = (await db.select().from(workflowVersions).where(eq(workflowVersions.id, parent.versionId)))[0]
+  if (!version) return false
+  const planBlocks = (JSON.parse(version.graphJson) as Graph).blocks.filter(b => b.kind === 'plan').map(b => b.id)
+  const rows = await db.select().from(nodeRuns).where(and(eq(nodeRuns.runId, parent.id), eq(nodeRuns.state, 'passed')))
+  return rows.some(r => planBlocks.includes(r.blockId))
 }

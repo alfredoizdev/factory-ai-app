@@ -582,6 +582,10 @@ async function failedRun() {
   await db.update(runs).set({ status: 'failed', providerId: 'files' }).where(eq(runs.id, made.runId))
   const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, made.runId))).find(n => n.blockId === 'tests')!
   await db.update(nodeRuns).set({ state: 'failed', failureCause: 'tests_failed' }).where(eq(nodeRuns.id, node.id))
+  // Its plan was checked and built from before the check failed.
+  for (const n of (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, made.runId))).filter(n => n.blockId.startsWith('plan'))) {
+    await db.update(nodeRuns).set({ state: 'passed' }).where(eq(nodeRuns.id, n.id))
+  }
   const project = (await db.select().from(runs).where(eq(runs.id, made.runId)))[0]!.projectId
   await db.insert(evidence).values({ id: ulid(), projectId: project, runId: made.runId, nodeRunId: node.id, kind: 'test_run', source: 'test-runner', dataJson: JSON.stringify({ command: 'npm run build', exitCode: 1, signal: null, outputTail: 'Type error: missing prop\n' }), createdAt: now() })
   return made
@@ -614,6 +618,10 @@ test('a failed run is picked up where it stopped: the new run starts from its wo
   const { changeUnderReview } = await import('@/engine/approvals')
   expect((await changeUnderReview(runId))!.files.map(f => f.path).sort()).toEqual(['Button.tsx', 'page.tsx'])
   expect(child.parentRunId).toBe(parentId)
+  // The plan was checked on the failed run, so this one does not make or ask about it again.
+  const planBlocks = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).filter(n => n.blockId.startsWith('plan'))
+  expect(planBlocks.length).toBeGreaterThan(0)
+  expect(planBlocks.every(n => n.state === 'skipped')).toBe(true)
   // The saved work says it was never approved, and the person's project is untouched.
   expect(git(repo, 'log', '-1', '--format=%B', (await db.select().from(runs).where(eq(runs.id, parentId)))[0]!.branch!)).toContain('stopped before a person approved it')
   expect(git(repo, 'status', '--porcelain')).toBe('')

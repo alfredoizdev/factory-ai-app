@@ -100,6 +100,8 @@ type Plan = {
   autoApproveLowRisk: boolean
   /** A follow-up's parent request: what is already done in the folder it starts from. */
   previousRequest: string | null
+  /** Picking up a failed run whose plan was already checked: the plan is not made or asked about again. */
+  skipPlan?: boolean
 }
 /** What a block's execution may touch: the run's worktree (null for the demo) and the project's test command. */
 type Workspace = {
@@ -856,7 +858,13 @@ async function loadPlan(runId: string): Promise<Plan> {
     testCommand: project?.testCommand ?? null,
     autoApproveLowRisk: project?.autoApproveLowRisk ?? false,
     previousRequest: run.parentRunId ? ((await db.select({ r: runs.request }).from(runs).where(eq(runs.id, run.parentRunId)))[0]?.r ?? null) : null,
+    skipPlan: await planAlreadyMade(runId),
   }
+}
+
+async function planAlreadyMade(runId: string): Promise<boolean> {
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.continues'))).limit(1))[0]
+  return row ? (JSON.parse(row.payloadJson) as { skipPlan?: unknown }).skipPlan === true : false
 }
 
 /** The commit a run that picks up a failed one starts its files from, or null for any other run. */
@@ -963,6 +971,9 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block))
     } else if (route?.mode === 'skip') {
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block, route.reason))
+    } else if (block.kind === 'plan' && plan.skipPlan) {
+      // Picking up a failed task: its plan was checked and built already, so the work goes straight on.
+      result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block, strings.plan.alreadyMade))
     } else if (block.kind === 'plan' && provider.needsWorkspace) {
       // The planner proposes; the person checks, edits, and says build it — or asks for another plan with a note.
       let note: string | null = null
