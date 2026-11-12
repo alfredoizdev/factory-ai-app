@@ -9,10 +9,11 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "db:migrate": "tsx --env-file=.env.local -e \"import('./src/db/client.ts').then(m => m.migrateDb()).then(() => process.exit(0))\"",
+    "db:migrate": "tsx --env-file=.env.local --tsconfig tsconfig.json -e \"import('./src/db/client.ts').then(m => m.migrateDb()).then(() => process.exit(0))\"",
     "seed": "tsx src/db/seed.ts",
     "inngest": "npx inngest-cli dev --host 127.0.0.1 -u http://127.0.0.1:4100/api/inngest",
-    "db:generate": "drizzle-kit generate --config drizzle.pg.config.ts"
+    "db:generate": "drizzle-kit generate --config drizzle.pg.config.ts",
+    "db:copy-from-sqlite": "tsx --env-file=.env.local --tsconfig tsconfig.json src/db/copy-cli.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1167.0",
