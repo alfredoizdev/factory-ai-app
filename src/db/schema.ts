@@ -263,6 +263,34 @@ export const projectNotes = pgTable(
   t => [index('project_notes_project_idx').on(t.projectId), uniqueIndex('project_notes_number_idx').on(t.projectId, t.number)],
 )
 
+/** What reviewers reported about a task's change, and how each report ended: checked by the app before anyone acts on it. */
+export const findings = pgTable(
+  'findings',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+    round: integer('round').notNull(),
+    type: text('type').notNull(),
+    file: text('file'),
+    line: integer('line'),
+    problem: text('problem').notNull(),
+    severity: text('severity').notNull(),
+    affectsJson: text('affects_json').notNull(),
+    decisionsJson: text('decisions_json').notNull(),
+    reportersJson: text('reporters_json').notNull(),
+    count: integer('count').notNull().default(1),
+    state: text('state').notNull(),
+    reason: text('reason'),
+    reproJson: text('repro_json'),
+    evidenceJson: text('evidence_json'),
+    entryNumber: integer('entry_number'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  t => [index('findings_run_idx').on(t.runId)],
+)
+
 /** The computers that have opened this data: a name a person can read, for "its working copy is on …". */
 export const machines = pgTable('machines', {
   id: text('id').primaryKey(),

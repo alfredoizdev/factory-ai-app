@@ -43,6 +43,12 @@ export type NodeEventType =
   | 'node.plan_proposed'
   | 'node.planned'
   | 'node.plan_decided'
+  // Reviewers' findings were checked against the code (counts only); a finding reached its end; a question was asked
+  // of the person, and answered.
+  | 'node.findings_checked'
+  | 'node.finding_resolved'
+  | 'node.question_asked'
+  | 'node.question_answered'
 export type EventType = RunEventType | NodeEventType
 
 // Events carry only nodeRunId, so every node.* payload names its block: the client maps an event to a block without a join.

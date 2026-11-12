@@ -171,6 +171,18 @@ export const strings = {
       none: 'No review ran, so there is nothing to sum up. The final yes is yours.',
     },
   },
+  findings: {
+    noSuchFile: "The file it points to is not in this change's copy.",
+    noSuchLine: 'The line it points to is not in that file.',
+    outsideCopy: "The place it points to is outside this change's copy, so it was not read.",
+    risk: {
+      core: 'It touches a core area you marked.',
+      sensitive: (area: string) => `It touches a sensitive area: ${area}.`,
+      decision: (label: string) => `It touches a decision you made (${label}).`,
+      security: 'It is a serious security problem.',
+      unknown: 'It is not clear how risky this is.',
+    },
+  },
   history: {
     title: 'Past tasks',
     newTaskTitle: 'New task',

@@ -29,6 +29,13 @@
       "when": 1794494376169,
       "tag": "0003_equal_misty_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794494855296,
+      "tag": "0004_new_patch",
+      "breakpoints": true
     }
   ]
 }
