@@ -34,10 +34,29 @@ export const SENSITIVE: readonly [RegExp, string][] = [
   [/(^|\/)(\.github|\.gitlab|\.circleci)\/|(^|\/)(dockerfile|docker-compose[^/]*|vercel\.json|vercel\.ts|fly\.toml|netlify\.toml|render\.yaml|procfile)$/i, strings.risk.areas.deploy],
 ]
 
-export function classifyChange(files: readonly ChangedFile[], tests: TestFacts): RiskAssessment {
+/** How many core areas a change is told apart by; past that, how many more is said in one line. */
+export const MAX_CORE_REASONS = 5
+
+/** A core-area pattern ending in "/" is a folder and everything beneath it; any other pattern is that exact file. */
+export function insideCoreArea(path: string, pattern: string): boolean {
+  return pattern.endsWith('/') ? path.startsWith(pattern) : path === pattern
+}
+
+/** One reason per core area the files fall in, naming the first file there and how many others. */
+function coreReasons(files: readonly ChangedFile[], core: readonly string[]): string[] {
+  const hits = [...new Set(core)].flatMap(area => {
+    const inside = files.filter(f => insideCoreArea(f.path, area))
+    return inside.length > 0 ? [strings.risk.insideCore(inside[0]!.path, area, inside.length - 1)] : []
+  })
+  return hits.length > MAX_CORE_REASONS ? [...hits.slice(0, MAX_CORE_REASONS), strings.risk.moreCore(hits.length - MAX_CORE_REASONS)] : hits
+}
+
+/** `core`: the project's core areas that are switched on; a change inside one always needs the person. */
+export function classifyChange(files: readonly ChangedFile[], tests: TestFacts, core: readonly string[] = []): RiskAssessment {
   const reasons: string[] = []
   const linesChanged = files.reduce((n, f) => n + f.lines, 0)
   if (files.length === 0) reasons.push(strings.risk.nothingChanged)
+  reasons.push(...coreReasons(files, core))
   for (const f of files) {
     const hit = SENSITIVE.find(([re]) => re.test(f.path))
     if (hit) reasons.push(strings.risk.touches(f.path, hit[1]))
@@ -79,9 +98,9 @@ function changedFiles(workdir: string, baseCommit: string): ChangedFile[] {
   return [...counted, ...added]
 }
 
-export function assessRisk(workdir: string, baseCommit: string, tests: TestFacts): RiskAssessment {
+export function assessRisk(workdir: string, baseCommit: string, tests: TestFacts, core: readonly string[] = []): RiskAssessment {
   try {
-    return classifyChange(changedFiles(workdir, baseCommit), tests)
+    return classifyChange(changedFiles(workdir, baseCommit), tests, core)
   } catch {
     return { level: 'high', reasons: [strings.risk.unreadable], files: [], linesChanged: 0 }
   }

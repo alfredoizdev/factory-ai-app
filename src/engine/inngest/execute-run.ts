@@ -3,7 +3,7 @@ import { MAX_REVIEW_ROUNDS, defaultReviewerModel, type Focus, type Review } from
 import { distinctProblems, endingOf, findingsOf, needsPerson, notReal, problemGroups, type Ending } from '@/engine/findings'
 import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
-import { giveStanding, type Standing } from '@/engine/register'
+import { corePaths, giveStanding, type Standing } from '@/engine/register'
 import { markWaiting } from '@/engine/relay'
 import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
 import { and, eq } from 'drizzle-orm'
@@ -662,7 +662,10 @@ async function assessGate(runId: string, block: PlannedBlock, workspace: Workspa
   if (!workspace.workdir || !workspace.baseCommit) return null
   // The change as it stands now, recorded for any computer that shows the gate (and binds a decision to its hash).
   await changeUnderReview(runId).catch(() => null) // unreadable now: the gate reads it again when shown
-  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)))
+  // The core areas the person marked, as they are now: a change inside one is never waved through.
+  const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
+  const core = projectId ? await corePaths(projectId) : []
+  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)), core)
   await withTx(runId, async tx => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node || outcomeOf(node.state)) return

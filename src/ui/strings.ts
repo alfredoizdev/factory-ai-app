@@ -534,6 +534,11 @@ export const strings = {
       deploy: 'deployment',
     },
     touches: (path: string, area: string) => `It changes ${path} (${area}).`,
+    insideCore: (path: string, area: string, others: number) =>
+      area.endsWith('/')
+        ? `${path}${others > 0 ? ` and ${others} other ${others === 1 ? 'file' : 'files'} are` : ' is'} inside ${area}, which you marked as a core area.`
+        : `${path} is a file you marked as a core area.`,
+    moreCore: (n: number) => `It also changes ${n} more ${n === 1 ? 'core area' : 'core areas'} you marked.`,
     tooManyFiles: (n: number, max: number) => `It changes ${n} files; low risk is at most ${max}.`,
     tooManyLines: (n: number, max: number) => `It changes ${n} lines; low risk is at most ${max}.`,
     noTests: 'No tests were run, so nothing shows it works.',
@@ -763,10 +768,10 @@ export const strings = {
     suggestionsTitle: 'Suggested core areas',
     suggestionWhy: (area: string) => `Your latest change touched ${area}.`,
     suggestionYes: 'Yes, mark it as core',
-    coreWhat: 'A core area is a folder or file the agents must not change without asking you first.',
+    coreWhat: 'A core area is a folder or file that matters a lot to you. A change there never goes ahead on its own: it always waits for your yes.',
     coreLabel: 'Folder or file',
     corePlaceholder: 'e.g. src/app',
-    coreHint: 'The app will ask you before changing anything here.',
+    coreHint: 'Any change here waits for your yes, and a problem found here is never fixed without asking you.',
     coreAdd: 'Mark as core',
     core: {
       empty: 'Write the folder or file first.',

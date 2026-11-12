@@ -174,6 +174,15 @@ describe('how many reviewers read the change', () => {
     const steps = (await payloads(runId, 'node.step', 'review')).map(p => p.text)
     expect(steps).toContain(strings.review.depth.one)
   })
+
+  test('the same small change inside a core area the person marked is read by three', async () => {
+    const runId = await newRun()
+    await addEntry(await projectOf(runId), { kind: 'core', text: 'Ask me before changing a.tsx', paths: ['a.tsx'], source: 'person' })
+    const { dir, base } = workdir(true)
+    const { provider, asked } = reviewers(() => says())
+    await drive(runId, provider, dir, base, recordingStep())
+    expect(asked).toEqual(['logic', 'security', 'effects'])
+  })
 })
 
 describe('what the reviewers found', () => {

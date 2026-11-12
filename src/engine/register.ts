@@ -6,7 +6,7 @@ import { db } from '@/db/client'
 import { projectNotes, projects, runs } from '@/db/schema'
 import { appendEventSync, type DbHandle, lockRun } from '@/engine/events'
 import { projectHere } from '@/engine/machine'
-import { SENSITIVE } from '@/engine/risk'
+import { SENSITIVE, insideCoreArea } from '@/engine/risk'
 import { strings } from '@/ui/strings'
 
 // The project's numbered register: the short rules the person taught, the decisions made on earlier tasks, the core
@@ -131,7 +131,7 @@ export function coreCandidates(files: readonly string[]): { area: string; paths:
 
 /** A pattern ending in "/" is a folder and everything beneath it; any other pattern is that exact file. */
 export function touchesCore(path: string, patterns: readonly string[]): boolean {
-  return patterns.some(p => (p.endsWith('/') ? path.startsWith(p) : path === p))
+  return patterns.some(p => insideCoreArea(path, p))
 }
 
 /** Gives a number to every entry that has none, oldest first (what the migration does in SQL). Returns how many. */

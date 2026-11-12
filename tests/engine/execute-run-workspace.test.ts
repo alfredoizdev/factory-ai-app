@@ -10,6 +10,7 @@ import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
 import { recordDecision } from '@/engine/approvals'
+import { addEntry } from '@/engine/register'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { TestRun } from '@/engine/test-runner'
 import type { AgentEvent, AgentProvider, BlockRoute } from '@/providers/types'
@@ -251,6 +252,17 @@ test('a change to something sensitive stops for the person even with the switch 
   const [assessed] = await payloadOf(runId, 'node.assessed', 'human')
   expect(assessed!.level).toBe('high')
   expect(String(assessed!.reasons)).toContain('src/lib/stripe.ts')
+})
+
+test('a change inside a core area the person marked stops for them even with the switch on, and says where', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
+  const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]!.p
+  await addEntry(projectId, { kind: 'core', text: 'Ask me before changing src/app/', paths: ['src/app/'], source: 'person' })
+  await drive(runId, withTests(), realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
+  expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  const [assessed] = await payloadOf(runId, 'node.assessed', 'human')
+  expect(assessed!.level).toBe('high')
+  expect(assessed!.reasons).toEqual(['src/app/page.tsx is inside src/app/, which you marked as a core area.'])
 })
 
 test('with no tests run, nothing is low risk, even a one-line change', async () => {

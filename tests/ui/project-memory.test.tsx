@@ -71,6 +71,16 @@ test('a core area is added from a plain field with a one-line explanation, sent 
   expect((field as HTMLInputElement).value).toBe('')
 })
 
+test('the core area words say what the app does: a change there waits for a yes, a fix there is asked first', async () => {
+  await open()
+  expect(screen.getByText(strings.memory.coreWhat)).toBeInTheDocument()
+  const words = `${strings.memory.coreWhat} ${strings.memory.coreHint}`
+  expect(words).toContain('waits for your yes')
+  expect(words).toContain('never fixed without asking you')
+  // No question before the work starts is built, so none is promised.
+  expect(words).not.toMatch(/before chang|asking you first/i)
+})
+
 test('a refused path shows the plain sentence the server sent', async () => {
   respond = (_u, m) => (m === 'POST' ? new Response(JSON.stringify({ error: strings.memory.core.outside }), { status: 400 }) : null)
   await open()
