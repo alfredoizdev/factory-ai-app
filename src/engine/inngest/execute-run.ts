@@ -700,7 +700,7 @@ async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome
     ? strings.review.approve.none
     : rows.length === 0
       ? strings.review.approve.clean
-      : strings.review.approve.summary({ found: rows.length, fixed: count('fixed_unchecked'), discarded: count('refuted', 'discarded'), needsYou: rows.filter(needsPerson).length })
+      : strings.review.approve.summary({ found: rows.length, fixed: count('corrected'), discarded: count('refuted', 'discarded'), needsYou: rows.filter(needsPerson).length })
   return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }

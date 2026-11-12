@@ -210,6 +210,10 @@ export const strings = {
     leftByChoice: 'You chose to leave it as it is.',
     fixedUnchecked: 'Fixed. It has not been checked again yet.',
     fixFailed: 'The fix did not go through, so this one needs a look from you.',
+    fixedChecked: 'Fixed. The check that showed the problem now passes.',
+    fixNotSolved: 'The fix did not solve it: the check still shows the problem. The change was taken back, so this one needs a look from you.',
+    fixUndone: 'You chose to undo the fix.',
+    fixNotStarted: 'The app could not save the project as it was before a fix, so it changed nothing. This one needs a look from you.',
     unclearAnswer: 'The answer was not one the app can act on by itself, so this one still needs you.',
     risk: {
       core: 'It touches a core area you marked.',
@@ -244,6 +248,27 @@ export const strings = {
         { id: 'leave', label: 'Leave it as it is', means: 'Nothing is changed for this. The task goes on without it.' },
       ],
     }),
+    // A small fix that changed something that matters: what happened, why the app asks, and the two ways to answer.
+    forHeldFix: (held: { core: boolean; areas: readonly string[] }) => ({
+      text: [
+        `A small fix changed ${
+          held.core && held.areas.length > 0
+            ? `a part of the project you marked as important, and a part that deals with ${held.areas.join(' and ')}.`
+            : held.core
+              ? 'a part of the project you marked as important.'
+              : `a part of the project that deals with ${held.areas.join(' and ')}.`
+        }`,
+        'Do you want to keep it?',
+      ].join(' '),
+      why: 'The app does not change these parts without asking you first. If you undo it, the project goes back to how it was before the fix.',
+      options: [
+        { id: 'keep', label: 'Keep the fix', means: 'The fix stays in the change. The app then checks that it works. You still see the whole change before anything is sent.' },
+        { id: 'undo', label: 'Undo it', means: 'The fix is taken back and the project is put back as it was just before it.' },
+        { id: 'leave', label: 'I am not sure', means: 'The fix is taken back, the same as "Undo it", to be safe.' },
+      ],
+    }),
+    // One click away from the question: the files the fix changed and what the AI reviewer said about the problem.
+    heldDetail: (paths: readonly string[], said: string) => `Changed by the fix: ${paths.join(', ')}. The reviewer said: ${said}`,
     // The line the project's list of decisions keeps: the question, then what the person chose, then their own words.
     decided: (question: string, answer: string) => `${question} — ${answer}`,
     decidedWithWords: (question: string, answer: string, words: string) => `${question} — ${answer} — ${words}`,

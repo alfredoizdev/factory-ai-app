@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
@@ -16,11 +16,20 @@ import type { Repro, ReproRun } from '@/engine/repro'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { Finding, Focus } from '@/engine/review'
+import type { StageResult } from '@/engine/inngest/review-stage'
+import { MAX_FIX_ATTEMPTS } from '@/engine/tree-snapshot'
 import { createDemoProvider } from '@/providers/demo'
 import type { AgentEvent, AgentProvider } from '@/providers/types'
 import { strings } from '@/ui/strings'
 
 // The Review block reads the change with one reviewer or three, and checks what they found before the builder sees it.
+
+// What each pass through the Review stage returned, for the one thing the events do not show (`fixesSince`).
+const stageResults: StageResult[] = []
+vi.mock('@/engine/inngest/review-stage', async importOriginal => {
+  const real = await importOriginal<typeof import('@/engine/inngest/review-stage')>()
+  return { ...real, runReviewStage: async (ctx: Parameters<typeof real.runReviewStage>[0]) => { const r = await real.runReviewStage(ctx); stageResults.push(r); return r } }
+})
 
 beforeAll(() => migrateDb())
 const now = () => new Date().toISOString()
@@ -250,6 +259,10 @@ type Script = {
   repro?: (problem: string) => ReproRun
   /** The fixer ends in an error instead of a fix. */
   fixerFails?: boolean
+  /** What the fixer does to the task's folder, on its n-th call (1-based). */
+  fix?: (dir: string, n: number) => void | Promise<void>
+  /** What the app's run of the reproduction shows after the n-th fixer call. Default: the problem is gone. */
+  after?: (n: number) => ReproRun
   /** Runs inside the verifier call, before it answers (to cancel the run while it works). */
   duringVerify?: () => Promise<void>
 }
@@ -271,6 +284,7 @@ function scripted(script: Script) {
         return
       }
       if (input.role === 'fixer') {
+        await script.fix?.(input.workdir!, calls.filter(c => c.role === 'fixer').length)
         if (script.fixerFails) yield { type: 'error', message: 'could not', source: 'provider' }
         else yield { type: 'done', summary: 'fixed', source: 'provider' }
         return
@@ -292,6 +306,8 @@ function scripted(script: Script) {
     runRepro: async (r, wd) => {
       reproRuns.push(wd)
       expect(r).toEqual(repro)
+      // The first run of a finding is the verification; one that comes right after a fixer call is the check of that fix.
+      if (calls.at(-1)?.role === 'fixer') return (script.after ?? (() => seenRun({ exitCode: 0, markerSeen: false, outputTail: '' })))(calls.filter(c => c.role === 'fixer').length)
       return (script.repro ?? (() => seenRun()))(calls.filter(c => c.role === 'verifier').at(-1)!.problem!)
     },
   }
@@ -301,7 +317,7 @@ const send = async () => {}
 const projectOf = async (runId: string) => (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.projectId
 const withCore = async (runId: string) => addEntry(await projectOf(runId), { kind: 'core', text: 'Money code', paths: ['a.tsx'], source: 'test' })
 /** The steps of one finding that has been asked about and fixed. */
-const stepsOf = (row: FindingRow) => [`verify-${row.id}`, `ask-${row.id}`, `fix-${row.id}`, `resolve-${row.id}`]
+const stepsOf = (row: FindingRow) => [`verify-${row.id}`, `ask-${row.id}`, `snap-${row.id}`, `before-${row.id}`, `fix-${row.id}-1`, `check-${row.id}-1`, `resolve-${row.id}`]
 const counts = async (runId: string) => ({
   register: (await listRegister(await projectOf(runId))).filter(e => e.kind === 'finding').length,
   resolved: (await eventsSince(runId, 0)).filter(e => e.type === 'node.finding_resolved').length,
@@ -312,7 +328,7 @@ const questionRows = (runId: string) => db.select().from(questions).where(eq(que
 describe('a finding is verified, then fixed or asked about', () => {
   test('a reproduced small problem goes to the fixer; nothing is asked and the verifier never works in the task', async () => {
     const runId = await newRun()
-    const { dir, base } = workdir(false)
+    const { dir, base } = workdir(true)
     const s = scripted({ found: [finding()] })
     await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
     const verifier = s.calls.filter(c => c.role === 'verifier')
@@ -320,23 +336,23 @@ describe('a finding is verified, then fixed or asked about', () => {
     expect(verifier).toHaveLength(1)
     expect(verifier[0]!.workdir).toBe(s.copies[0])
     expect(verifier[0]!.workdir).not.toBe(dir)
-    expect(s.reproRuns).toEqual([dir]) // the app runs the repro itself, from the task's folder (which it copies)
+    expect(s.reproRuns).toEqual([dir, dir]) // the app runs the repro itself, from the task's folder (which it copies): once to see the problem, once to check the fix
     expect(s.copies.every(c => !existsSync(c))).toBe(true)
     expect(fixer).toHaveLength(1)
     expect(fixer[0]).toMatchObject({ workdir: dir, problem: 'wrong colour', repro })
     expect(await questionRows(runId)).toHaveLength(0)
     const [row] = await findingsOf(runId)
-    expect(row).toMatchObject({ state: 'fixed_unchecked', evidence: { exitCode: 1, markerSeen: true } })
+    expect(row).toMatchObject({ state: 'corrected', evidence: { exitCode: 0, markerSeen: false } })
     expect(row!.entryNumber).not.toBeNull()
     expect((await node(runId, 'review')).state).toBe('passed')
     const projectId = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.projectId
     const line = (await listRegister(projectId)).find(e => e.kind === 'finding')!
-    expect(line).toMatchObject({ number: row!.entryNumber, outcome: 'unchecked', runId, paths: ['a.tsx'] })
-    expect(await payloads(runId, 'node.finding_resolved', 'review')).toEqual([{ blockId: 'review', findingId: row!.id, state: 'fixed_unchecked', outcome: 'unchecked' }])
+    expect(line).toMatchObject({ number: row!.entryNumber, outcome: 'done', runId, paths: ['a.tsx'] })
+    expect(await payloads(runId, 'node.finding_resolved', 'review')).toEqual([{ blockId: 'review', findingId: row!.id, state: 'corrected', outcome: 'done' }])
     expect((await eventsSince(runId, 0)).some(e => e.type === 'node.reopened')).toBe(false)
     const approve = await payloads(runId, 'node.completed', 'approve')
-    // A fix nobody has checked yet is still the person's to look at.
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 1, discarded: 0, needsYou: 1 }))
+    // The check that showed the problem now passes: it counts as fixed, and nothing is left for the person.
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 1, discarded: 0, needsYou: 0 }))
   })
 
   test('a reproduced problem in a core area parks the run with one question; "leave it" discards it with the person\'s reason', async () => {
@@ -373,7 +389,7 @@ describe('a finding is verified, then fixed or asked about', () => {
       const runId = await newRun()
       const projectId = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.projectId
       await addEntry(projectId, { kind: 'core', text: 'Money code', paths: ['a.tsx'], source: 'test' })
-      const { dir, base } = workdir(false)
+      const { dir, base } = workdir(true)
       const s = scripted({ found: [finding()] })
       const step = recordingStep(async () => {
         const q = await openQuestion(runId)
@@ -386,7 +402,7 @@ describe('a finding is verified, then fixed or asked about', () => {
       const line = (await listRegister(projectId)).find(e => e.kind === 'finding')!
       if (choice === 'fix') {
         expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(1)
-        expect(row!.state).toBe('fixed_unchecked')
+        expect(row!.state).toBe('corrected')
         expect(line.outcome).toBe('asked_yes')
       } else {
         expect(s.calls.some(c => c.role === 'fixer')).toBe(false)
@@ -488,7 +504,7 @@ describe('a finding is verified, then fixed or asked about', () => {
     const runId = await newRun()
     const projectId = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.projectId
     await addEntry(projectId, { kind: 'core', text: 'Money code', paths: ['b.tsx'], source: 'test' })
-    const { dir, base } = workdir(false)
+    const { dir, base } = workdir(true)
     writeFileSync(join(dir, 'b.tsx'), 'x\ny\n')
     const s = scripted({
       found: [finding({ problem: 'small', line: 1 }), finding({ problem: 'core', file: 'b.tsx', line: 1 }), finding({ problem: 'gone', line: 5 })],
@@ -561,13 +577,19 @@ describe('what still needs the person holds the gate', () => {
     expect((['reported', 'refuted', 'unbacked', 'confirmed', 'corrected', 'discarded'] as const).map(st => needsPerson(row(st)))).toEqual([false, false, false, false, false, false])
   })
 
-  async function lowRiskRun(found: Finding[]) {
+  const FIX_IT = async (runId: string) => {
+    const q = await openQuestion(runId)
+    if (!q) throw new Parked() // the human gate's wait
+    await answerQuestion(q.id, { option: 'fix' }, { send })
+    return { data: {} }
+  }
+  async function lowRiskRun(found: Finding[], over: Partial<Script> = {}, answer?: (runId: string) => Promise<{ data: Record<string, never> }>) {
     const runId = await newRun()
     const projectId = await projectOf(runId)
     await db.update(projects).set({ autoApproveLowRisk: true, testCommand: 'npm test' }).where(eq(projects.id, projectId))
     const { dir, base } = workdir(true)
-    const s = scripted({ found })
-    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    const s = scripted({ found, ...over })
+    await drive(runId, s.provider, dir, base, recordingStep(answer ? () => answer(runId) : undefined), s.deps)
     return runId
   }
 
@@ -576,8 +598,20 @@ describe('what still needs the person holds the gate', () => {
     expect((await node(runId, 'human')).state).toBe('passed')
   })
 
-  test('with auto-approve on, a fix nobody has checked does not', async () => {
+  test('with auto-approve on, a fix the check confirmed passes the human check by itself', async () => {
     const runId = await lowRiskRun([finding()])
+    expect((await findingsOf(runId))[0]!.state).toBe('corrected')
+    expect((await node(runId, 'human')).state).toBe('passed')
+  })
+
+  test('with auto-approve on, a fix that did not solve it does not', async () => {
+    const runId = await lowRiskRun([finding()], { after: () => seenRun() })
+    expect((await findingsOf(runId))[0]!.state).toBe('open')
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  })
+
+  test('with auto-approve on, a fix nobody could check does not', async () => {
+    const runId = await lowRiskRun([finding({ severity: 'high' })], { verify: () => [{ type: 'done', summary: 'v', source: 'provider', repro: null }] }, FIX_IT)
     expect((await findingsOf(runId))[0]!.state).toBe('fixed_unchecked')
     expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
@@ -596,11 +630,11 @@ describe('what still needs the person holds the gate', () => {
 })
 
 describe('a step that runs again writes nothing twice', () => {
-  for (const prefix of ['verify-', 'ask-', 'resolve-', 'fix-'] as const) {
+  for (const prefix of ['verify-', 'ask-', 'snap-', 'before-', 'fix-', 'check-', 'resolve-'] as const) {
     test(`${prefix}<finding> forgotten and run again`, async () => {
       const runId = await newRun()
       await withCore(runId)
-      const { dir, base } = workdir(false)
+      const { dir, base } = workdir(true)
       const s = scripted({ found: [finding()] })
       const step = recordingStep(async () => {
         const q = await openQuestion(runId)
@@ -621,7 +655,7 @@ describe('a step that runs again writes nothing twice', () => {
       // The fix- guard sees the committed state and makes no second call. Only a crash before that state is written can still
       // call the fixer twice (Task 8 closes it); the records are never doubled either way.
       expect(s.calls.filter(c => c.role === 'fixer').length).toBe(fixers)
-      expect((await findingsOf(runId))[0]).toMatchObject({ state: 'fixed_unchecked', entryNumber: row!.entryNumber })
+      expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected', entryNumber: row!.entryNumber })
     })
   }
 
@@ -707,13 +741,293 @@ describe('cancelling and failing', () => {
 
   test('a fixer that errors leaves the finding open with the reason', async () => {
     const runId = await newRun()
-    const { dir, base } = workdir(false)
+    const { dir, base } = workdir(true)
     const s = scripted({ found: [finding()], fixerFails: true })
     await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
     expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixFailed })
     const line = (await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')!
     expect(line.outcome).toBe('open')
   })
+})
+
+// ---- each fix is made on its own: saved before, checked after, taken back when it does not work ------------------
+
+const git = (dir: string, ...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
+const text = (dir: string, path: string) => readFileSync(join(dir, path), 'utf8')
+const porcelain = (dir: string) => git(dir, 'status', '--porcelain')
+const original = 'one\ntwo\nthree!\nfour\nfive\n' // a.tsx as workdir(true) leaves it
+const edit = (dir: string, mark: string) => appendFileSync(join(dir, 'a.tsx'), `${mark}\n`)
+const stray = (dir: string) => {
+  mkdirSync(join(dir, 'src/billing'), { recursive: true })
+  appendFileSync(join(dir, 'src/billing/charge.ts'), 'charge changed\n')
+}
+const money = async (runId: string) => addEntry(await projectOf(runId), { kind: 'core', text: 'Money code', paths: ['src/billing/'], source: 'test' })
+const answering = (runId: string, option: string, words?: string) =>
+  recordingStep(async () => {
+    const q = await openQuestion(runId)
+    if (!q) throw new Parked() // the human gate's wait, later on
+    await answerQuestion(q.id, { option, ...(words ? { text: words } : {}) }, { send })
+    return { data: {} }
+  })
+const stillShowsProblem = () => seenRun()
+
+describe('one fix at a time, behind a snapshot', () => {
+  test('a fix that leaves the problem standing twice is taken back, the finding is open, and Approve counts it under "needs you"', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const before = porcelain(dir)
+    const s = scripted({ found: [finding()], fix: (d, n) => { edit(d, `fix ${n}`); writeFileSync(join(d, `added${n}.txt`), 'x') }, after: stillShowsProblem })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(MAX_FIX_ATTEMPTS)
+    expect(text(dir, 'a.tsx')).toBe(original)
+    expect(existsSync(join(dir, 'added1.txt')) || existsSync(join(dir, 'added2.txt'))).toBe(false)
+    expect(porcelain(dir)).toBe(before)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixNotSolved, evidence: { exitCode: 1, markerSeen: true } })
+    expect((await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')).toMatchObject({ outcome: 'open' })
+    expect((await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 0, needsYou: 1 }))
+  })
+
+  test('the edits of a failed first attempt are gone before the second begins, and the second is the one that stays', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const seen: string[] = []
+    const s = scripted({ found: [finding()], fix: (d, n) => { seen.push(text(d, 'a.tsx')); edit(d, `fix ${n}`) }, after: n => (n === 1 ? seenRun() : seenRun({ exitCode: 0, markerSeen: false, outputTail: '' })) })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(seen).toEqual([original, original])
+    expect(text(dir, 'a.tsx')).toBe(`${original}fix 2\n`)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected', evidence: { exitCode: 0 } })
+    expect((await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')!.outcome).toBe('done')
+  })
+
+  test('a fixer that errors leaves nothing of its edits behind', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const before = porcelain(dir)
+    const s = scripted({ found: [finding()], fixerFails: true, fix: d => edit(d, 'half done') })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(text(dir, 'a.tsx')).toBe(original)
+    expect(porcelain(dir)).toBe(before)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixFailed })
+  })
+
+  test('a folder whose state cannot be saved is not touched: nothing is fixed and the finding stays open', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false) // not a repository
+    const s = scripted({ found: [finding()] })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(s.calls.some(c => c.role === 'fixer')).toBe(false)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixNotStarted })
+  })
+
+  test('a fix nobody could check stays, unchecked, and counts only under "needs you"', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding({ severity: 'high' })], verify: () => [{ type: 'done', summary: 'v', source: 'provider', repro: null }], fix: d => edit(d, 'fixed') })
+    await drive(runId, s.provider, dir, base, answering(runId, 'fix'), s.deps)
+    expect(s.reproRuns).toEqual([]) // nothing to run
+    expect(text(dir, 'a.tsx')).toBe(`${original}fixed\n`)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'fixed_unchecked' })
+    expect((await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')!.outcome).toBe('asked_yes')
+    expect((await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 0, needsYou: 1 }))
+  })
+
+  test('fixes run in severity order, one provider call at a time', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    let running = 0
+    let overlapped = false
+    const s = scripted({
+      found: [finding({ problem: 'low one', severity: 'low', type: 'effect' }), finding({ problem: 'high one', severity: 'high', type: 'logic' }), finding({ problem: 'medium one', severity: 'medium', type: 'security' })],
+      fix: async () => {
+        if (++running > 1) overlapped = true
+        await new Promise(r => setTimeout(r, 20))
+        running--
+      },
+    })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(s.calls.filter(c => c.role === 'fixer').map(c => c.problem)).toEqual(['high one', 'medium one', 'low one'])
+    expect(overlapped).toBe(false)
+  })
+
+  test('a fix that was recorded in the tree but whose step did not finish is not built on: the tree is the snapshot plus one fix', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: d => edit(d, 'FIX') })
+    const inner = recordingStep()
+    class Crash extends Error {}
+    let crashed = false
+    // The fixer ran and wrote, then the process died before the step's result was stored.
+    const step: StepApi = {
+      ...inner,
+      run: async <T,>(id: string, fn: () => Promise<T> | T): Promise<T> => {
+        if (!crashed && id.endsWith('-1') && id.startsWith('fix-')) {
+          crashed = true
+          await fn()
+          throw new Crash()
+        }
+        return inner.run(id, fn)
+      },
+    }
+    await expect(drive(runId, s.provider, dir, base, step, s.deps)).rejects.toThrow(Crash)
+    expect(text(dir, 'a.tsx')).toBe(`${original}FIX\n`)
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(2)
+    expect(text(dir, 'a.tsx')).toBe(`${original}FIX\n`) // not FIX twice
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
+  })
+
+  test('cancelled while the fixer works: it stops, nothing is checked or recorded, and the tree is left as it is', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: async d => { edit(d, 'in progress'); await cancelRun(runId) } })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(text(dir, 'a.tsx')).toBe(`${original}in progress\n`)
+    expect(s.reproRuns).toHaveLength(1) // only the verification
+    expect(await counts(runId)).toEqual({ register: 0, resolved: 0, questions: 0 })
+  })
+})
+
+describe('a small fix that strays into something that matters is held', () => {
+  const stage = () => stageResults.at(-1)!
+
+  test('it parks on a question in plain words; "Undo it" brings back the file and removes the one the fix added', async () => {
+    const runId = await newRun()
+    const entry = (await money(runId))!
+    const { dir, base } = workdir(true)
+    mkdirSync(join(dir, 'src/billing'), { recursive: true })
+    writeFileSync(join(dir, 'src/billing/charge.ts'), 'charge original\n')
+    git(dir, 'add', '-A')
+    git(dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'billing')
+    const baseWithBilling = git(dir, 'rev-parse', 'HEAD').trim()
+    const before = porcelain(dir)
+    const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); stray(d); writeFileSync(join(d, 'src/billing/new-file.ts'), 'added by the fix\n') } })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, baseWithBilling, step, s.deps)
+    expect(new Set(step.ids).size).toBe(step.ids.length)
+    step.ids.length = 0
+    const q = (await openQuestion(runId))!
+    expect(q).toMatchObject({ kind: 'fix_held', recommended: 'undo', touches: [entry.number] })
+    expect(q.options.map(o => o.id)).toEqual(['keep', 'undo', LEAVE])
+    expect(q.text).toContain('important')
+    for (const hidden of ['src/billing', 'charge.ts', '/']) expect(`${q.text} ${q.why}`).not.toContain(hidden)
+    expect(q.detail).toContain('src/billing/charge.ts')
+    expect(q.detail).toContain('wrong colour')
+    expect(s.reproRuns).toHaveLength(1) // not checked while it waits
+    expect((await findingsOf(runId))[0]!.state).toBe('asked')
+
+    await answerQuestion(q.id, { option: 'undo', text: 'too close to payments' }, { send })
+    step.onWait = async () => ({ data: {} })
+    await drive(runId, s.provider, dir, baseWithBilling, step, s.deps)
+    expect(text(dir, 'src/billing/charge.ts')).toBe('charge original\n')
+    expect(existsSync(join(dir, 'src/billing/new-file.ts'))).toBe(false)
+    expect(text(dir, 'a.tsx')).toBe(original)
+    expect(porcelain(dir)).toBe(before)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'discarded', reason: 'too close to payments' })
+    expect((await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')).toMatchObject({ outcome: 'asked_no', reason: 'too close to payments' })
+    expect(s.reproRuns).toHaveLength(1)
+    expect(stage()).toMatchObject({ fixed: false, fixesSince: null })
+    expect(new Set(step.ids).size).toBe(step.ids.length)
+    void base
+  })
+
+  for (const [option, words] of [[LEAVE, undefined], [OTHER, 'let me think about it']] as const) {
+    test(`answering "${option}" takes the fix back too, keeping the person's words as the reason`, async () => {
+      const runId = await newRun()
+      await money(runId)
+      const { dir, base } = workdir(true)
+      const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); stray(d) } })
+      const step = recordingStep()
+      await drive(runId, s.provider, dir, base, step, s.deps)
+      await answerQuestion((await openQuestion(runId))!.id, { option, ...(words ? { text: words } : {}) }, { send })
+      step.onWait = async () => ({ data: {} })
+      await drive(runId, s.provider, dir, base, step, s.deps)
+      expect(text(dir, 'a.tsx')).toBe(original)
+      expect(existsSync(join(dir, 'src/billing/charge.ts'))).toBe(false)
+      expect((await findingsOf(runId))[0]).toMatchObject({ state: 'discarded', reason: words ?? strings.findings.fixUndone })
+    })
+  }
+
+  test('"Keep the fix" goes on to the check; it is recorded as asked_yes and fixesSince is the tree before the fix', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); stray(d) } })
+    await drive(runId, s.provider, dir, base, answering(runId, 'keep'), s.deps)
+    expect(text(dir, 'a.tsx')).toBe(`${original}fix\n`)
+    expect(existsSync(join(dir, 'src/billing/charge.ts'))).toBe(true)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
+    expect((await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')!.outcome).toBe('asked_yes')
+    expect(stage()).toMatchObject({ fixed: true })
+    expect(git(dir, 'show', `${stage().fixesSince}:a.tsx`)).toBe(original)
+    expect(git(dir, 'ls-tree', '-r', '--name-only', stage().fixesSince!)).not.toContain('charge.ts')
+  })
+
+  test('a core path the task had already changed before the fix is not asked about again', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    mkdirSync(join(dir, 'src/billing'), { recursive: true })
+    writeFileSync(join(dir, 'src/billing/charge.ts'), 'the task wrote this\n') // differs from the base commit already
+    const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); stray(d) } })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(await questionRows(runId)).toHaveLength(0)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
+  })
+
+  test('a sensitive kind of file is held too, and named in plain words', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: d => { mkdirSync(join(d, 'src/auth'), { recursive: true }); writeFileSync(join(d, 'src/auth/login.ts'), 'x\n') } })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    const q = (await openQuestion(runId))!
+    expect(q.kind).toBe('fix_held')
+    expect(q.text).toContain('sign-in and sessions')
+    expect(q.touches).toEqual([])
+  })
+
+  test('a fix that strays again on the retry, after "Keep", does not ask a second time', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: (d, n) => { edit(d, `fix ${n}`); stray(d) }, after: n => (n === 1 ? seenRun() : seenRun({ exitCode: 0, markerSeen: false, outputTail: '' })) })
+    const step = answering(runId, 'keep')
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(2)
+    expect((await questionRows(runId)).filter(q => q.kind === 'fix_held')).toHaveLength(1)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
+    expect(new Set(step.ids).size).toBe(step.ids.length) // a held fix and a retry share one run without repeating a step id
+  })
+
+  test('a finding the person already chose to fix is not held for a stray', async () => {
+    const runId = await newRun()
+    await addEntry(await projectOf(runId), { kind: 'core', text: 'Money code', paths: ['a.tsx', 'src/billing/'], source: 'test' })
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: d => stray(d) })
+    await drive(runId, s.provider, dir, base, answering(runId, 'fix'), s.deps)
+    expect((await questionRows(runId)).map(q => q.kind)).toEqual(['finding'])
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
+  })
+
+  for (const prefix of ['ask-held-', 'undo-'] as const) {
+    test(`${prefix}<finding> forgotten and run again writes nothing twice`, async () => {
+      const runId = await newRun()
+      await money(runId)
+      const { dir, base } = workdir(true)
+      const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); stray(d) } })
+      const step = recordingStep()
+      await drive(runId, s.provider, dir, base, step, s.deps)
+      await answerQuestion((await openQuestion(runId))!.id, { option: 'undo' }, { send })
+      step.onWait = async () => ({ data: {} })
+      await drive(runId, s.provider, dir, base, step, s.deps)
+      const [row] = await findingsOf(runId)
+      const before = { ...(await counts(runId)), tree: porcelain(dir), fixers: s.calls.filter(c => c.role === 'fixer').length }
+      step.forget(`${prefix}${row!.id}`)
+      await drive(runId, s.provider, dir, base, step, s.deps)
+      expect({ ...(await counts(runId)), tree: porcelain(dir), fixers: s.calls.filter(c => c.role === 'fixer').length }).toEqual(before)
+      expect((await findingsOf(runId))[0]).toMatchObject({ state: 'discarded', entryNumber: row!.entryNumber })
+    })
+  }
 })
 
 describe('the demo provider', () => {
