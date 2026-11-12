@@ -24,6 +24,8 @@ const toJobs = (drafts: readonly Draft[]): Job[] =>
  */
 export function PlanSection({ runId, note, composer, onSent }: { runId: string; note: string; composer: (send: ComposerSend) => ReactNode; onSent: () => void; away?: { machine: string | null } | null }) {
   const list = useRef<HTMLOListElement>(null)
+  // Jobs whose checks box was opened by hand (it shows on its own once it has text).
+  const [withChecks, setWithChecks] = useState<Set<string>>(new Set())
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
   const [busy, setBusy] = useState<'build' | 'replan' | null>(null)
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null)
@@ -119,17 +121,33 @@ export function PlanSection({ runId, note, composer, onSent }: { runId: string; 
                   </svg>
                 </button>
               </div>
-              <label style={{ display: 'grid', gap: 3, fontSize: 11, color: theme.dim, paddingLeft: 28 }}>
-                {strings.plan.doneLabel}
-                <textarea
-                  value={d.done}
-                  rows={Math.max(1, d.done.split('\n').length)}
-                  placeholder={strings.plan.donePlaceholder}
-                  disabled={locked}
-                  onChange={e => edit(d.key, { done: e.target.value })}
-                  style={{ ...field, padding: '5px 8px', fontSize: 12, lineHeight: 1.45, resize: 'vertical' }}
-                />
-              </label>
+              {/* The checks are shown when the job has any (the planner writes them). A job the person adds is one box;
+                  the checks stay one click away for whoever wants them. */}
+              {d.done.trim() !== '' || withChecks.has(d.key) ? (
+                <label style={{ display: 'grid', gap: 3, fontSize: 11, color: theme.dim, paddingLeft: 28 }}>
+                  {strings.plan.doneLabel}
+                  <textarea
+                    value={d.done}
+                    rows={Math.max(1, d.done.split('\n').length)}
+                    placeholder={strings.plan.donePlaceholder}
+                    disabled={locked}
+                    // Once someone is in it, it stays even if they empty it while rewriting.
+                    onFocus={() => setWithChecks(prev => (prev.has(d.key) ? prev : new Set(prev).add(d.key)))}
+                    onChange={e => edit(d.key, { done: e.target.value })}
+                    style={{ ...field, padding: '5px 8px', fontSize: 12, lineHeight: 1.45, resize: 'vertical' }}
+                  />
+                </label>
+              ) : (
+                !locked && (
+                  <button
+                    type="button"
+                    onClick={() => setWithChecks(prev => new Set(prev).add(d.key))}
+                    style={{ justifySelf: 'start', marginLeft: 28, padding: 0, background: 'none', border: 'none', color: theme.dim, fontSize: 11.5, cursor: 'pointer', textDecoration: 'underline' }}
+                  >
+                    + {strings.plan.addChecks}
+                  </button>
+                )
+              )}
             </li>
           ))}
         </ol>
