@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
@@ -1136,7 +1136,8 @@ describe('taking a fix back only touches what the fix changed', () => {
       },
     })
     await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
-    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixNotTakenBack([]) })
+    // The files are named, found path by path (no snapshot can be taken here).
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixNotTakenBack(['a.tsx', 'sub']) })
     expect((await node(runId, 'review')).state).toBe('passed')
     expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(1)
   })
@@ -1190,6 +1191,97 @@ describe('taking a fix back only touches what the fix changed', () => {
     expect({ ...(await counts(runId)), a: text(dir, 'a.tsx'), fixers: s.calls.filter(c => c.role === 'fixer').length }).toEqual(before)
     expect(text(dir, 'person.txt')).toBe('later\n')
     expect(before.a).toBe(original)
+  })
+})
+
+describe('round 2', () => {
+  test('a crash while the second attempt\'s fixer ran takes back only that attempt, not what the person did while the run waited', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    writeFileSync(join(dir, 'b.txt'), 'b original\n')
+    const s = scripted({
+      found: [finding()],
+      fix: (d, n) => { edit(d, `fix ${n}`); stray(d) },
+      after: n => (n === 1 ? seenRun() : seenRun({ exitCode: 0, markerSeen: false, outputTail: '' })),
+    })
+    const inner = recordingStep()
+    class Crash extends Error {}
+    let crashed = false
+    const step: StepApi = {
+      ...inner,
+      run: async <T,>(id: string, fn: () => Promise<T> | T): Promise<T> => {
+        if (!crashed && id.startsWith('fix-') && id.endsWith('-2')) {
+          crashed = true
+          await fn() // the fixer ran and wrote; the process died before the result was stored
+          throw new Crash()
+        }
+        return inner.run(id, fn)
+      },
+    }
+    await drive(runId, s.provider, dir, base, step, s.deps) // parks on the held question
+    writeFileSync(join(dir, 'b.txt'), 'b edited by the person\n')
+    writeFileSync(join(dir, 'notes.md'), 'notes\n')
+    await answerQuestion((await openQuestion(runId))!.id, { option: 'keep' }, { send })
+    inner.onWait = async () => ({ data: {} })
+    await expect(drive(runId, s.provider, dir, base, step, s.deps)).rejects.toThrow(Crash)
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(text(dir, 'b.txt')).toBe('b edited by the person\n')
+    expect(text(dir, 'notes.md')).toBe('notes\n')
+    expect(text(dir, 'a.tsx')).toBe(`${original}fix 3\n`) // the third fixer call; the second's half-edit is not under it
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(3)
+  })
+
+  test('a fixer that runs a build or the tests does not make the app ask about generated files', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    writeFileSync(join(dir, '.gitignore'), '.next/\ncoverage/\ndist/\n')
+    const s = scripted({
+      found: [finding()],
+      fix: d => {
+        edit(d, 'fix')
+        for (const f of ['.next/server/app/api/auth/route.js', 'coverage/src/auth/login.ts.html', 'dist/auth/login.js']) {
+          mkdirSync(join(d, f, '..'), { recursive: true })
+          writeFileSync(join(d, f), 'generated')
+        }
+      },
+    })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(await questionRows(runId)).toHaveLength(0)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
+  })
+
+  test('the stray paths a step carries are cut to 200 with the rest counted, and the question still names them', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); mkdirSync(join(d, 'src/billing'), { recursive: true }); for (let i = 0; i < 250; i++) writeFileSync(join(d, `src/billing/f${i}.ts`), 'x') } })
+    const inner = recordingStep()
+    const kept: Record<string, unknown> = {}
+    const step: StepApi = { ...inner, run: async <T,>(id: string, fn: () => Promise<T> | T): Promise<T> => { const r = await inner.run(id, fn); kept[id] = r; return r } }
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    const made = Object.entries(kept).find(([id]) => /^fix-.*-1$/.test(id))![1] as { strays: { paths: string[]; more: number }; paths: string[]; count: number }
+    expect(made.count).toBe(251)
+    expect(made.paths).toHaveLength(200)
+    expect(made.strays.paths).toHaveLength(200)
+    expect(made.strays.more).toBe(50)
+    expect((await openQuestion(runId))!.kind).toBe('fix_held')
+  })
+
+  test('an attempt\'s marker is gone when the finding has an ending', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: d => edit(d, 'fix') })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    const [row] = await findingsOf(runId)
+    const left = existsSync(join(s.deps.snapshotStore!, 'attempts')) ? readdirSync(join(s.deps.snapshotStore!, 'attempts')) : []
+    expect(row!.state).toBe('corrected')
+    expect(left.filter(n => n.startsWith(row!.id))).toEqual([])
+  })
+
+  test('a fix that cannot be taken back is told as a short list of files, however many there are', async () => {
+    expect(strings.findings.leftAsTheyAre(Array.from({ length: 30 }, (_, i) => `f${i}`))).toContain('and 10 more')
   })
 })
 

@@ -34,7 +34,7 @@ import {
 import { MAX_FINDINGS, focusesFor, whereOf, type Finding, type Focus, type Review } from '@/engine/review'
 import { clip, redact } from '@/engine/redact'
 import { SENSITIVE, assessRisk } from '@/engine/risk'
-import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, claimAttempt, restoreTree, takeSnap, undoChange, type Options as SnapOptions, type Snap } from '@/engine/tree-snapshot'
+import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, looseChanges, releaseAttempts, restoreTree, startAttempt, takeSnap, undoChange, type Options as SnapOptions, type Snap } from '@/engine/tree-snapshot'
 import { strings } from '@/ui/strings'
 
 // The Review block, for a provider that works on files: one reader on a small change, three on anything else, each
@@ -150,6 +150,7 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
       }
     }
     await resolve(row, end!)
+    if (fixAs && workspace.workdir) releaseAttempts(workspace.workdir, row.id, ctx.deps.snapshotStore ? { store: ctx.deps.snapshotStore } : {})
   }
 
   const summary = alive.length > 0 ? strings.review.problems(alive.length) : rows.length > 0 ? strings.review.noProblemsLeft : strings.review.noProblems
@@ -235,7 +236,8 @@ async function verifyFinding(ctx: Context, nodeId: string, row: FindingRow, n: n
   return { verdict: 'confirmed', repro }
 }
 
-type Stray = { paths: string[]; core: boolean; areas: string[] }
+/** The paths that strayed: at most MAX_CARRIED_PATHS of them, with `more` for the rest. */
+type Stray = { paths: string[]; more: number; core: boolean; areas: string[] }
 /** What one fixer attempt did. `paths` is cut to MAX_CARRIED_PATHS (with `count` the full number); `strays` is kept in full. */
 type Made = { status: 'fixed' | 'failed' | 'cancelled'; count: number; paths: string[]; strays: Stray | null; after: Snap | null }
 type TakenBack = { kept: string[]; failed: string[]; error: boolean }
@@ -270,7 +272,7 @@ async function fixOne(
   // The person was asked about this one at some point: the register line says so.
   let asked = fixAs === 'asked_yes'
   // The paths the person agreed to on the held question; a later attempt may not go beyond them.
-  let approved: string[] | null = null
+  let approved: Stray | null = null
 
   for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
     const made = await step.run(id(`fix-${row.id}-${attempt}`), () => fixFinding(ctx, nodeId, row, workdir, snap, repro, attempt, core, already, opts))
@@ -280,7 +282,7 @@ async function fixOne(
       return back.error || back.failed.length > 0 ? stuck(back) : open(strings.findings.fixFailed)
     }
     if (approved !== null) {
-      if (made.strays?.paths.some(p => !approved!.includes(p))) {
+      if (made.strays && (made.strays.paths.some(p => !approved!.paths.includes(p)) || made.strays.more > approved.more)) {
         const back = await takeBack('rollback', made.after)
         return back.error || back.failed.length > 0 ? stuck(back) : open(strings.findings.strayedAgain)
       }
@@ -301,7 +303,7 @@ async function fixOne(
         return { end: back.kept.length > 0 ? { ...end, reason: `${end.reason} ${strings.findings.leftAsTheyAre(back.kept)}` } : end, kept: null }
       }
       asked = true
-      approved = strayed.paths
+      approved = strayed
     }
     // Nothing to run for a problem that could not be shown: the fix stands, unchecked.
     if (!repro) return { end: { state: 'fixed_unchecked', outcome: asked ? 'asked_yes' : 'unchecked', reason: strings.findings.fixedUnchecked }, kept: snap.tree }
@@ -333,7 +335,14 @@ function giveBack(workdir: string, snap: Snap, after: Snap | null, opts: SnapOpt
     restoreTree(workdir, snap.tree, opts)
     return { kept: [], failed: [], error: false }
   } catch {
-    return { kept: [], failed: [], error: true }
+    // Said by name where it can be found out without a new snapshot.
+    let named: string[] = []
+    try {
+      named = looseChanges(workdir, snap, opts)
+    } catch {
+      // nothing to name
+    }
+    return { kept: [], failed: named, error: true }
   }
 }
 
@@ -361,7 +370,7 @@ function strayedInto(paths: string[], core: string[], already: ReadonlySet<strin
   const hit = paths.filter(p => !already.has(p) && (touchesCore(p, core) || SENSITIVE.some(([re]) => re.test(p))))
   if (hit.length === 0) return null
   const areas = [...new Set(hit.flatMap(p => SENSITIVE.filter(([re]) => re.test(p)).map(([, label]) => label)))]
-  return { paths: hit, core: hit.some(p => touchesCore(p, core)), areas }
+  return { paths: hit.slice(0, MAX_CARRIED_PATHS), more: Math.max(0, hit.length - MAX_CARRIED_PATHS), core: hit.some(p => touchesCore(p, core)), areas }
 }
 
 /**
@@ -386,9 +395,11 @@ async function fixFinding(
   if ((await currentOf(runId, row.id))?.entryNumber != null) return none('fixed')
   if (await isCancelled(runId)) return none('cancelled')
   try {
-    // This step ran before and its result was not recorded: the fixer may have left a half-edit that must not be built on, and
-    // there is no record of what it did. The whole folder goes back to the snapshot. This window exists only while a fixer is running.
-    if (!claimAttempt(workdir, `${row.id}-${attempt}`, opts)) restoreTree(workdir, snap.tree, opts)
+    // The folder as it is right now is remembered for this attempt. If this step runs again (the fixer ran but its result was
+    // not recorded) a half-edit may be there with no record of it, and the folder goes back to that remembered state: never
+    // further back, so what the person did before this attempt began stays. The window exists only while this attempt's fixer is running.
+    const started = startAttempt(workdir, `${row.id}-${attempt}`, opts)
+    if (started.again) restoreTree(workdir, started.tree ?? snap.tree, opts)
   } catch {
     return none('failed')
   }

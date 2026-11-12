@@ -220,9 +220,9 @@ export const strings = {
     fixUndoneOpen: 'The fix was taken back, and the problem is still flagged for you.',
     strayedAgain: 'The second try changed other important parts of the project, so the app took it back. This one needs a look from you.',
     // Said when a file was changed after the fix, so taking the fix back left it as it is.
-    leftAsTheyAre: (paths: readonly string[]) => `Some files were left as they are because they were changed after the fix: ${paths.join(', ')}.`,
+    leftAsTheyAre: (paths: readonly string[]) => `Some files were left as they are because they were changed after the fix: ${paths.slice(0, 20).join(', ')}${paths.length > 20 ? ` and ${paths.length - 20} more` : ''}.`,
     fixNotTakenBack: (paths: readonly string[]) =>
-      `The fix could not be taken back completely, so the project may still contain part of it${paths.length > 0 ? `. Files to look at: ${paths.join(', ')}` : ''}. This one needs a look from you.`,
+      `The fix could not be taken back completely, so the project may still contain part of it${paths.length > 0 ? `. Files to look at: ${paths.slice(0, 20).join(', ')}${paths.length > 20 ? ` and ${paths.length - 20} more` : ''}` : ''}. This one needs a look from you.`,
     unclearAnswer: 'The answer was not one the app can act on by itself, so this one still needs you.',
     risk: {
       core: 'It touches a core area you marked.',

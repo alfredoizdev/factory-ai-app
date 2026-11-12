@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import { SENSITIVE } from '@/engine/risk'
+import { SECRET_FILES } from '@/engine/risk'
 
 // A snapshot of the task's folder taken before a fix, so a fix can be checked against it and taken back.
 //
@@ -111,13 +111,13 @@ export function snapshotTree(workdir: string, options: Options = {}): string {
 
 const modeOf = (executable: boolean) => (executable ? '100755' : '100644')
 
-/** The ignored files whose names look sensitive, with their contents kept in the app's store. Over the limits: skipped and counted. */
+/** Folders of generated output, at any depth: what a build or a test run writes there is not a private file. */
+const OUTPUT_FOLDERS = new Set(['node_modules', '.next', 'dist', 'build', 'out', 'coverage', '.turbo', '.cache', '.vercel', '.git'])
+
+/** The ignored private settings files (.env and the like), with their contents kept in the app's store. Over the limits: skipped and counted. */
 function ignoredSensitive(workdir: string, options: Options): { files: IgnoredFile[]; skipped: number } {
   const listed = git(workdir, options, ['ls-files', '-o', '-i', '--exclude-standard', '-z']).split('\0').filter(Boolean)
-  const sensitive = listed.filter(p => !p.split('/').includes('node_modules') && SENSITIVE.some(([re]) => re.test(p)))
-  // Secrets first, so that the limit never leaves out a .env.
-  const secrets = SENSITIVE[0]![0]
-  sensitive.sort((a, b) => Number(secrets.test(b)) - Number(secrets.test(a)))
+  const sensitive = listed.filter(p => !p.split('/').some(seg => OUTPUT_FOLDERS.has(seg)) && SECRET_FILES.test(p))
   const files: IgnoredFile[] = []
   let skipped = 0
   for (const path of sensitive) {
@@ -239,7 +239,8 @@ function isIgnored(workdir: string, options: Options, path: string): boolean {
 
 function putBack(workdir: string, options: Options, path: string, entry: Entry): void {
   const full = join(workdir, path)
-  const content = gitBuffer(workdir, options, ['cat-file', 'blob', entry.sha])
+  // A file is written the way git would check it out here (line endings, smudge filters, large-file pointers); a link keeps the stored target.
+  const content = entry.mode === '120000' ? gitBuffer(workdir, options, ['cat-file', 'blob', entry.sha]) : gitBuffer(workdir, options, ['cat-file', '--filters', `--path=${path}`, entry.sha])
   // A folder on the way that is really a file: the path cannot be put back without destroying that file.
   const segments = path.split('/')
   let here = workdir
@@ -294,6 +295,7 @@ export function undoChange(workdir: string, beforeIn: Snap | string, afterIn: Sn
     return f ? { mode: f.mode, sha: f.blob } : null
   }
   const done: Undone = { reverted: [], kept: [], failed: [] }
+  let rulesLost = false
   const handle = (path: string) => {
     try {
       if (!insideFolder(path) || viaSymlink(workdir, path)) throw new Error('Not a path to touch')
@@ -301,13 +303,24 @@ export function undoChange(workdir: string, beforeIn: Snap | string, afterIn: Sn
       const left = pick(after, treeAfter, path)
       if (key(wanted) === key(left)) return
       const now = currentEntry(workdir, options, path)
+      // Already as it was before the fix (an undo that ran before): done.
+      if (key(now) === key(wanted)) {
+        done.reverted.push(path)
+        return
+      }
       if (key(now) !== key(left)) {
         done.kept.push(path)
         return
       }
       if (wanted === null) {
-        if (now === null) return
-        if (!recorded.has(path) && isIgnored(workdir, options, path)) return
+        if (!recorded.has(path)) {
+          // The ignore rules on disk are not the snapshot's when the fix changed them and they could not be put back: remove nothing that was not there before.
+          if (rulesLost) {
+            done.kept.push(path)
+            return
+          }
+          if (isIgnored(workdir, options, path)) return
+        }
         rmSync(join(workdir, path), { force: true })
       } else {
         putBack(workdir, options, path, wanted)
@@ -321,7 +334,9 @@ export function undoChange(workdir: string, beforeIn: Snap | string, afterIn: Sn
   // Removals before writes, so a folder the fix made where a file was is gone before the file comes back.
   const removal = (p: string) => pick(before, treeBefore, p) === null
   const ordered = [...candidates.filter(isIgnoreConfig), ...candidates.filter(c => !isIgnoreConfig(c) && removal(c)), ...candidates.filter(c => !isIgnoreConfig(c) && !removal(c))]
-  for (const p of ordered) handle(p)
+  for (const p of ordered.filter(isIgnoreConfig)) handle(p)
+  rulesLost = [...done.kept, ...done.failed].some(isIgnoreConfig)
+  for (const p of ordered.filter(c => !isIgnoreConfig(c))) handle(p)
   return { reverted: done.reverted.sort(), kept: done.kept.sort(), failed: done.failed.sort() }
 }
 
@@ -336,16 +351,57 @@ export function restoreTree(workdir: string, tree: string, options: Options = {}
   if (result.failed.length > 0) throw new Error(`Could not put back: ${result.failed.join(', ')}`)
 }
 
-/** True the first time a name is claimed, false after: tells a step that runs again that it ran before. */
-export function claimAttempt(workdir: string, name: string, options: Options = {}): boolean {
+const attemptsDir = (workdir: string, options: Options) => join(storeOf(workdir, options), 'attempts')
+
+/**
+ * Called as a fixer attempt starts. The first time it takes a snapshot of the folder as it is right then and remembers it
+ * under the name. Called again with the same name (the step ran before and its result was lost) it says so and hands back
+ * that tree: what a half-finished fixer left is taken back to it, and nothing from before the attempt began.
+ */
+export function startAttempt(workdir: string, name: string, options: Options = {}): { again: false } | { again: true; tree: string | null } {
   if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error('Not a name to claim')
-  const dir = join(storeOf(workdir, options), 'attempts')
+  const dir = attemptsDir(workdir, options)
   mkdirSync(dir, { recursive: true })
-  try {
-    writeFileSync(join(dir, name), '', { flag: 'wx' })
-    return true
-  } catch {
-    return false
+  const file = join(dir, name)
+  const seen = (): { again: true; tree: string | null } => {
+    const tree = readFileSync(file, 'utf8').trim()
+    return { again: true, tree: OBJECT_ID.test(tree) ? tree : null }
   }
+  if (existsSync(file)) return seen()
+  const tree = snapshotTree(workdir, options)
+  try {
+    writeFileSync(file, tree, { flag: 'wx' })
+  } catch {
+    return seen()
+  }
+  return { again: false }
 }
 
+/** Forgets the attempts of one finding (their names start with its id) once it has an ending. */
+export function releaseAttempts(workdir: string, prefix: string, options: Options = {}): void {
+  const dir = attemptsDir(workdir, options)
+  if (!existsSync(dir)) return
+  for (const name of readdirSync(dir)) if (name.startsWith(`${prefix}-`)) rmSync(join(dir, name), { force: true })
+}
+
+/**
+ * The paths that differ from a snapshot, found path by path from what git says is dirty and from the recorded private
+ * files, with no new snapshot: it works where a snapshot cannot be taken. May miss a path a fix put back as the repository has it.
+ */
+export function looseChanges(workdir: string, snap: Snap, options: Options = {}): string[] {
+  const parts = git(workdir, options, ['status', '--porcelain=v1', '-z', '-uall']).split('\0').filter(Boolean)
+  const candidates = new Set(snap.ignored.map(f => f.path))
+  for (let i = 0; i < parts.length; i++) {
+    const code = parts[i]!.slice(0, 2)
+    candidates.add(parts[i]!.slice(3).replace(/\/$/, ''))
+    if (code[0] === 'R' || code[0] === 'C') i++ // the old name follows
+  }
+  const paths = [...candidates].filter(insideFolder)
+  const tree = entriesIn(workdir, options, snap.tree, paths)
+  return paths
+    .filter(p => {
+      const was = tree.get(p) ?? (snap.ignored.find(f => f.path === p) ? { mode: snap.ignored.find(f => f.path === p)!.mode, sha: snap.ignored.find(f => f.path === p)!.blob } : null)
+      return key(was) !== key(currentEntry(workdir, options, p))
+    })
+    .sort()
+}

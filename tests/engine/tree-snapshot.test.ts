@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, chmodSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, chmodSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, changedSince, claimAttempt, restoreTree, snapshotTree, takeSnap, undoChange } from '@/engine/tree-snapshot'
+import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, changedSince, looseChanges, releaseAttempts, restoreTree, snapshotTree, startAttempt, takeSnap, undoChange } from '@/engine/tree-snapshot'
 
 // A snapshot of the task's folder that the person's own git state never feels, and an undo that only touches what a fix changed.
 
@@ -278,9 +278,108 @@ describe('undoChange', () => {
   })
 })
 
-test('an attempt is claimed once', () => {
-  const dir = repo()
-  expect(claimAttempt(dir, 'f1-1', opts())).toBe(true)
-  expect(claimAttempt(dir, 'f1-1', opts())).toBe(false)
-  expect(() => claimAttempt(dir, '../x', opts())).toThrow()
+
+describe('round 2', () => {
+  test('the fixer rewrites .gitignore and the person edits it too: nothing that was ignored is deleted, and the files are listed as kept', () => {
+    for (const how of ['undo', 'restore'] as const) {
+      const dir = repo()
+      const before = takeSnap(dir, opts())
+      put(dir, '.gitignore', 'nothing is ignored now\n')
+      put(dir, 'a.txt', 'fixed\n')
+      const after = takeSnap(dir, opts())
+      appendFileSync(join(dir, '.gitignore'), 'the person added this\n')
+      if (how === 'undo') {
+        const result = undoChange(dir, before, after, opts())
+        expect(result.kept).toEqual(expect.arrayContaining(['.gitignore', 'node_modules/pkg/index.js', 'debug.log']))
+        expect(result.reverted).toEqual(['a.txt'])
+      } else {
+        // the same case through restoreTree: its "after" is the folder as it is now
+        expect(() => restoreTree(dir, before.tree, opts())).not.toThrow()
+      }
+      untouched(dir)
+      expect(read(dir, 'a.txt')).toBe('a1\n')
+    }
+  })
+
+  test('build and test output is not recorded as a sensitive ignored file, and does not show up as changed', () => {
+    const dir = repo()
+    put(dir, '.gitignore', '.env\n.next/\ncoverage/\ndist/\n')
+    git(dir, 'add', '.gitignore')
+    commit(dir, 'ignore output')
+    const before = takeSnap(dir, opts())
+    put(dir, '.next/server/app/api/auth/route.js', 'x')
+    put(dir, 'coverage/src/auth/login.ts.html', 'x')
+    put(dir, 'dist/auth/login.js', 'x')
+    put(dir, 'deep/.next/secret-chunk.js', 'x')
+    const after = takeSnap(dir, opts())
+    expect(after.ignored.map(f => f.path)).toEqual(['.env'])
+    expect(changedPaths(dir, before, after, opts())).toEqual([])
+  })
+
+  test('a file comes back as the person had it: line endings under autocrlf', () => {
+    const dir = repo()
+    git(dir, 'config', 'core.autocrlf', 'true')
+    writeFileSync(join(dir, 'crlf.txt'), 'l1\r\nl2\r\n')
+    const before = takeSnap(dir, opts())
+    writeFileSync(join(dir, 'crlf.txt'), 'changed\r\n')
+    const after = takeSnap(dir, opts())
+    // a change of line endings alone does not make the file "changed since the fix"
+    writeFileSync(join(dir, 'crlf.txt'), 'changed\n')
+    const result = undoChange(dir, before, after, opts())
+    expect(result.kept).toEqual([])
+    expect(readFileSync(join(dir, 'crlf.txt'), 'utf8')).toBe('l1\r\nl2\r\n')
+  })
+
+  test('a file comes back as the person had it: through a clean/smudge filter', () => {
+    const dir = repo()
+    git(dir, 'config', 'filter.up.clean', 'tr a-z A-Z')
+    git(dir, 'config', 'filter.up.smudge', 'tr A-Z a-z')
+    put(dir, '.gitattributes', '*.flt filter=up\n')
+    writeFileSync(join(dir, 'x.flt'), 'hello\n')
+    const before = takeSnap(dir, opts())
+    writeFileSync(join(dir, 'x.flt'), 'changed\n')
+    const after = takeSnap(dir, opts())
+    expect(undoChange(dir, before, after, opts()).kept).toEqual([])
+    expect(readFileSync(join(dir, 'x.flt'), 'utf8')).toBe('hello\n')
+  })
+
+  test('undoing twice: the second time reports the files as already put back, not as changed after the fix', () => {
+    const dir = repo()
+    const before = takeSnap(dir, opts())
+    put(dir, 'a.txt', 'fixed\n')
+    put(dir, 'added.txt', 'x')
+    const after = takeSnap(dir, opts())
+    const first = undoChange(dir, before, after, opts())
+    const second = undoChange(dir, before, after, opts())
+    expect(first).toEqual({ reverted: ['a.txt', 'added.txt'], kept: [], failed: [] })
+    expect(second).toEqual(first)
+  })
+
+  test('an attempt remembers the tree from just before it started, and its marker can be released', () => {
+    const dir = repo()
+    const first = startAttempt(dir, 'f1-1', opts())
+    expect(first).toEqual({ again: false })
+    put(dir, 'a.txt', 'later\n')
+    const again = startAttempt(dir, 'f1-1', opts())
+    expect(again.again).toBe(true)
+    restoreTree(dir, (again as { tree: string }).tree, opts())
+    expect(read(dir, 'a.txt')).toBe('a1\n')
+    expect(() => startAttempt(dir, '../x', opts())).toThrow()
+    releaseAttempts(dir, 'f1', opts())
+    expect(startAttempt(dir, 'f1-1', opts())).toEqual({ again: false })
+  })
+
+  test('looseChanges names what differs from a snapshot, path by path, without taking a new snapshot', () => {
+    const dir = repo()
+    const snap = takeSnap(dir, opts())
+    put(dir, 'a.txt', 'changed\n')
+    put(dir, 'new.txt', 'n')
+    rmSync(join(dir, 'b.txt'))
+    put(dir, '.env', 'SECRET=changed\n')
+    mkdirSync(join(dir, 'sub'))
+    git(join(dir, 'sub'), 'init', '-q')
+    put(dir, 'sub/x.txt', 'x')
+    expect(looseChanges(dir, snap, opts())).toEqual(['.env', 'a.txt', 'b.txt', 'new.txt', 'sub'])
+  })
 })
+

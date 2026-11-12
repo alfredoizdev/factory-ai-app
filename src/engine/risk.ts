@@ -20,9 +20,12 @@ export type TestFacts = {
 }
 export type RiskAssessment = { level: 'low' | 'high'; reasons: string[]; files: string[]; linesChanged: number }
 
+/** Files that hold private settings: .env files and anything named like a secret or credential. */
+export const SECRET_FILES = /(^|\/)\.env(\.|$)|secret|credential/i
+
 // Areas where a wrong change is expensive. Matched on the path, case-insensitively.
 export const SENSITIVE: readonly [RegExp, string][] = [
-  [/(^|\/)\.env(\.|$)|secret|credential/i, strings.risk.areas.secrets],
+  [SECRET_FILES, strings.risk.areas.secrets],
   [/auth|login|logout|sign-?in|sign-?up|session|password|oauth|jwt|token/i, strings.risk.areas.auth],
   [/payment|billing|stripe|checkout|invoice|subscription|paypal|price|pricing/i, strings.risk.areas.payments],
   [/migration|(^|\/)(prisma|supabase|drizzle|db|database)\/|schema\.(prisma|sql|ts)$|\.sql$/i, strings.risk.areas.database],
