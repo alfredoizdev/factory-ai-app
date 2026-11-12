@@ -58,12 +58,15 @@ export function CanvasScreen({
   settings: initialSettings = null,
   draftUpdatedAt,
   localData = false,
+  noTasksYet = false,
 }: {
   workflowId: string
   graph: Graph
   run?: RunInfo | null
   /** The project's repository settings. Absent: the agent switch is not offered and every run is the demo. */
   settings?: ProjectSettings | null
+  /** True when the project has no task at all: the screen then invites the first one. */
+  noTasksYet?: boolean
   /** True on the local test database: said in the top bar, so test tasks are never taken for the real ones. */
   localData?: boolean
   /** The draft's version as the page loaded it; saves are refused once someone else has saved a newer one. */
@@ -229,6 +232,9 @@ export function CanvasScreen({
   // Why no task is on screen: the person asked for a new one (then the screen helps them write it), or there is
   // simply nothing open (then it points at the past tasks too).
   const [emptyBecause, setEmptyBecause] = useState<'new' | 'none'>('none')
+  // How many tasks the project has, once known: with none, the screen invites the first one instead of pointing
+  // at past tasks that do not exist.
+  const [taskCount, setTaskCount] = useState<number | null>(noTasksYet ? 0 : null)
 
   function newTask(reason: 'new' | 'none' = 'new') {
     setEmptyBecause(reason)
@@ -449,7 +455,7 @@ export function CanvasScreen({
           <div
             data-testid="no-task"
             role="region"
-            aria-label={strings.history.noTaskTitle}
+            aria-label={taskCount === 0 ? strings.history.firstTaskTitle : strings.history.noTaskTitle}
             style={{
               position: 'absolute',
               top: 64,
@@ -467,7 +473,22 @@ export function CanvasScreen({
               textAlign: 'center',
             }}
           >
-            {emptyBecause === 'new' ? (
+            {taskCount === 0 ? (
+              <>
+                <strong className="factory-display" style={{ fontSize: 19 }}>{strings.history.firstTaskTitle}</strong>
+                <span style={{ fontSize: 13, color: theme.dim, lineHeight: 1.5 }}>{strings.history.firstTaskText}</span>
+                <button
+                  type="button"
+                  onClick={() => document.querySelector<HTMLTextAreaElement>('[data-testid="command-card"] textarea')?.focus()}
+                  style={{ justifySelf: 'center', marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 18px', borderRadius: 8, border: 'none', background: theme.running, color: '#fff', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  {strings.history.firstTaskAction}
+                </button>
+              </>
+            ) : emptyBecause === 'new' ? (
               <>
                 <strong style={{ fontSize: 15 }}>{strings.history.newTaskTitle}</strong>
                 <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.history.newTaskText}</span>
@@ -492,6 +513,7 @@ export function CanvasScreen({
               setTasksOpen(false)
               void watchRun(id)
             }}
+            onCount={setTaskCount}
             onDeleted={id => {
               // The open task is gone: leave it, and close the list so the "No task open" screen is seen.
               if (id === run?.runId) {

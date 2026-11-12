@@ -39,5 +39,5 @@ async function canvasFor(workflowId: string) {
   const project = await projectHere(wf.projectId)
   const settings = project ? (await getProjectSettings(project.id)) : { projectId: wf.projectId, repoPath: null, testCommand: null, autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
 
-  return <CanvasScreen workflowId={workflowId} graph={graph} run={run} settings={settings} draftUpdatedAt={wf.updatedAt} localData={localDb()} />
+  return <CanvasScreen workflowId={workflowId} graph={graph} run={run} settings={settings} draftUpdatedAt={wf.updatedAt} localData={localDb()} noTasksYet={!latest} />
 }

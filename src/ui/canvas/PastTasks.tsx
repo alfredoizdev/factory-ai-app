@@ -38,6 +38,7 @@ export function PastTasks({
   refreshKey,
   onOpen,
   onDeleted,
+  onCount,
 }: {
   workflowId: string
   currentRunId: string | null
@@ -46,6 +47,8 @@ export function PastTasks({
   onOpen: (runId: string) => void
   /** Called once a task is deleted, with its id: the screen leaves it if it was the one open. */
   onDeleted?: (runId: string) => void
+  /** Called with how many tasks there are, each time the list is known or changes. */
+  onCount?: (count: number) => void
 }) {
   const [runs, setRuns] = useState<RunSummary[] | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
@@ -80,6 +83,12 @@ export function PastTasks({
       live = false
     }
   }, [workflowId, refreshKey])
+
+  const count = runs?.length ?? null
+  useEffect(() => {
+    if (count !== null) onCount?.(count)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- told once per change of the count, not per render
+  }, [count])
 
   if (runs === null) return null
   if (runs.length === 0) return <p style={{ margin: 0, fontSize: 12.5, color: theme.skipped }}>{strings.history.empty}</p>

@@ -119,3 +119,20 @@ test('a task whose pull request is on hold says so instead of its status', async
   expect(screen.getByTestId('past-task-r2')).not.toHaveTextContent(strings.run.status.completed)
   expect(screen.queryByTestId('on-hold-r1')).toBeNull()
 })
+
+test('a project with no task at all invites the first one, and its button puts the cursor in the request box', async () => {
+  const { CanvasScreen } = await import('@/ui/canvas/CanvasScreen')
+  const { defaultGraph } = await import('@/domain/graph')
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ runs: [] }))))
+  render(<CanvasScreen workflowId="w1" graph={defaultGraph()} noTasksYet />)
+  const card = screen.getByTestId('no-task')
+  expect(card).toHaveTextContent(strings.history.firstTaskTitle)
+  expect(screen.queryByRole('button', { name: new RegExp(strings.history.openPast) })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: strings.history.firstTaskAction }))
+  expect(document.activeElement?.tagName).toBe('TEXTAREA')
+})
