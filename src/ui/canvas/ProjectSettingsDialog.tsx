@@ -5,6 +5,7 @@ import type { ProjectSettings } from '@/engine/project-settings'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { AgentSettings } from './AgentSettings'
+import { ProjectGithub } from './GithubConnect'
 import { ProjectMemory } from './ProjectMemory'
 
 /** The project's own settings, in their own window: its folder, its test command, the low-risk switch, its memory. */
@@ -27,7 +28,7 @@ export function ProjectSettingsDialog({ settings, onClose, onSaved }: { settings
         aria-label={strings.projectSettings.title}
         tabIndex={-1}
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(480px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', overflowY: 'auto', display: 'grid', gap: 12, padding: 20, background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.55)', outline: 'none' }}
+        style={{ width: 'min(560px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', overflowY: 'auto', display: 'grid', gap: 12, padding: 20, background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.55)', outline: 'none' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 className="factory-display" style={{ margin: 0, fontSize: 22 }}>{strings.projectSettings.title}</h2>
@@ -37,6 +38,7 @@ export function ProjectSettingsDialog({ settings, onClose, onSaved }: { settings
         </div>
         <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.projectSettings.what}</span>
         <AgentSettings settings={settings} onSaved={onSaved} />
+        <ProjectGithub projectId={settings.projectId} />
         <ProjectMemory projectId={settings.projectId} />
       </div>
     </div>

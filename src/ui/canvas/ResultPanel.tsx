@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Delivery } from '@/engine/delivery'
 import type { ShipState } from '@/engine/ship'
+import { GithubConnect } from './GithubConnect'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
@@ -66,26 +67,6 @@ export function ResultSection({
   async function recheckRemote() {
     const res = await fetch(`/api/runs/${runId}/delivery`)
     if (res.ok) setDelivery((await res.json()) as Delivery)
-  }
-
-  // Connecting from the app: a new private repository, or one the person already has, by its link.
-  const [connecting, setConnecting] = useState<'private' | 'public' | 'url' | null>(null)
-  const [connectError, setConnectError] = useState<string | null>(null)
-  const [link, setLink] = useState('')
-  const [haveOne, setHaveOne] = useState(false)
-  async function connect(how: { create: 'private' | 'public' } | { url: string }) {
-    setConnecting('create' in how ? how.create : 'url')
-    setConnectError(null)
-    try {
-      const res = await fetch(`/api/runs/${runId}/connect-github`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(how) })
-      const body = (await res.json().catch(() => null)) as { error?: string } | null
-      if (!res.ok) return setConnectError(body?.error ?? d.connect.failed(''))
-      await recheckRemote()
-    } catch {
-      setConnectError(d.connect.failed(''))
-    } finally {
-      setConnecting(null)
-    }
   }
 
   useEffect(() => {
@@ -244,52 +225,7 @@ export function ResultSection({
               <div data-testid="not-connected" style={{ display: 'grid', gap: 10, padding: 14, borderRadius: 10, border: `1px solid ${theme.waiting}`, background: 'rgba(245, 158, 11, 0.07)', fontSize: 13, lineHeight: 1.45 }}>
                 <strong style={{ fontSize: 15, color: '#e6e9ef' }}>{d.notConnected.title}</strong>
                 <span style={{ color: '#c9d0db' }}>{d.notConnected.text}</span>
-                <span style={{ marginTop: 2, color: '#e6e9ef', fontWeight: 600 }}>{d.connect.heading}</span>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  {(['private', 'public'] as const).map(kind => (
-                    <button key={kind} type="button" aria-label={d.connect[kind]} disabled={connecting !== null} onClick={() => void connect({ create: kind })} style={repoChoice(connecting !== null)}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 700, color: '#e6e9ef' }}>
-                        {connecting === kind ? <WorkingSpinner blockId={`connect-${kind}`} size={15} /> : <RepoIcon kind={kind} />} {d.connect[kind]}
-                      </span>
-                      <span style={{ fontSize: 12.5, color: theme.dim }}>{d.connect[`${kind}Help`]}</span>
-                    </button>
-                  ))}
-                </div>
-                {!haveOne ? (
-                  <button type="button" onClick={() => setHaveOne(true)} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 13, cursor: 'pointer' }}>
-                    {d.connect.have}
-                  </button>
-                ) : (
-                  <>
-                    <label htmlFor="github-link" style={{ color: '#e6e9ef', fontWeight: 600 }}>
-                      {d.connect.linkLabel}
-                    </label>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <input
-                        id="github-link"
-                        autoFocus
-                        value={link}
-                        onChange={e => setLink(e.target.value)}
-                        placeholder={d.connect.placeholder}
-                        spellCheck={false}
-                        style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0b0e14', color: '#e6e9ef', fontSize: 13 }}
-                      />
-                      <button type="button" disabled={connecting !== null || link.trim() === ''} onClick={() => void connect({ url: link })} style={{ ...primaryButton(connecting), flex: 'none', opacity: link.trim() === '' ? 0.5 : 1 }}>
-                        {connecting === 'url' ? <WorkingSpinner blockId="connect-url" size={16} /> : null} {d.connect.use}
-                      </button>
-                    </div>
-                  </>
-                )}
-                {connecting && (
-                  <span role="status" style={{ color: '#cfe0ff' }}>
-                    {d.connect.working}
-                  </span>
-                )}
-                {connectError && (
-                  <span role="alert" style={{ color: theme.failed }}>
-                    {connectError}
-                  </span>
-                )}
+                <GithubConnect endpoint={`/api/runs/${runId}/connect-github`} onConnected={recheckRemote} />
               </div>
             ) : (
               <ShipSection runId={runId} button={primaryButton} onState={shipStateSeen} canOpen={!away} onRecorded={onRecorded} />
@@ -424,28 +360,6 @@ function SaveIcon() {
 }
 
 const optionCard: CSSProperties = { display: 'grid', gap: 6, padding: 10, borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c' }
-
-function repoChoice(busy: boolean): CSSProperties {
-  return { display: 'grid', gap: 3, justifyItems: 'start', padding: '11px 12px', borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0f141c', textAlign: 'left', cursor: busy ? 'wait' : 'pointer' }
-}
-
-function RepoIcon({ kind }: { kind: 'private' | 'public' }) {
-  return (
-    <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {kind === 'private' ? (
-        <>
-          <rect x="5" y="11" width="14" height="9" rx="2" />
-          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-        </>
-      ) : (
-        <>
-          <circle cx="12" cy="12" r="9" />
-          <path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18" />
-        </>
-      )}
-    </svg>
-  )
-}
 
 function primaryButton(busy: unknown): CSSProperties {
   return { padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }

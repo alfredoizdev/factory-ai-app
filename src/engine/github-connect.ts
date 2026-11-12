@@ -50,17 +50,17 @@ function explain(e: unknown): string {
   return c.failed(detail(e))
 }
 
+export type How = { create: 'private' | 'public' } | { url: string }
+
+const originOf = (repo: string, exec: Exec) => exec('git', ['remote', 'get-url', 'origin'], repo).then(s => s.trim() || null, () => null)
+
 /**
- * Connects the project of this run to GitHub and uploads its main branch. `how.create` makes a new repository, private
- * or public as the person chose, named after the project's folder; `how.url` uses one the person already has. Already connected: nothing to do.
+ * Connects the repository in this folder to GitHub and uploads its main branch. `how.create` makes a new repository,
+ * private or public as the person chose, named after the folder; `how.url` uses one the person already has. Already
+ * connected: nothing to do.
  */
-export async function connectGithub(runId: string, how: { create: 'private' | 'public' } | { url: string }, exec: Exec = defaultExec): Promise<{ url: string | null }> {
-  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
-  if (!run) throw new ConnectError(strings.errors.runNotFound, 404)
-  const repo = (await projectHere(run.projectId))?.repoPath
-  if (!repo) throw new ConnectError(c.noFolder)
-  const origin = () => exec('git', ['remote', 'get-url', 'origin'], repo).then(s => s.trim() || null, () => null)
-  const already = await origin()
+async function connectRepo(repo: string, how: How, exec: Exec): Promise<{ url: string | null }> {
+  const already = await originOf(repo, exec)
   if (already) return { url: already }
   const main = defaultBranch(repo) ?? 'main'
 
@@ -84,5 +84,32 @@ export async function connectGithub(runId: string, how: { create: 'private' | 'p
   } catch (e) {
     throw new ConnectError(explain(e))
   }
-  return { url: await origin() }
+  return { url: await originOf(repo, exec) }
+}
+
+/** Connects a project to GitHub, from its settings. */
+export async function connectProjectGithub(projectId: string, how: How, exec: Exec = defaultExec): Promise<{ url: string | null }> {
+  const repo = (await projectHere(projectId))?.repoPath
+  if (!repo) throw new ConnectError(c.noFolder)
+  return connectRepo(repo, how, exec)
+}
+
+/** Connects the project of this run to GitHub, from the card of a saved change. */
+export async function connectGithub(runId: string, how: How, exec: Exec = defaultExec): Promise<{ url: string | null }> {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
+  if (!run) throw new ConnectError(strings.errors.runNotFound, 404)
+  return connectProjectGithub(run.projectId, how, exec)
+}
+
+/** Where the project is on GitHub: its link as a web address, or null when it is not connected (or has no folder here). */
+export async function projectGithub(projectId: string, exec: Exec = defaultExec): Promise<{ url: string | null; here: boolean }> {
+  const repo = (await projectHere(projectId))?.repoPath
+  if (!repo) return { url: null, here: false }
+  const origin = await originOf(repo, exec)
+  return { url: origin ? webUrl(origin) : null, here: true }
+}
+
+/** A remote as a page a person can open: git@github.com:me/app.git becomes https://github.com/me/app. */
+export function webUrl(remote: string): string {
+  return remote.replace(/^git@github\.com:/, 'https://github.com/').replace(/\.git$/, '')
 }
