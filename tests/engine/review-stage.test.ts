@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
@@ -30,6 +30,14 @@ vi.mock('@/engine/inngest/review-stage', async importOriginal => {
   const real = await importOriginal<typeof import('@/engine/inngest/review-stage')>()
   return { ...real, runReviewStage: async (ctx: Parameters<typeof real.runReviewStage>[0]) => { const r = await real.runReviewStage(ctx); stageResults.push(r); return r } }
 })
+
+// Everything the tests create on disk is removed afterwards.
+const temps: string[] = []
+afterAll(() => temps.forEach(t => rmSync(t, { recursive: true, force: true })))
+const track = (dir: string): string => {
+  temps.push(dir)
+  return dir
+}
 
 beforeAll(() => migrateDb())
 const now = () => new Date().toISOString()
@@ -74,7 +82,7 @@ async function newRun(): Promise<string> {
 
 /** A folder with a.tsx in it. `git` makes it a repository whose one commit is the base, with a small change on top. */
 function workdir(git: boolean): { dir: string; base: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'factory-review-'))
+  const dir = track(mkdtempSync(join(tmpdir(), 'factory-review-')))
   writeFileSync(join(dir, 'a.tsx'), 'one\ntwo\nthree\nfour\nfive\n')
   if (!git) return { dir, base: 'abc' }
   const run = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
@@ -298,8 +306,9 @@ function scripted(script: Script) {
     },
   }
   const deps: Partial<ExecutorDeps> = {
+    snapshotStore: track(mkdtempSync(join(tmpdir(), 'factory-store-'))),
     makeCopy: async () => {
-      const c = mkdtempSync(join(tmpdir(), 'factory-copy-'))
+      const c = track(mkdtempSync(join(tmpdir(), 'factory-copy-')))
       copies.push(c)
       return c
     },
@@ -754,6 +763,9 @@ describe('cancelling and failing', () => {
 
 const git = (dir: string, ...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
 const text = (dir: string, path: string) => readFileSync(join(dir, path), 'utf8')
+/** Reads a snapshot, which lives in the app's store and not in the repository. */
+const inStore = (store: string, dir: string, ...args: string[]) =>
+  execFileSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_ALTERNATE_OBJECT_DIRECTORIES: join(store, 'objects') } })
 const porcelain = (dir: string) => git(dir, 'status', '--porcelain')
 const original = 'one\ntwo\nthree!\nfour\nfive\n' // a.tsx as workdir(true) leaves it
 const edit = (dir: string, mark: string) => appendFileSync(join(dir, 'a.tsx'), `${mark}\n`)
@@ -932,7 +944,7 @@ describe('a small fix that strays into something that matters is held', () => {
   })
 
   for (const [option, words] of [[LEAVE, undefined], [OTHER, 'let me think about it']] as const) {
-    test(`answering "${option}" takes the fix back too, keeping the person's words as the reason`, async () => {
+    test(`answering "${option}" takes the fix back too, and the problem stays flagged for the person, with their words as the reason`, async () => {
       const runId = await newRun()
       await money(runId)
       const { dir, base } = workdir(true)
@@ -944,7 +956,8 @@ describe('a small fix that strays into something that matters is held', () => {
       await drive(runId, s.provider, dir, base, step, s.deps)
       expect(text(dir, 'a.tsx')).toBe(original)
       expect(existsSync(join(dir, 'src/billing/charge.ts'))).toBe(false)
-      expect((await findingsOf(runId))[0]).toMatchObject({ state: 'discarded', reason: words ?? strings.findings.fixUndone })
+      expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: words ?? strings.findings.fixUndoneOpen })
+      expect((await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')!.outcome).toBe('open')
     })
   }
 
@@ -959,8 +972,8 @@ describe('a small fix that strays into something that matters is held', () => {
     expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
     expect((await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')!.outcome).toBe('asked_yes')
     expect(stage()).toMatchObject({ fixed: true })
-    expect(git(dir, 'show', `${stage().fixesSince}:a.tsx`)).toBe(original)
-    expect(git(dir, 'ls-tree', '-r', '--name-only', stage().fixesSince!)).not.toContain('charge.ts')
+    expect(inStore(s.deps.snapshotStore!, dir, 'cat-file', '-p', `${stage().fixesSince}:a.tsx`)).toBe(original)
+    expect(inStore(s.deps.snapshotStore!, dir, 'ls-tree', '-r', '--name-only', stage().fixesSince!)).not.toContain('charge.ts')
   })
 
   test('a core path the task had already changed before the fix is not asked about again', async () => {
@@ -1028,6 +1041,156 @@ describe('a small fix that strays into something that matters is held', () => {
       expect((await findingsOf(runId))[0]).toMatchObject({ state: 'discarded', entryNumber: row!.entryNumber })
     })
   }
+})
+
+describe('taking a fix back only touches what the fix changed', () => {
+  const stage = () => stageResults.at(-1)!
+  const resolveTo = async (runId: string, option: string, step: ReturnType<typeof recordingStep>, s: ReturnType<typeof scripted>, dir: string, base: string, words?: string) => {
+    await answerQuestion((await openQuestion(runId))!.id, { option, ...(words ? { text: words } : {}) }, { send })
+    step.onWait = async () => ({ data: {} })
+    await drive(runId, s.provider, dir, base, step, s.deps)
+  }
+
+  test('what the person edits or creates while the run waits survives "Undo it"', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    writeFileSync(join(dir, 'b.txt'), 'b original\n')
+    const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); stray(d) } })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect((await openQuestion(runId))!.kind).toBe('fix_held')
+    writeFileSync(join(dir, 'b.txt'), 'b edited by the person\n') // the person went to look
+    writeFileSync(join(dir, 'person-notes.md'), 'my notes\n')
+    await resolveTo(runId, 'undo', step, s, dir, base)
+    expect(text(dir, 'b.txt')).toBe('b edited by the person\n')
+    expect(text(dir, 'person-notes.md')).toBe('my notes\n')
+    expect(text(dir, 'a.tsx')).toBe(original)
+    expect(existsSync(join(dir, 'src/billing/charge.ts'))).toBe(false)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'discarded' })
+  })
+
+  test('a file the person changed after the fix is left as it is, and the reason says so', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); stray(d) } })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    appendFileSync(join(dir, 'a.tsx'), 'person line\n')
+    await resolveTo(runId, 'undo', step, s, dir, base)
+    expect(text(dir, 'a.tsx')).toBe(`${original}fix\nperson line\n`)
+    expect(existsSync(join(dir, 'src/billing/charge.ts'))).toBe(false)
+    expect((await findingsOf(runId))[0]!.reason).toContain(strings.findings.leftAsTheyAre(['a.tsx']))
+  })
+
+  test('a fixer that edits an ignored private settings file is held, and "Undo it" puts the file back', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    writeFileSync(join(dir, '.gitignore'), '.env\n')
+    writeFileSync(join(dir, '.env'), 'KEY=1\n')
+    const s = scripted({ found: [finding()], fix: d => { edit(d, 'fix'); writeFileSync(join(d, '.env'), 'KEY=changed\n') } })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    const q = (await openQuestion(runId))!
+    expect(q.kind).toBe('fix_held')
+    expect(q.text).toContain('secrets and environment')
+    expect(q.detail).toContain('.env')
+    await resolveTo(runId, 'undo', step, s, dir, base)
+    expect(text(dir, '.env')).toBe('KEY=1\n')
+    expect(text(dir, 'a.tsx')).toBe(original)
+  })
+
+  test('after "Keep", a second attempt that strays into other important parts is taken back and the finding stays open', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({
+      found: [finding()],
+      fix: (d, n) => {
+        edit(d, `fix ${n}`)
+        stray(d)
+        if (n === 2) { mkdirSync(join(d, 'src/auth'), { recursive: true }); writeFileSync(join(d, 'src/auth/login.ts'), 'x\n') }
+      },
+      after: () => seenRun(),
+    })
+    await drive(runId, s.provider, dir, base, answering(runId, 'keep'), s.deps)
+    expect((await questionRows(runId)).filter(q => q.kind === 'fix_held')).toHaveLength(1)
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(2)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.strayedAgain })
+    expect(existsSync(join(dir, 'src/auth/login.ts'))).toBe(false)
+    expect(text(dir, 'a.tsx')).toBe(original)
+    expect(existsSync(join(dir, 'src/billing/charge.ts'))).toBe(false)
+  })
+
+  test('a git error after the fixer ran does not leave the run stuck: the finding ends open, saying the fix could not be taken back', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({
+      found: [finding()],
+      fix: d => {
+        edit(d, 'fix')
+        mkdirSync(join(d, 'sub'))
+        execFileSync('git', ['init', '-q'], { cwd: join(d, 'sub') })
+        writeFileSync(join(d, 'sub/x.txt'), 'x')
+      },
+    })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixNotTakenBack([]) })
+    expect((await node(runId, 'review')).state).toBe('passed')
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(1)
+  })
+
+  test('the first fix undone and the second kept: fixesSince is the second one\'s snapshot', async () => {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    const s = scripted({
+      found: [finding({ problem: 'first', type: 'logic', severity: 'high' }), finding({ problem: 'second', type: 'effect', severity: 'medium' })],
+      fix: (d, n) => (n === 1 ? (edit(d, 'fix 1'), stray(d)) : edit(d, 'fix 2')),
+    })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    writeFileSync(join(dir, 'person.txt'), 'made while waiting\n')
+    await resolveTo(runId, 'undo', step, s, dir, base)
+    const rows = await findingsOf(runId)
+    expect(rows.map(r => r.state).sort()).toEqual(['corrected', 'discarded'])
+    expect(stage()).toMatchObject({ fixed: true })
+    const since = stage().fixesSince!
+    expect(inStore(s.deps.snapshotStore!, dir, 'ls-tree', '-r', '--name-only', since)).toContain('person.txt') // taken after the first fix was undone
+    expect(text(dir, 'a.tsx')).toBe(`${original}fix 2\n`)
+  })
+
+  test('a later finding\'s rollback keeps an earlier finding\'s fix', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({
+      found: [finding({ problem: 'first', type: 'logic', severity: 'high' }), finding({ problem: 'second', type: 'effect', severity: 'medium' })],
+      fix: (d, n) => { edit(d, `fix ${n}`); writeFileSync(join(d, `added${n}.txt`), 'x') },
+      after: n => (n === 1 ? seenRun({ exitCode: 0, markerSeen: false, outputTail: '' }) : seenRun()),
+    })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect((await findingsOf(runId)).map(r => r.state).sort()).toEqual(['corrected', 'open'])
+    expect(text(dir, 'a.tsx')).toBe(`${original}fix 1\n`)
+    expect(existsSync(join(dir, 'added1.txt'))).toBe(true)
+    expect(existsSync(join(dir, 'added2.txt')) || existsSync(join(dir, 'added3.txt'))).toBe(false)
+  })
+
+  test('rollback- forgotten and run again writes nothing twice and changes nothing', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: (d, n) => edit(d, `fix ${n}`), after: () => seenRun() })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    const [row] = await findingsOf(runId)
+    writeFileSync(join(dir, 'person.txt'), 'later\n')
+    const before = { ...(await counts(runId)), a: text(dir, 'a.tsx'), fixers: s.calls.filter(c => c.role === 'fixer').length }
+    step.forget(`rollback-${row!.id}`)
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect({ ...(await counts(runId)), a: text(dir, 'a.tsx'), fixers: s.calls.filter(c => c.role === 'fixer').length }).toEqual(before)
+    expect(text(dir, 'person.txt')).toBe('later\n')
+    expect(before.a).toBe(original)
+  })
 })
 
 describe('the demo provider', () => {

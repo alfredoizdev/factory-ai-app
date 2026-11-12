@@ -63,6 +63,8 @@ export type ExecutorDeps = {
   runRepro?: typeof realRunRepro
   /** Makes the throwaway copy a verifier works in. */
   makeCopy?: typeof realMakeCopy
+  /** Where the snapshots taken before a fix are kept. Default: the app's own data folder. */
+  snapshotStore?: string
 }
 
 const defaultDeps: ExecutorDeps = {

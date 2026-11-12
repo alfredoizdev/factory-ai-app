@@ -11,6 +11,9 @@ const fenced = (lines: readonly string[]): string[] => [
   REPORT_END,
 ]
 
+/** "a", "a and b", "a, b and c". */
+const list = (items: readonly string[]): string => (items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`)
+
 export const strings = {
   app: {
     name: 'AI Factory',
@@ -213,7 +216,13 @@ export const strings = {
     fixedChecked: 'Fixed. The check that showed the problem now passes.',
     fixNotSolved: 'The fix did not solve it: the check still shows the problem. The change was taken back, so this one needs a look from you.',
     fixUndone: 'You chose to undo the fix.',
-    fixNotStarted: 'The app could not save the project as it was before a fix, so it changed nothing. This one needs a look from you.',
+    fixNotStarted: 'The app could not keep a copy of the project to go back to, so it changed nothing. This one needs a look from you.',
+    fixUndoneOpen: 'The fix was taken back, and the problem is still flagged for you.',
+    strayedAgain: 'The second try changed other important parts of the project, so the app took it back. This one needs a look from you.',
+    // Said when a file was changed after the fix, so taking the fix back left it as it is.
+    leftAsTheyAre: (paths: readonly string[]) => `Some files were left as they are because they were changed after the fix: ${paths.join(', ')}.`,
+    fixNotTakenBack: (paths: readonly string[]) =>
+      `The fix could not be taken back completely, so the project may still contain part of it${paths.length > 0 ? `. Files to look at: ${paths.join(', ')}` : ''}. This one needs a look from you.`,
     unclearAnswer: 'The answer was not one the app can act on by itself, so this one still needs you.',
     risk: {
       core: 'It touches a core area you marked.',
@@ -253,18 +262,18 @@ export const strings = {
       text: [
         `A small fix changed ${
           held.core && held.areas.length > 0
-            ? `a part of the project you marked as important, and a part that deals with ${held.areas.join(' and ')}.`
+            ? `a part of the project you marked as important, and a part that deals with ${list(held.areas)}.`
             : held.core
               ? 'a part of the project you marked as important.'
-              : `a part of the project that deals with ${held.areas.join(' and ')}.`
+              : `a part of the project that deals with ${list(held.areas)}.`
         }`,
         'Do you want to keep it?',
       ].join(' '),
       why: 'The app does not change these parts without asking you first. If you undo it, the project goes back to how it was before the fix.',
       options: [
-        { id: 'keep', label: 'Keep the fix', means: 'The fix stays in the change. The app then checks that it works. You still see the whole change before anything is sent.' },
+        { id: 'keep', label: 'Keep the fix', means: 'The fix stays. The app then checks that it works, and takes it back if it does not. You still see the whole change before anything is sent.' },
         { id: 'undo', label: 'Undo it', means: 'The fix is taken back and the project is put back as it was just before it.' },
-        { id: 'leave', label: 'I am not sure', means: 'The fix is taken back, the same as "Undo it", to be safe.' },
+        { id: 'leave', label: 'I am not sure', means: 'The fix is taken back, and the problem stays flagged for you to decide.' },
       ],
     }),
     // One click away from the question: the files the fix changed and what the AI reviewer said about the problem.
@@ -1042,7 +1051,7 @@ export const strings = {
             ...(repro ? [`Command that shows it: ${repro.command}`, `While the problem is there, that command prints the line: ${repro.marker}`] : []),
           ]),
           '',
-          'Fix this one problem and change nothing else: no other files, no tidying, no new features. Do not run that command and do not create its files here: it only shows how the problem was found. The app runs the check itself, in its own copy, after your fix.',
+          'Fix this one problem and change nothing else: no other files, no tidying, no new features. Do not change private settings files (such as .env) or anything the project ignores. Do not run that command and do not create its files here: it only shows how the problem was found. The app runs the check itself, in its own copy, after your fix.',
           'Work only inside the current directory. Do not commit, push or create branches.',
           'When you are done, reply with one plain sentence saying what you changed.',
         ].join('\n'),

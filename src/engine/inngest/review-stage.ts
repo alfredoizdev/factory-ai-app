@@ -34,7 +34,7 @@ import {
 import { MAX_FINDINGS, focusesFor, whereOf, type Finding, type Focus, type Review } from '@/engine/review'
 import { clip, redact } from '@/engine/redact'
 import { SENSITIVE, assessRisk } from '@/engine/risk'
-import { MAX_FIX_ATTEMPTS, changedBetween, changedSince, restoreTree, snapshotTree } from '@/engine/tree-snapshot'
+import { MAX_FIX_ATTEMPTS, changedBetween, changedPaths, claimAttempt, restoreTree, takeSnap, undoChange, type Options as SnapOptions, type Snap } from '@/engine/tree-snapshot'
 import { strings } from '@/ui/strings'
 
 // The Review block, for a provider that works on files: one reader on a small change, three on anything else, each
@@ -235,10 +235,17 @@ async function verifyFinding(ctx: Context, nodeId: string, row: FindingRow, n: n
   return { verdict: 'confirmed', repro }
 }
 
+type Stray = { paths: string[]; core: boolean; areas: string[] }
+/** What one fixer attempt did. `paths` is cut to MAX_CARRIED_PATHS (with `count` the full number); `strays` is kept in full. */
+type Made = { status: 'fixed' | 'failed' | 'cancelled'; count: number; paths: string[]; strays: Stray | null; after: Snap | null }
+type TakenBack = { kept: string[]; failed: string[]; error: boolean }
+const MAX_CARRIED_PATHS = 200
+
 /**
  * One fix, made on its own: the tree is saved, then up to MAX_FIX_ATTEMPTS times the fixer works and the app re-runs the
  * reproduction itself. A fix that strayed into something that matters is put to the person first. A fix that does not
- * solve it is taken back. Every side effect is a step of its own, with ids unique to the finding and the attempt.
+ * solve it is taken back, but only what the fix changed: whatever the person changed meanwhile stays. Every side effect
+ * is a step of its own, with ids unique to the finding and the attempt.
  */
 async function fixOne(
   ctx: Context,
@@ -250,90 +257,154 @@ async function fixOne(
 ): Promise<{ end: End; kept: string | null } | 'cancelled' | 'parked'> {
   const { step, id, workspace } = ctx
   const workdir = workspace.workdir
+  const opts: SnapOptions = ctx.deps.snapshotStore ? { store: ctx.deps.snapshotStore } : {}
   const open = (reason: string): { end: End; kept: null } => ({ end: { state: 'open', outcome: 'open', reason }, kept: null })
   // Taken once, before the first attempt; every later step and every replay reads the same id.
-  const snap = await step.run(id(`snap-${row.id}`), () => takeSnapshot(workdir))
+  const snap = await step.run(id(`snap-${row.id}`), () => takeSnapshot(workdir, opts))
   if (snap === null || !workdir) return open(strings.findings.fixNotStarted)
   // What the task had already changed before the fix: a fix in such a place is not a new stray.
-  const already = new Set(await step.run(id(`before-${row.id}`), () => changedBefore(workdir, workspace.baseCommit, snap)))
-  const takeBack = (name: string) => step.run(id(`${name}-${row.id}`), () => restoreTree(workdir, snap))
+  const already = new Set(await step.run(id(`before-${row.id}`), () => changedBefore(workdir, workspace.baseCommit, snap.tree, opts)))
+  const takeBack = (name: string, after: Snap | null) => step.run(id(`${name}-${row.id}`), (): TakenBack => giveBack(workdir, snap, after, opts))
+  // A fix that could not be taken back completely ends the finding open, saying so.
+  const stuck = (back: TakenBack) => open(strings.findings.fixNotTakenBack(back.failed))
   // The person was asked about this one at some point: the register line says so.
   let asked = fixAs === 'asked_yes'
-  let heldAsked = false
+  // The paths the person agreed to on the held question; a later attempt may not go beyond them.
+  let approved: string[] | null = null
 
   for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-    const made = await step.run(id(`fix-${row.id}-${attempt}`), () => fixFinding(ctx, nodeId, row, workdir, snap, repro))
+    const made = await step.run(id(`fix-${row.id}-${attempt}`), () => fixFinding(ctx, nodeId, row, workdir, snap, repro, attempt, core, already, opts))
     if (made.status === 'cancelled') return 'cancelled'
     if (made.status === 'failed') {
-      await takeBack('rollback')
-      return open(strings.findings.fixFailed)
+      const back = await takeBack('rollback', made.after)
+      return back.error || back.failed.length > 0 ? stuck(back) : open(strings.findings.fixFailed)
     }
-    const strayed = fixAs === 'unchecked' && !heldAsked ? strayedInto(made.paths, core, already) : null
-    if (strayed) {
-      heldAsked = true
+    if (approved !== null) {
+      if (made.strays?.paths.some(p => !approved!.includes(p))) {
+        const back = await takeBack('rollback', made.after)
+        return back.error || back.failed.length > 0 ? stuck(back) : open(strings.findings.strayedAgain)
+      }
+    } else if (fixAs === 'unchecked' && made.strays) {
+      const strayed = made.strays
       const answer = await askAndWait(ctx, nodeId, row, 'held-', () => askAboutHeldFix(ctx, nodeId, row, strayed))
       if (answer === 'cancelled') return 'cancelled'
       if (answer === 'parked') return 'parked'
-      // Only "Keep the fix" keeps it. Undoing is the safe default, so leaving the question or answering in the person's own words undoes it too.
       if (answer.answerOption !== KEEP) {
-        await takeBack('undo')
-        return { end: { state: 'discarded', outcome: 'asked_no', reason: answer.answerText?.trim() || strings.findings.fixUndone }, kept: null }
+        const back = await takeBack('undo', made.after)
+        const words = answer.answerText?.trim()
+        // Only "Undo it" is the person's decision about the problem; leaving the question or answering in their own words keeps it flagged for them.
+        const end: End =
+          answer.answerOption === UNDO
+            ? { state: 'discarded', outcome: 'asked_no', reason: words || strings.findings.fixUndone }
+            : { state: 'open', outcome: 'open', reason: words || strings.findings.fixUndoneOpen }
+        if (back.error || back.failed.length > 0) return stuck(back)
+        return { end: back.kept.length > 0 ? { ...end, reason: `${end.reason} ${strings.findings.leftAsTheyAre(back.kept)}` } : end, kept: null }
       }
       asked = true
+      approved = strayed.paths
     }
     // Nothing to run for a problem that could not be shown: the fix stands, unchecked.
-    if (!repro) return { end: { state: 'fixed_unchecked', outcome: asked ? 'asked_yes' : 'unchecked', reason: strings.findings.fixedUnchecked }, kept: snap }
+    if (!repro) return { end: { state: 'fixed_unchecked', outcome: asked ? 'asked_yes' : 'unchecked', reason: strings.findings.fixedUnchecked }, kept: snap.tree }
     const evidence = await step.run(id(`check-${row.id}-${attempt}`), () => checkFix(ctx, workdir, repro))
     if (evidence === null) return 'cancelled'
-    if (corrected(evidence)) return { end: { state: 'corrected', outcome: asked ? 'asked_yes' : 'done', reason: strings.findings.fixedChecked, evidence }, kept: snap }
+    if (corrected(evidence)) return { end: { state: 'corrected', outcome: asked ? 'asked_yes' : 'done', reason: strings.findings.fixedChecked, evidence }, kept: snap.tree }
+    // The next attempt starts from what the person had, not from what this one left.
+    if (attempt < MAX_FIX_ATTEMPTS) {
+      const back = await takeBack(`retire-${attempt}`, made.after)
+      if (back.error || back.failed.length > 0) return stuck(back)
+    } else {
+      // A fix that does not work is not left in the person's change.
+      const back = await takeBack('rollback', made.after)
+      if (back.error || back.failed.length > 0) return stuck(back)
+      return open(back.kept.length > 0 ? `${strings.findings.fixNotSolved} ${strings.findings.leftAsTheyAre(back.kept)}` : strings.findings.fixNotSolved)
+    }
   }
-  // A fix that does not work is not left in the person's change.
-  await takeBack('rollback')
-  return open(strings.findings.fixNotSolved)
+  return open(strings.findings.fixNotSolved) // unreachable: the last attempt returns above
 }
 
-async function takeSnapshot(workdir: string | null | undefined): Promise<string | null> {
+/** Takes back what a fix did, never throwing: a failure is reported so that the finding can say so. */
+function giveBack(workdir: string, snap: Snap, after: Snap | null, opts: SnapOptions): TakenBack {
+  try {
+    if (after) {
+      const done = undoChange(workdir, snap, after, opts)
+      return { kept: done.kept, failed: done.failed, error: false }
+    }
+    // No record of what the fixer did (it ended without one): the whole folder goes back to the snapshot.
+    restoreTree(workdir, snap.tree, opts)
+    return { kept: [], failed: [], error: false }
+  } catch {
+    return { kept: [], failed: [], error: true }
+  }
+}
+
+function takeSnapshot(workdir: string | null | undefined, opts: SnapOptions): Snap | null {
   if (!workdir) return null
   try {
-    return snapshotTree(workdir)
+    return takeSnap(workdir, opts)
   } catch {
     return null
   }
 }
 
 /** The paths the task had changed, against its base commit, when the snapshot was taken. Unknown counts as none, which asks more rather than less. */
-async function changedBefore(workdir: string, baseCommit: string | null | undefined, snap: string): Promise<string[]> {
+function changedBefore(workdir: string, baseCommit: string | null | undefined, tree: string, opts: SnapOptions): string[] {
   if (!baseCommit) return []
   try {
-    return changedBetween(workdir, baseCommit, snap)
+    return changedBetween(workdir, baseCommit, tree, opts)
   } catch {
     return []
   }
 }
 
 /** The changed paths that are in a core area or a sensitive kind of file and were not already changed by the task. */
-function strayedInto(paths: string[], core: string[], already: ReadonlySet<string>): { paths: string[]; core: boolean; areas: string[] } | null {
+function strayedInto(paths: string[], core: string[], already: ReadonlySet<string>): Stray | null {
   const hit = paths.filter(p => !already.has(p) && (touchesCore(p, core) || SENSITIVE.some(([re]) => re.test(p))))
   if (hit.length === 0) return null
   const areas = [...new Set(hit.flatMap(p => SENSITIVE.filter(([re]) => re.test(p)).map(([, label]) => label)))]
   return { paths: hit, core: hit.some(p => touchesCore(p, core)), areas }
 }
 
-/** One fixer call in the task's working copy, starting from the saved tree. Checking the fix is not done here. */
-async function fixFinding(ctx: Context, nodeId: string, row: FindingRow, workdir: string, snap: string, repro?: Repro): Promise<{ status: 'fixed' | 'failed' | 'cancelled'; paths: string[] }> {
+/**
+ * One fixer call in the task's working copy. Never throws once the fixer has been called: whatever goes wrong afterwards
+ * is a failed attempt, so that it is taken back. Checking the fix is not done here.
+ */
+async function fixFinding(
+  ctx: Context,
+  nodeId: string,
+  row: FindingRow,
+  workdir: string,
+  snap: Snap,
+  repro: Repro | undefined,
+  attempt: number,
+  core: string[],
+  already: ReadonlySet<string>,
+  opts: SnapOptions,
+): Promise<Made> {
   const { runId, plan, block, deps, workspace } = ctx
+  const none = (status: Made['status'], after: Snap | null = null): Made => ({ status, count: 0, paths: [], strays: null, after })
   // A finding that is already resolved was fixed by an earlier run of this step: nothing is called again.
-  if ((await currentOf(runId, row.id))?.entryNumber != null) return { status: 'fixed', paths: [] }
-  if (await isCancelled(runId)) return { status: 'cancelled', paths: [] }
-  // A fixer that ran before but whose result was not recorded, or an attempt that did not work, must not be built on.
-  if (changedSince(workdir, snap).length > 0) restoreTree(workdir, snap)
+  if ((await currentOf(runId, row.id))?.entryNumber != null) return none('fixed')
+  if (await isCancelled(runId)) return none('cancelled')
+  try {
+    // This step ran before and its result was not recorded: the fixer may have left a half-edit that must not be built on, and
+    // there is no record of what it did. The whole folder goes back to the snapshot. This window exists only while a fixer is running.
+    if (!claimAttempt(workdir, `${row.id}-${attempt}`, opts)) restoreTree(workdir, snap.tree, opts)
+  } catch {
+    return none('failed')
+  }
   await sayOnCard(ctx, nodeId, strings.review.fixing)
   // It works like the builder, with the builder's model and time.
   const builder = plan.blocks.find(b => b.kind === 'build' && b.enabled) ?? block
   const result = await runAttempt(deps.resolveProvider(plan.providerId), builder, plan.request, runId, workspace, null, [], () => {}, () => {}, { role: 'fixer', finding: asFinding(row), ...(repro ? { repro } : {}) })
-  if (result.kind === 'cancelled') return { status: 'cancelled', paths: [] }
-  if (result.kind !== 'done') return { status: 'failed', paths: [] }
-  return { status: 'fixed', paths: changedSince(workdir, snap) }
+  if (result.kind === 'cancelled') return none('cancelled')
+  try {
+    const after = takeSnap(workdir, opts)
+    if (result.kind !== 'done') return none('failed', after)
+    const paths = changedPaths(workdir, snap, after, opts)
+    return { status: 'fixed', count: paths.length, paths: paths.slice(0, MAX_CARRIED_PATHS), strays: strayedInto(paths, core, already), after }
+  } catch {
+    return none('failed')
+  }
 }
 
 /** The app runs the reproduction itself on the task's folder; only what it saw counts. Null when the run was cancelled. */
