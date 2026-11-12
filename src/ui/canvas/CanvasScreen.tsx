@@ -544,7 +544,19 @@ export function CanvasScreen({
                 <span style={{ fontSize: 13, color: theme.dim, lineHeight: 1.5 }}>{strings.history.firstTaskText}</span>
                 <button
                   type="button"
-                  onClick={() => document.querySelector<HTMLTextAreaElement>('[data-testid="command-card"] textarea')?.focus()}
+                  onClick={() => {
+                    // Puts the cursor in the request box and makes the card flash, so it is plain where to write.
+                    const card = document.querySelector<HTMLElement>('[data-testid="command-card"]')
+                    card?.querySelector('textarea')?.focus()
+                    card?.animate?.(
+                      [
+                        { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.95)', transform: 'scale(1)' },
+                        { boxShadow: '0 0 0 10px rgba(59, 130, 246, 0.35)', transform: 'scale(1.015)' },
+                        { boxShadow: '0 0 0 22px rgba(59, 130, 246, 0)', transform: 'scale(1)' },
+                      ],
+                      { duration: 650, iterations: 2, easing: 'ease-out' },
+                    )
+                  }}
                   style={{ justifySelf: 'center', marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 18px', borderRadius: 8, border: 'none', background: theme.running, color: '#fff', fontWeight: 700, cursor: 'pointer' }}
                 >
                   <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
