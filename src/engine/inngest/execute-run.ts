@@ -859,6 +859,13 @@ async function loadPlan(runId: string): Promise<Plan> {
   }
 }
 
+/** The commit a run that picks up a failed one starts its files from, or null for any other run. */
+async function continuesFrom(runId: string): Promise<string | null> {
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.continues'))).limit(1))[0]
+  const commit = row ? (JSON.parse(row.payloadJson) as { commit?: unknown }).commit : null
+  return typeof commit === 'string' && /^[0-9a-f]{7,64}$/.test(commit) ? commit : null
+}
+
 // The run's working copy, made once before any block runs. A provider that touches no files (the demo) gets none. If the
 // copy cannot be made, the run fails with that sentence rather than letting an agent start somewhere else.
 async function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): Promise<Workspace | { failed: string }> {
@@ -870,10 +877,14 @@ async function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): 
   try {
     // The commit chosen when the run was created: a follow-up's parent's approved commit, or the branch a fresh task
     // starts from (the project's main branch by default). Absent on runs made before that was recorded: the folder's HEAD.
-    const startPoint = existing?.baseCommit ?? undefined
+    // A run that picks up a failed one starts from the work that run left, but stays compared against the commit
+    // that run started from: nobody approved the work in between, so the human check must show all of it.
+    const continues = await continuesFrom(runId)
+    const startPoint = continues ?? existing?.baseCommit ?? undefined
     const make = deps.createWorktree ?? ((r: string, id: string, sp?: string, req?: string) => createRunWorktree(r, id, undefined, sp, req))
     // The branch is named after the request, so a person can tell it apart in their own `git branch`.
-    const ws = make(plan.repoPath, runId, startPoint, plan.request)
+    const made = make(plan.repoPath, runId, startPoint, plan.request)
+    const ws = continues && existing?.baseCommit ? { ...made, baseCommit: existing.baseCommit } : made
     await withTx(runId, async tx => {
       await tx.update(runs).set({ worktreePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit }).where(eq(runs.id, runId))
       await appendEventSync({ runId, type: 'run.workspace', payload: { branch: ws.branch, path: ws.path, baseCommit: ws.baseCommit } }, tx)

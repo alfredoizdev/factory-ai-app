@@ -26,6 +26,8 @@ export type RunEventType =
   | 'run.snapshots'
   // The project rules this task was given when it started.
   | 'run.memory'
+  // This run picks up the work a failed run left: that run, and the commit its work was saved as.
+  | 'run.continues'
 export type NodeEventType =
   | 'node.queued' | 'node.started' | 'node.step' | 'node.completed'
   | 'node.failed' | 'node.skipped' | 'node.waiting_approval' | 'node.cancelled'

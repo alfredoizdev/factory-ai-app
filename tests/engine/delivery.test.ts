@@ -570,3 +570,58 @@ describe('shipping through GitHub', () => {
     await expect(openPullRequest(runId, gh)).rejects.toThrow(strings.ship.noGh)
   })
 })
+
+// ---- picking up a failed run ----------------------------------------------------------------------------------------
+
+import { runFailure } from '@/engine/failure'
+import { evidence } from '@/db/schema'
+
+/** A run whose build check failed, with the agent's work still in its worktree. */
+async function failedRun() {
+  const made = await finishedRun({ approved: false })
+  await db.update(runs).set({ status: 'failed', providerId: 'files' }).where(eq(runs.id, made.runId))
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, made.runId))).find(n => n.blockId === 'tests')!
+  await db.update(nodeRuns).set({ state: 'failed', failureCause: 'tests_failed' }).where(eq(nodeRuns.id, node.id))
+  const project = (await db.select().from(runs).where(eq(runs.id, made.runId)))[0]!.projectId
+  await db.insert(evidence).values({ id: ulid(), projectId: project, runId: made.runId, nodeRunId: node.id, kind: 'test_run', source: 'test-runner', dataJson: JSON.stringify({ command: 'npm run build', exitCode: 1, signal: null, outputTail: 'Type error: missing prop\n' }), createdAt: now() })
+  return made
+}
+
+test('what went wrong names the failed block, its command and what it printed, and says the work can be picked up', async () => {
+  const { runId } = await failedRun()
+  const failure = (await runFailure(runId))!
+  expect(failure.canContinue).toBe(true)
+  expect(failure.failed).toMatchObject([{ blockId: 'tests', command: 'npm run build', exitCode: 1, output: 'Type error: missing prop' }])
+  expect(await runFailure('nope')).toBeNull()
+})
+
+test('a failed run is picked up where it stopped: the new run starts from its work, and its check shows the whole change', async () => {
+  const { runId: parentId, repo, base } = await failedRun()
+  const { runId } = await startFollowUp(parentId, 'Fix the build error')
+  const { provider, seen } = lineWriter('text: fixed')
+  try {
+    await orchestrateRun(runId, parkStep, { resolveProvider: () => provider })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  expect(seen[0]?.request).toBe('Fix the build error')
+  const child = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!
+  // The agent's unfinished work is there, plus the fix...
+  expect(readFileSync(join(child.worktreePath!, 'page.tsx'), 'utf8')).toBe('button: outline\nfooter: same\ntext: fixed\n')
+  expect(existsSync(join(child.worktreePath!, 'Button.tsx'))).toBe(true)
+  // ...and since nobody approved that work, the person is shown all of it, from where the failed run began.
+  expect(child.baseCommit).toBe(base)
+  const { changeUnderReview } = await import('@/engine/approvals')
+  expect((await changeUnderReview(runId))!.files.map(f => f.path).sort()).toEqual(['Button.tsx', 'page.tsx'])
+  expect(child.parentRunId).toBe(parentId)
+  // The saved work says it was never approved, and the person's project is untouched.
+  expect(git(repo, 'log', '-1', '--format=%B', (await db.select().from(runs).where(eq(runs.id, parentId)))[0]!.branch!)).toContain('stopped before a person approved it')
+  expect(git(repo, 'status', '--porcelain')).toBe('')
+})
+
+test('a failed run whose working copy is gone cannot be picked up, and says so', async () => {
+  const { runId } = await failedRun()
+  await db.update(runs).set({ worktreePath: '/nowhere/at/all' }).where(eq(runs.id, runId))
+  expect((await runFailure(runId))!.canContinue).toBe(false)
+  await expect(startFollowUp(runId, 'again')).rejects.toThrow(strings.failure.cannotContinue)
+})

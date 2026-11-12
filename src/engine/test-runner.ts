@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { projectEnv } from '@/engine/child-env'
 import { redact } from '@/engine/redact'
 
 // The evidence producer. What it records came from a process, not from a model: an exit code, a duration and, when
@@ -80,7 +81,7 @@ export function runTestCommand(command: string, cwd: string, signal: AbortSignal
   return new Promise(resolve => {
     let output = ''
     // Its own process group, so stopping it also stops whatever the command started (a test runner's workers).
-    const child = spawn('sh', ['-c', command], { cwd, detached: true, env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' } })
+    const child = spawn('sh', ['-c', command], { cwd, detached: true, env: projectEnv({ CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }) })
     const keep = (chunk: Buffer) => {
       output = (output + chunk.toString()).slice(-TAIL_CHARS * 4)
     }

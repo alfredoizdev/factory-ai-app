@@ -1,5 +1,6 @@
 'use client'
 
+import { FailedSection, type FailureActions } from './FailurePanel'
 import { forwardRef } from 'react'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
@@ -13,14 +14,15 @@ import { COMMAND_CARD_WIDTH } from './layout'
 import { CardSkeleton } from './Skeleton'
 import type { ShipState } from '@/engine/ship'
 
-export type CardMode = 'idle' | 'working' | 'plan' | 'waiting' | 'done'
+export type CardMode = 'idle' | 'working' | 'plan' | 'waiting' | 'done' | 'failed'
 
-const FRAME: Record<CardMode, { tone: 'running' | 'waiting' | 'passed'; from: string; to: string; strength: number }> = {
+const FRAME: Record<CardMode, { tone: 'running' | 'waiting' | 'passed' | 'failed'; from: string; to: string; strength: number }> = {
   idle: { tone: 'running', from: '#141b27', to: '#10151e', strength: 0.35 },
   working: { tone: 'running', from: '#121a29', to: '#0f1520', strength: 0.5 },
   plan: { tone: 'waiting', from: '#1f1a10', to: '#16130d', strength: 0.55 },
   waiting: { tone: 'waiting', from: '#1f1a10', to: '#16130d', strength: 0.55 },
   done: { tone: 'passed', from: '#0f1f16', to: '#0c1711', strength: 0.5 },
+  failed: { tone: 'failed', from: '#211214', to: '#170e10', strength: 0.5 },
 }
 
 /**
@@ -59,15 +61,18 @@ export const CommandCard = forwardRef<
     /** The name for a new task, optional. Absent: no field. */
     taskName?: string
     onTaskName?: (v: string) => void
+    /** Filled, while a failed task is on screen, with what the failed block's buttons do. */
+    failureActions?: { current: FailureActions | null }
+    onCanContinue?: (can: boolean) => void
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded }, ref) {
+>(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
   const frame = FRAME[mode]
-  const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : strings.run.requestLabel
-  const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : strings.run.requestPlaceholder
+  const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : mode === 'failed' ? strings.failure.label : strings.run.requestLabel
+  const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : mode === 'failed' ? strings.failure.placeholder : strings.run.requestPlaceholder
   const withSend = (send?: ComposerSend) => (
     <Composer
       send={send}
-      minHeight={mode === 'waiting' || mode === 'done' || mode === 'plan' ? 96 : undefined}
+      minHeight={mode === 'waiting' || mode === 'done' || mode === 'plan' || mode === 'failed' ? 96 : undefined}
       inputId={RUN_INPUT_ID}
       label={label}
       placeholder={placeholder}
@@ -172,6 +177,22 @@ export const CommandCard = forwardRef<
           imageIds={readyImageIds(images)}
           imagesBusy={imagesBusy(images)}
           composer={withSend}
+          onFollowUp={id => {
+            onSent()
+            onFollowUp(id)
+          }}
+        />
+      )}
+      {!loading && mode === 'failed' && runId && (
+        <FailedSection
+          runId={runId}
+          note={text}
+          imageIds={readyImageIds(images)}
+          imagesBusy={imagesBusy(images)}
+          composer={withSend}
+          onText={onText}
+          actionsRef={failureActions}
+          onCanContinue={onCanContinue}
           onFollowUp={id => {
             onSent()
             onFollowUp(id)

@@ -41,6 +41,7 @@ type CardData = {
   onCollapse?: () => void
   /** Present on a card that can be taken out of the flow from the card itself. */
   onRemove?: () => void
+  failedActions?: { onSee: () => void; onAgain?: () => void }
 }
 type CardNode = Node<CardData, 'block'>
 
@@ -98,6 +99,7 @@ function BlockNode({ data }: NodeProps<CardNode>) {
           collapseLabel={data.collapseLabel}
           onRemove={data.onRemove}
           width={data.cardWidth}
+          failedActions={data.failedActions}
         />
       ) : (
         <NotInRunCard block={data.block} selected={data.selected} issues={data.issues} onRemove={data.onRemove} />
@@ -223,7 +225,13 @@ export function Canvas({
   sidebarLog,
   loading = false,
   overlay,
+  onFailedClick,
+  canRetry = false,
 }: {
+  /** Asked from a block that failed: to see what went wrong, or to try again. */
+  onFailedClick?: (what: 'see' | 'again') => void
+  /** True when the failed run's work can be picked up again: the block then offers Try again. */
+  canRetry?: boolean
   /** Drawn over the flow, inside its own area (never under the sidebar): the open task's title. */
   overlay?: ReactNode
   /** A task is still loading: placeholders stand where its cards will be, and the cards appear once it is whole. */
@@ -455,6 +463,8 @@ export function Canvas({
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Offered on a block that failed, while a run is on screen.
+  const failedActions = hasRun && onFailedClick ? { onSee: () => onFailedClick('see'), onAgain: canRetry ? () => onFailedClick('again') : undefined } : undefined
   const nodes: CardNode[] = [
     ...graph.blocks.map(block => {
       // No run: honestly queued. In a run: the stream's view, or queued when the run holds the block but has said nothing yet.
@@ -485,6 +495,7 @@ export function Canvas({
           // From the card itself: any removable block while editing, and while a run is on screen only the blocks
           // added since, so a card showing what happened in the run never offers to delete itself.
           onRemove: canRemove(graph, block) && (!hasRun || !view) ? () => removeFromDraft(block.id) : undefined,
+          failedActions,
         },
       }
     }),

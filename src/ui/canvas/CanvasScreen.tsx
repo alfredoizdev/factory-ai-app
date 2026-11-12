@@ -3,6 +3,7 @@
 import { PastTasks } from './PastTasks'
 import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
+import type { FailureActions } from './FailurePanel'
 import { PROMPT_BLOCK, usePrompts } from './PromptCards'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
@@ -334,6 +335,10 @@ export function CanvasScreen({
   // The sidebar keeps the agent's settings; what to ask for lives in the command card on the canvas.
   // The project's settings live with the project (its menu, and the gear beside it), not with a task.
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // What the failed block's buttons do, provided by the card while a failed task is on screen.
+  const failureActions = useRef<FailureActions | null>(null)
+  // The failed run whose work can be picked up again, once the card has found out.
+  const [retryFor, setRetryFor] = useState<string | null>(null)
 
   // One card follows the run: ask, watch, decide, continue.
   // The run waits on the person at its plan, or at the human check: the card shows the one it waits at.
@@ -347,7 +352,9 @@ export function CanvasScreen({
         ? 'working'
         : run && runStatus === 'completed' && run.providerId !== DEMO_PROVIDER_ID
           ? 'done'
-          : 'idle'
+          : run && runStatus === 'failed' && run.providerId !== DEMO_PROVIDER_ID
+            ? 'failed'
+            : 'idle'
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -626,6 +633,8 @@ export function CanvasScreen({
           taskName={taskName}
           onTaskName={setTaskName}
           loading={loading}
+          failureActions={failureActions}
+          onCanContinue={can => setRetryFor(can && run ? run.runId : null)}
         />
         <Canvas
           graph={graph}
@@ -633,6 +642,8 @@ export function CanvasScreen({
           nodeRuns={Object.values(withAsked(withShip))}
           runBlocks={run?.blocks}
           highlightedId={highlightedId}
+          onFailedClick={mode === 'failed' ? what => (what === 'see' ? failureActions.current?.see() : failureActions.current?.again()) : undefined}
+          canRetry={mode === 'failed' && retryFor === run?.runId}
           flushRef={flushRef}
           loading={loading}
           overlay={

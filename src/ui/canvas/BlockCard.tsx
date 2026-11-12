@@ -110,7 +110,10 @@ export function BlockCard({
   onRemove,
   collapseLabel = strings.canvas.collapse,
   width,
+  failedActions,
 }: {
+  /** On a block that failed: reading what went wrong and, when the work can be picked up, trying again. */
+  failedActions?: { onSee: () => void; onAgain?: () => void }
   block: Block
   view: CardView
   expanded?: boolean
@@ -379,6 +382,32 @@ export function BlockCard({
               </li>
             ))}
           </ol>
+        </div>
+      )}
+
+      {failedActions && view.state === 'failed' && (
+        // Buttons inside a canvas node: nodrag/nopan keep a press from moving the card, and the click stays here.
+        <div className="nodrag nopan" data-testid="failed-actions" style={{ display: 'flex', gap: 8, marginTop: 14 }} onClick={e => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={failedActions.onSee}
+            style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: `1px solid ${theme.failed}`, background: theme.tint('failed', 0.14), color: '#ffd9d9', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+          >
+            {strings.failure.see}
+          </button>
+          {failedActions.onAgain && (
+            <button
+              type="button"
+              onClick={failedActions.onAgain}
+              style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: '#e6e9ef', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+            >
+              <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+                <path d="M20 4v7h-7" />
+              </svg>
+              {strings.failure.tryAgain}
+            </button>
+          )}
         </div>
       )}
 

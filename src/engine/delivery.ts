@@ -141,6 +141,21 @@ export function keepCommit(run: { id: string; request: string; worktreePath: str
   return git(wt, ['rev-parse', 'HEAD'])
 }
 
+/**
+ * Saves what a run that did not finish left in its worktree, on its own branch, so another run can pick it up.
+ * Unlike keepCommit this is nobody's approved change, and its message says so.
+ */
+export function unfinishedCommit(run: { id: string; request: string; worktreePath: string | null }): string {
+  const wt = run.worktreePath!
+  git(wt, ['add', '-A'])
+  if (git(wt, ['diff', '--cached', '--name-only']) !== '') {
+    const asked = run.request.replace(/\s+/g, ' ').trim()
+    const message = `Unfinished: ${clip(asked, 60)}\n\nLeft by an agent in AI Factory, run ${run.id}, which stopped before a person approved it.`
+    git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
+  }
+  return git(wt, ['rev-parse', 'HEAD'])
+}
+
 /** True once this run's change was brought into the project. */
 export async function wasDelivered(runId: string): Promise<boolean> {
   return (await deliveredRecord(runId)) !== null

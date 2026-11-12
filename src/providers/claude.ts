@@ -1,3 +1,4 @@
+import { projectEnv } from '@/engine/child-env'
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { dirname } from 'node:path'
@@ -200,7 +201,8 @@ async function* runClaude(deps: Required<ClaudeDeps>, workdir: string, args: str
     child = deps.spawn(deps.bin, args, {
       cwd: workdir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      // Without this app's own settings and secrets: the agent's commands run as the project's, not as the app's.
+      env: projectEnv(),
       // Its own process group, so stopping it stops what it started too.
       detached: true,
     })

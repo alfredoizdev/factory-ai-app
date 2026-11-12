@@ -1,3 +1,4 @@
+import { projectEnv } from '@/engine/child-env'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { copyFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -77,13 +78,8 @@ function freePort(start: number): Promise<number> {
 // The preview's environment: the person's, minus this app's own framework and Inngest settings, which would
 // otherwise leak into another Next.js or Inngest app and point it at this one.
 function previewEnv(port: number): NodeJS.ProcessEnv {
-  const env: Record<string, string | undefined> = {}
-  for (const [k, v] of Object.entries(process.env)) {
-    if (/^(__NEXT|NEXT_|INNGEST|TURBOPACK|NODE_ENV$|PORT$|HOSTNAME$)/.test(k)) continue
-    env[k] = v
-  }
   // NODE_ENV is set back to what a dev server expects: this app's own value must not leak in.
-  return { ...env, NODE_ENV: 'development', PORT: String(port), HOST: '127.0.0.1', HOSTNAME: '127.0.0.1', BROWSER: 'none' }
+  return projectEnv({ NODE_ENV: 'development', PORT: String(port), HOST: '127.0.0.1', HOSTNAME: '127.0.0.1', BROWSER: 'none' })
 }
 
 function keepLog(entry: Entry, chunk: Buffer) {

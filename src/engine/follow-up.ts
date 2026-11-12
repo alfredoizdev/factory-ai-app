@@ -2,7 +2,11 @@ import { eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { approvals, runs } from '@/db/schema'
 import { and } from 'drizzle-orm'
-import { DeliveryError, keepCommit, wasDelivered } from '@/engine/delivery'
+import { existsSync } from 'node:fs'
+import { DeliveryError, keepCommit, unfinishedCommit, wasDelivered } from '@/engine/delivery'
+import { appendEvent } from '@/engine/events'
+import { runPlace } from '@/engine/machine'
+import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { createRun, type RunProviderId } from '@/engine/run'
 import { strings } from '@/ui/strings'
 
@@ -23,6 +27,8 @@ export async function startFollowUp(parentRunId: string, note: string): Promise<
   if (!text) throw new FollowUpError(strings.followUp.needNote, 400)
   const parent = (await db.select().from(runs).where(eq(runs.id, parentRunId)))[0]
   if (!parent) throw new FollowUpError(strings.errors.runNotFound, 404)
+  // A run that failed is picked up where it stopped instead: see continueFailed.
+  if (parent.status === 'failed') return continueFailed(parent, text)
   const approved = (await db.select().from(approvals).where(and(eq(approvals.runId, parentRunId), eq(approvals.decision, 'approved'))))[0]
   if (parent.status !== 'completed' || !approved || !parent.worktreePath || !parent.baseCommit) {
     throw new FollowUpError(strings.followUp.notEligible, 409)
@@ -44,5 +50,27 @@ export async function startFollowUp(parentRunId: string, note: string): Promise<
     })
     .where(eq(runs.id, runId))
     
+  return { runId }
+}
+
+/**
+ * Picks up a run that failed (a check that did not pass, an agent that stopped): a new run whose worktree starts
+ * from what the failed one left, so the agents fix it instead of starting over. Nobody approved that work, so the
+ * new run is compared against the commit the failed run started from: its human check shows the whole change.
+ */
+async function continueFailed(parent: typeof runs.$inferSelect, text: string): Promise<{ runId: string }> {
+  const here = (await runPlace(parent.id)).here
+  if (parent.providerId === DEMO_PROVIDER_ID || !here || !parent.baseCommit || !parent.worktreePath || !existsSync(parent.worktreePath)) {
+    throw new FollowUpError(strings.failure.cannotContinue, 409)
+  }
+  let commit: string
+  try {
+    commit = unfinishedCommit(parent)
+  } catch {
+    throw new FollowUpError(strings.failure.cannotContinue, 409)
+  }
+  const { runId } = await createRun({ workflowId: parent.workflowId, request: text, providerId: parent.providerId as RunProviderId })
+  await db.update(runs).set({ parentRunId: parent.id, baseCommit: parent.baseCommit, deliveryBase: parent.deliveryBase, title: parent.title }).where(eq(runs.id, runId))
+  await appendEvent({ runId, type: 'run.continues', payload: { fromRun: parent.id, commit } })
   return { runId }
 }
