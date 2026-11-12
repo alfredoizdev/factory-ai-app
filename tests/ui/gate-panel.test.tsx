@@ -323,3 +323,16 @@ test('done: a project with no GitHub repository is connected from the card, by c
   expect(screen.getByTestId('connected')).toHaveTextContent(strings.delivery.connect.done('me/p'))
   expect(screen.getByTestId('next-step')).toHaveTextContent(strings.delivery.nowSend)
 })
+
+test('waiting, on the screen: the card keeps the decision and sends the person to the Human check window for the change', async () => {
+  vi.stubGlobal('fetch', routes())
+  const onSeeChanges = vi.fn()
+  render(<CommandCard mode="waiting" runId="r1" risk={{ level: 'high', reasons: ['It changes package.json.'] }} text="" onText={() => undefined} images={[]} onImages={() => undefined} onRun={() => undefined} canRun={false} onFollowUp={() => undefined} onSent={() => undefined} onSeeChanges={onSeeChanges} />)
+  fireEvent.click(await screen.findByTestId('see-changes'))
+  expect(onSeeChanges).toHaveBeenCalledTimes(1)
+  expect(screen.getByTestId('see-changes')).toHaveTextContent(strings.gate.filesChanged(1))
+  // The files, the reasons and the preview are not repeated here.
+  expect(screen.queryByTestId('gate-changes')).toBeNull()
+  expect(screen.queryByText(/It changes package\.json\./)).toBeNull()
+  expect(screen.getByRole('button', { name: `✓ ${strings.gate.approve}` })).toBeEnabled()
+})

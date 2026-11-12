@@ -7,7 +7,7 @@ import { strings } from '@/ui/strings'
 import type { ComposerSend } from './Composer'
 import { WorkingSpinner } from './BlockCard'
 import { PreviewButton } from './PreviewButton'
-import { BeforeAfterCard } from './BeforeAfter'
+import { BeforeAfterCard, TakePictures } from './BeforeAfter'
 import { Bone } from './Skeleton'
 
 /** How long a decision may wait for the run to move before the panel says it has not. */
@@ -32,6 +32,7 @@ export function GateSection({
   imagesBusy,
   composer,
   onSent,
+  onSeeChanges,
 }: {
   /** The run's working copy is on another computer: no preview or pictures from here. */
   away?: { machine: string | null } | null
@@ -45,11 +46,11 @@ export function GateSection({
    * for changes with what is written in it. */
   composer: (send: ComposerSend) => ReactNode
   onSent: () => void
+  /** Opens the Human check window. When given, the change is shown there and this card keeps only the decision. */
+  onSeeChanges?: () => void
 }) {
   const [review, setReview] = useState<Review | null>(null)
   const [loadError, setLoadError] = useState(false)
-  const [showDiff, setShowDiff] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const reason = note
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null)
@@ -131,7 +132,7 @@ export function GateSection({
         </div>
       </div>
 
-      {risk && (
+      {risk && !onSeeChanges && (
         <div style={{ fontSize: 12.5, color: risk.level === 'low' ? theme.passed : theme.waiting, lineHeight: 1.4 }}>
           <strong>{strings.risk.label[risk.level]}:</strong> {risk.reasons.join(' ')}
         </div>
@@ -145,57 +146,28 @@ export function GateSection({
           <Bone width="80%" height={12} />
         </div>
       )}
-      {review && (
-        // What changed, in its own card with its own scroll: opening the change never pushes the box and the buttons
-        // out of the card.
-        <div
-          data-testid="gate-changes"
-          style={{ display: 'grid', gap: 6, maxHeight: showDiff ? 260 : 180, overflowY: 'auto', padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <div style={{ fontSize: 12.5, color: theme.dim }}>{review.files.length === 0 ? strings.gate.noFiles : strings.gate.filesChanged(review.files.length)}</div>
-            {review.diff && (
-              <button
-                type="button"
-                aria-label={strings.gate.expandChanges}
-                title={strings.gate.expandChanges}
-                onClick={() => setExpanded(true)}
-                style={{ display: 'grid', placeItems: 'center', width: 26, height: 26, padding: 0, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', cursor: 'pointer' }}
-              >
-                <ExpandIcon />
-              </button>
-            )}
-          </div>
-          {review.files.slice(0, 8).map(f => (
-            <div key={f.path} style={{ display: 'flex', gap: 8, fontFamily: MONO, fontSize: 12, color: '#d6dce6' }}>
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>
-                {f.path}
-              </span>
-              <span style={{ color: theme.passed }}>+{f.added}</span>
-              <span style={{ color: theme.failed }}>−{f.removed}</span>
-            </div>
-          ))}
-          {review.files.length > 8 && <div style={{ fontSize: 12, color: theme.dim }}>{strings.canvas.andMore(review.files.length - 8)}</div>}
-          {review.diff && (
-            <button type="button" onClick={() => setShowDiff(v => !v)} style={{ justifySelf: 'start', background: 'none', border: 'none', color: theme.running, cursor: 'pointer', padding: 0, fontSize: 12.5 }}>
-              {showDiff ? strings.gate.hideChanges : strings.gate.showChanges}
-            </button>
-          )}
-          {showDiff && (
-            <pre data-testid="gate-diff" style={{ margin: 0, background: '#0b0e14', border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, fontSize: 12, lineHeight: 1.5 }}>
-              <DiffLines diff={review.diff} truncated={review.truncated} />
-            </pre>
-          )}
-        </div>
+      {review && !onSeeChanges && <ChangesBox review={review} />}
+      {review && onSeeChanges && (
+        // The change itself is shown in the Human check window, where there is room for it.
+        <button type="button" data-testid="see-changes" onClick={onSeeChanges} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 12px', borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118', color: '#e6e9ef', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', textAlign: 'left' }}>
+          <span style={{ display: 'grid', gap: 2 }}>
+            {strings.gate.seeChanges}
+            <span style={{ fontSize: 12, fontWeight: 400, color: theme.dim }}>{review.files.length === 0 ? strings.gate.noFiles : strings.gate.filesChanged(review.files.length)}</span>
+          </span>
+          <span aria-hidden="true" style={{ flex: 'none', display: 'grid', placeItems: 'center', width: 28, height: 28, borderRadius: 8, background: theme.tint('running', 0.16), color: theme.running }}>
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 3.5 10.5 8 6 12.5" />
+            </svg>
+          </span>
+        </button>
       )}
 
-      {expanded && review && <ChangesModal files={review.files} diff={review.diff} truncated={review.truncated} onClose={() => setExpanded(false)} />}
 
       {/* Before and after pictures, taken as soon as the change reaches the person. */}
-      {review && review.files.length > 0 && !decided && <BeforeAfterCard runId={runId} autoStart={!away} canTake={!away} />}
+      {review && review.files.length > 0 && !decided && (onSeeChanges ? <TakePictures runId={runId} autoStart={!away} /> : <BeforeAfterCard runId={runId} autoStart={!away} canTake={!away} />)}
 
       {/* Only a run that changed files has something to preview. */}
-      {review && review.files.length > 0 && !decided && !away && <PreviewButton runId={runId} />}
+      {review && review.files.length > 0 && !decided && !away && !onSeeChanges && <PreviewButton runId={runId} />}
       {away && !decided && <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.4 }}>{strings.machine.elsewhere(away.machine)}</div>}
 
       {/* Not yes, not no: the arrow in the box sends it back to the builder with what is written there. */}
@@ -252,6 +224,91 @@ function DiffLines({ diff, truncated }: { diff: string; truncated: boolean }) {
       ))}
       {truncated && <div style={{ color: theme.waiting }}>{strings.gate.truncated}</div>}
     </>
+  )
+}
+
+/**
+ * What changed: the files, and the change itself. In the side card it is small, with the change folded and a button
+ * that opens it large; with room (the Human check window) the change is open from the start.
+ */
+export function ChangesBox({ review, roomy = false }: { review: Review; roomy?: boolean }) {
+  const [shown, setShown] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const showDiff = roomy || shown
+  return (
+    <>
+      {/* What changed, in its own card with its own scroll: opening it never pushes the box and the buttons out. */}
+      <div
+        data-testid="gate-changes"
+        style={{ display: 'grid', gap: 6, maxHeight: roomy ? 'min(56vh, 600px)' : showDiff ? 260 : 180, overflowY: 'auto', padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <div style={{ fontSize: 12.5, color: theme.dim }}>{review.files.length === 0 ? strings.gate.noFiles : strings.gate.filesChanged(review.files.length)}</div>
+          {review.diff && !roomy && (
+            <button
+              type="button"
+              aria-label={strings.gate.expandChanges}
+              title={strings.gate.expandChanges}
+              onClick={() => setExpanded(true)}
+              style={{ display: 'grid', placeItems: 'center', width: 26, height: 26, padding: 0, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', cursor: 'pointer' }}
+            >
+              <ExpandIcon />
+            </button>
+          )}
+        </div>
+        {review.files.slice(0, 8).map(f => (
+          <div key={f.path} style={{ display: 'flex', gap: 8, fontFamily: MONO, fontSize: 12, color: '#d6dce6' }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>
+              {f.path}
+            </span>
+            <span style={{ color: theme.passed }}>+{f.added}</span>
+            <span style={{ color: theme.failed }}>−{f.removed}</span>
+          </div>
+        ))}
+        {review.files.length > 8 && <div style={{ fontSize: 12, color: theme.dim }}>{strings.canvas.andMore(review.files.length - 8)}</div>}
+        {review.diff && !roomy && (
+          <button type="button" onClick={() => setShown(v => !v)} style={{ justifySelf: 'start', background: 'none', border: 'none', color: theme.running, cursor: 'pointer', padding: 0, fontSize: 12.5 }}>
+            {showDiff ? strings.gate.hideChanges : strings.gate.showChanges}
+          </button>
+        )}
+        {showDiff && (
+          <pre data-testid="gate-diff" style={{ margin: 0, background: '#0b0e14', border: `1px solid ${theme.border}`, borderRadius: 8, padding: 10, fontSize: 12, lineHeight: 1.5 }}>
+            <DiffLines diff={review.diff} truncated={review.truncated} />
+          </pre>
+        )}
+      </div>
+      {expanded && review && <ChangesModal files={review.files} diff={review.diff} truncated={review.truncated} onClose={() => setExpanded(false)} />}
+    </>
+  )
+}
+
+/** What is being decided on, for the Human check window: why it needs the person, the change, and a way to try it. */
+export function ChangeUnderCheck({ runId, risk, away = null }: { runId: string; risk?: { level: 'low' | 'high'; reasons: string[] }; away?: { machine: string | null } | null }) {
+  const [review, setReview] = useState<Review | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let live = true
+    fetch(`/api/runs/${runId}/review`)
+      .then(r => (r.ok ? (r.json() as Promise<Review>) : Promise.reject(new Error(String(r.status)))))
+      .then(body => live && setReview(body))
+      .catch(() => live && setFailed(true))
+    return () => {
+      live = false
+    }
+  }, [runId])
+  if (failed) return <div style={{ fontSize: 13, color: theme.failed }}>{strings.gate.loadFailed}</div>
+  if (!review) return <Bone height={60} radius={10} />
+  return (
+    <div data-testid="change-under-check" style={{ display: 'grid', gap: 12 }}>
+      {risk && (
+        <div style={{ fontSize: 13.5, color: risk.level === 'low' ? theme.passed : theme.waiting, lineHeight: 1.5 }}>
+          <strong>{strings.risk.label[risk.level]}:</strong> {risk.reasons.join(' ')}
+        </div>
+      )}
+      <ChangesBox review={review} roomy />
+      {review.files.length > 0 && !away && <PreviewButton runId={runId} />}
+      {away && <div style={{ fontSize: 12.5, color: theme.dim }}>{strings.machine.elsewhere(away.machine)}</div>}
+    </div>
   )
 }
 

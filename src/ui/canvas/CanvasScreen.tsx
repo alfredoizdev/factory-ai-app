@@ -348,6 +348,8 @@ export function CanvasScreen({
 
   // One card follows the run: ask, watch, decide, continue.
   // The run waits on the person at its plan, or at the human check: the card shows the one it waits at.
+  // The change a person decides on is shown in the Human check window; the side card keeps the decision.
+  const humanBlock = run?.blocks.find(b => b.kind === 'human')
   const planWaiting = !!run && run.blocks.some(b => b.kind === 'plan' && views[b.id]?.state === 'waiting_approval')
   const mode: CardMode =
     run && runStatus === 'waiting_approval' && planWaiting
@@ -662,6 +664,7 @@ export function CanvasScreen({
           loading={loading}
           failureActions={failureActions}
           onCanContinue={can => setRetryFor(can && run ? run.runId : null)}
+          onSeeChanges={humanBlock ? () => setDetailsOf(humanBlock.id) : undefined}
         />
         <Canvas
           graph={graph}
@@ -686,7 +689,7 @@ export function CanvasScreen({
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
         {run && detailsOf && (
-          <BlockDetailsDialog key={`details-${run.runId}-${detailsOf}`} runId={run.runId} blockId={detailsOf} label={run.blocks.find(b => b.id === detailsOf)?.label ?? detailsOf} view={withShip[detailsOf]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} onClose={() => setDetailsOf(null)} />
+          <BlockDetailsDialog key={`details-${run.runId}-${detailsOf}`} runId={run.runId} blockId={detailsOf} label={run.blocks.find(b => b.id === detailsOf)?.label ?? detailsOf} view={withShip[detailsOf]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} away={run.here === false ? { machine: run.machine ?? null } : null} onClose={() => setDetailsOf(null)} />
         )}
       </div>
     </div>

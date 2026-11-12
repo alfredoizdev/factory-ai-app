@@ -64,8 +64,10 @@ export const CommandCard = forwardRef<
     /** Filled, while a failed task is on screen, with what the failed block's buttons do. */
     failureActions?: { current: FailureActions | null }
     onCanContinue?: (can: boolean) => void
+    /** Opens the Human check window, where the change being decided on is shown. */
+    onSeeChanges?: () => void
   }
->(function CommandCard({ mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
+>(function CommandCard({ onSeeChanges, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : mode === 'failed' ? strings.failure.label : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : mode === 'failed' ? strings.failure.placeholder : strings.run.requestPlaceholder
@@ -165,7 +167,7 @@ export const CommandCard = forwardRef<
       )}
       {!loading && mode === 'plan' && runId && <PlanSection away={away} runId={runId} note={text} composer={withSend} onSent={onSent} />}
       {!loading && mode === 'waiting' && runId && (
-        <GateSection away={away} runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} />
+        <GateSection away={away} runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} onSeeChanges={onSeeChanges} />
       )}
       {!loading && mode === 'done' && runId && (
         <ResultSection

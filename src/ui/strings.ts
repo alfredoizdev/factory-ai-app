@@ -346,6 +346,7 @@ export const strings = {
     filesChanged: (n: number) => `${n} ${n === 1 ? 'file' : 'files'} changed`,
     noFiles: 'This run changed no files.',
     showChanges: 'Show the changes',
+    seeChanges: 'See what changed',
     hideChanges: 'Hide the changes',
     truncated: 'The changes are longer than shown here.',
     reasonLabel: 'Want changes? Write them here',

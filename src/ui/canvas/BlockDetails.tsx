@@ -9,6 +9,7 @@ import type { NodeState } from '@/domain/states'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { useSnapshots } from './BeforeAfter'
+import { ChangeUnderCheck } from './GatePanel'
 import { visualStateOf, WorkingSpinner, type CardView } from './BlockCard'
 import { TypeMark } from './TypeMark'
 
@@ -284,7 +285,7 @@ function LargePicture({ src, label, phone, onClose }: { src: string; label: stri
  * in plain sentences, the plan's jobs, the pictures of the change, every step in order and the checks it ran.
  * `view` is what the card itself shows: used where the screen knows more than the record (a change that was shipped).
  */
-export function BlockDetailsDialog({ runId, blockId, label, view, pr, onClose }: { runId: string; blockId: string; label: string; view?: CardView; pr?: { number: number; url: string } | null; onClose: () => void }) {
+export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = null, onClose }: { runId: string; blockId: string; label: string; view?: CardView; pr?: { number: number; url: string } | null; away?: { machine: string | null } | null; onClose: () => void }) {
   const [details, setDetails] = useState<BlockDetails | null | undefined>(undefined)
   const [allSteps, setAllSteps] = useState(false)
 
@@ -363,6 +364,12 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, onClose }:
                   </a>
                 )}
               </Section>
+
+              {kind === 'human' && state === 'waiting_approval' && (
+                <Section title={strings.gate.changesTitle}>
+                  <ChangeUnderCheck runId={runId} risk={view?.risk} away={away} />
+                </Section>
+              )}
 
               {showsPictures && <Pictures runId={runId} />}
 

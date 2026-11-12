@@ -57,6 +57,12 @@ export function useSnapshots(runId: string, autoStart: boolean) {
   return { state, error, take }
 }
 
+/** Takes the pictures as soon as the change reaches the person, without showing them here. */
+export function TakePictures({ runId, autoStart }: { runId: string; autoStart: boolean }) {
+  useSnapshots(runId, autoStart)
+  return null
+}
+
 /**
  * Final results: a small before and after of the page the change touched, which opens large. While the pictures are
  * being taken it says so; if they could not be, it says why and offers to try again.

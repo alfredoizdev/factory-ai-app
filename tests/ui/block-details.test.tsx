@@ -70,6 +70,8 @@ test('the Ship details show the page before and after, on a computer or on a pho
 test('a change nobody can see has no before and after section', async () => {
   const asked = vi.fn(async (url: string) => {
     if (url.endsWith('/snapshots')) return new Response(JSON.stringify({ status: 'unneeded', route: null, shots: [], message: null }))
+    if (url.endsWith('/review')) return new Response(JSON.stringify({ hash: 'h', files: [{ path: '__tests__/page.test.tsx', added: 31, removed: 0 }], diff: '+test', truncated: false }))
+    if (url.endsWith('/preview')) return new Response(JSON.stringify({ status: 'stopped' }))
     return new Response(JSON.stringify({ ...details, blockId: 'human', label: 'Human check', kind: 'human', state: 'waiting_approval', jobs: [], commands: [], steps: [] }))
   })
   vi.stubGlobal('fetch', asked)
@@ -77,4 +79,7 @@ test('a change nobody can see has no before and after section', async () => {
   expect(await screen.findByTestId('details-summary')).toHaveTextContent('Stopped.')
   await waitFor(() => expect(asked.mock.calls.some(c => String(c[0]).endsWith('/snapshots'))).toBe(true))
   expect(screen.queryByText(strings.details.pictures)).toBeNull()
+  // What is being decided on is shown here, with the change open.
+  expect(await screen.findByTestId('change-under-check')).toHaveTextContent('__tests__/page.test.tsx')
+  expect(screen.getByTestId('gate-diff')).toHaveTextContent('+test')
 })
