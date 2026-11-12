@@ -166,10 +166,29 @@ export const strings = {
     model: (model: string, buildModel: string) => `Reviewing with ${model}, a different model from Build's ${buildModel}.`,
     approve: {
       clean: 'The reviewer found no problems. The final yes is yours.',
-      fixed: (rounds: number) => `The reviewer's problems were sent back to Build ${rounds === 1 ? 'once' : `${rounds} times`}, and the last review found none. The final yes is yours.`,
-      open: 'The reviewer still had problems after the rounds allowed. Look at them before you decide.',
       none: 'No review ran, so there is nothing to sum up. The final yes is yours.',
+      // "3 problems found. 2 fixed, 1 needs you." Parts that are zero are left out.
+      summary: (n: { found: number; fixed: number; discarded: number; needsYou: number }) => {
+        const parts = [
+          ...(n.fixed > 0 ? [`${n.fixed} fixed`] : []),
+          ...(n.discarded > 0 ? [`${n.discarded} discarded`] : []),
+          ...(n.needsYou > 0 ? [`${n.needsYou} ${n.needsYou === 1 ? 'needs' : 'need'} you`] : []),
+        ]
+        return `${n.found} ${n.found === 1 ? 'problem' : 'problems'} found.${parts.length > 0 ? ` ${parts.join(', ')}.` : ''}`
+      },
     },
+    // How many readers a change gets, said once at the top of the Review card.
+    depth: {
+      one: 'A small change, so one reviewer reads it.',
+      three: 'A change that could matter, so three reviewers read it, each looking for a different kind of problem.',
+    },
+    // One line as each reviewer starts.
+    reading: {
+      logic: 'One reviewer is checking that it does what you asked.',
+      security: 'One reviewer is checking that it is safe.',
+      effects: 'One reviewer is checking that it does not break anything else.',
+    },
+    noProblemsLeft: 'Nothing the reviewers reported held up when it was checked, so there is nothing to fix.',
   },
   findings: {
     noSuchFile: "The file it points to is not in this change's copy.",

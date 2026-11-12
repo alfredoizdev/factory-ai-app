@@ -521,6 +521,11 @@ describe('the reviewer', () => {
       async *execute(input) {
         seen.push({ kind: input.blockKind, model: input.model, from: input.revisionFrom, note: input.revisionNote })
         if (input.blockKind === 'review') {
+          // The first reader of a round decides what it says; the others find nothing.
+          if (input.focus !== 'logic') {
+            yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+            return
+          }
           const verdict = verdicts[Math.min(reviews++, verdicts.length - 1)]!
           const review = verdict === 'ok' ? { verdict, findings: [] } : { verdict, findings: [{ type: 'logic' as const, file: 'a.tsx', line: 3, problem: 'wrong colour', severity: 'medium' as const, affects: [], decisions: [] }] }
           yield { type: 'done', summary: verdict, source: 'provider', review }
@@ -531,11 +536,18 @@ describe('the reviewer', () => {
     }
   }
 
+  // The findings are checked against the copy, so it must hold the file they point at.
+  const copyWithFile = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-reviewed-'))
+    writeFileSync(join(dir, 'a.tsx'), 'one\ntwo\nthree\n')
+    return (_repo: string, id: string) => ({ path: dir, branch: `factory/${id}`, baseCommit: 'abc' })
+  }
+
   test('problems go back to Build once, with them, and a clean second review lets Approve say so', async () => {
     const { strings } = await import('@/ui/strings')
     const runId = await newRun({ repoPath: '/repo' })
     const seen: { kind: string; model?: string; from?: string; note?: string }[] = []
-    await drive(runId, reviewingProvider(['changes', 'ok'], seen))
+    await drive(runId, reviewingProvider(['changes', 'ok'], seen), copyWithFile())
     const builds = seen.filter(s => s.kind === 'build')
     expect(builds).toHaveLength(2)
     expect(builds[1]).toMatchObject({ from: 'reviewer' })
@@ -544,7 +556,7 @@ describe('the reviewer', () => {
     expect(seen.find(s => s.kind === 'review')!.model).toBe('sonnet')
     expect(seen.some(s => s.kind === 'approve')).toBe(false) // summed up by the app, not run by the agent
     const approve = await payloadOf(runId, 'node.completed', 'approve')
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.fixed(1))
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 1, discarded: 0, needsYou: 0 }))
     expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
 
@@ -552,11 +564,11 @@ describe('the reviewer', () => {
     const { strings } = await import('@/ui/strings')
     const runId = await newRun({ repoPath: '/repo' })
     const seen: { kind: string }[] = []
-    await drive(runId, reviewingProvider(['changes'], seen))
+    await drive(runId, reviewingProvider(['changes'], seen), copyWithFile())
     expect(seen.filter(s => s.kind === 'build')).toHaveLength(3)
-    expect(seen.filter(s => s.kind === 'review')).toHaveLength(3)
+    expect(seen.filter(s => s.kind === 'review')).toHaveLength(9) // three readers in each of the three rounds
     const approve = await payloadOf(runId, 'node.completed', 'approve')
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.open)
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 3, fixed: 2, discarded: 0, needsYou: 1 }))
     expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
 })

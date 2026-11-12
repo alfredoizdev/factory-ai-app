@@ -1,9 +1,11 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
-import { defaultReviewerModel, reviewRevisionNote, type Review } from '@/engine/review'
+import { defaultReviewerModel, reviewRevisionNote, type Focus, type Review } from '@/engine/review'
+import { findingsOf } from '@/engine/findings'
+import { runReviewStage, settleFindings } from '@/engine/inngest/review-stage'
 import { giveStanding, type Standing } from '@/engine/register'
 import { markWaiting } from '@/engine/relay'
 import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
@@ -76,7 +78,7 @@ const MAX_LISTED_FILES = 20
 /** A step line is short: it says what the agent is doing, it is not a log. */
 const STEP_MAX = 240
 
-type PlannedBlock = {
+export type PlannedBlock = {
   id: string
   kind: BlockKind
   enabled: boolean
@@ -90,7 +92,7 @@ type PlannedBlock = {
   /** A Tests block's own command (lint, build, typecheck…); without one it runs the project's test command. */
   testCommand?: string
 }
-type Plan = {
+export type Plan = {
   providerId: string
   request: string
   blocks: PlannedBlock[]
@@ -104,7 +106,7 @@ type Plan = {
   skipPlan?: boolean
 }
 /** What a block's execution may touch: the run's worktree (null for the demo) and the project's test command. */
-type Workspace = {
+export type Workspace = {
   workdir: string | null
   testCommand: string | null
   baseCommit: string | null
@@ -117,8 +119,10 @@ type Workspace = {
   notes?: string[]
   /** Rules, decisions and core areas this task was given when it started. */
   standing?: Standing[]
+  /** A review block: which reader this call is, and what it is told besides the request. */
+  review?: { focus: Focus; builderSummary?: string; since?: string }
 }
-type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
+export type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
 
 const now = () => new Date().toISOString()
 
@@ -126,7 +130,7 @@ const now = () => new Date().toISOString()
 
 // Every write about a run holds that run's lock first, until the transaction ends: two writers on one run (the
 // executor and a cancel, say) take turns, always in the same order, so they can neither interleave nor deadlock.
-function withTx<T>(runId: string, fn: (tx: DbHandle) => Promise<T>): Promise<T> {
+export function withTx<T>(runId: string, fn: (tx: DbHandle) => Promise<T>): Promise<T> {
   return db.transaction(async tx => {
     await lockRun(tx, runId)
     return fn(tx)
@@ -178,7 +182,7 @@ type NodeRow = typeof nodeRuns.$inferSelect
 
 // Writes a node state change plus its event. A change the state machine forbids (for example resurrecting a node
 // that cancelRun already cancelled) is refused and nothing is written.
-async function transitionNode(
+export async function transitionNode(
   tx: DbHandle,
   node: NodeRow,
   to: NodeState,
@@ -208,7 +212,7 @@ async function cancelUnreachedNodes(tx: DbHandle, runId: string): Promise<void> 
 
 // Finds this block's node run or creates it. Refuses (null) once the run is cancelled, inside the same transaction,
 // so a node cannot slip in after cancelRun swept the existing ones.
-async function openNodeIn(tx: DbHandle, runId: string, blockId: string): Promise<NodeRow | null> {
+export async function openNodeIn(tx: DbHandle, runId: string, blockId: string): Promise<NodeRow | null> {
   if ((await runStatusOf(tx, runId)) === 'cancelled') return null
   const existing = (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === blockId)
   if (existing) return existing
@@ -225,21 +229,21 @@ async function openNodeIn(tx: DbHandle, runId: string, blockId: string): Promise
 }
 
 // Read through the transaction when there is one: outside it, its own writes are not visible yet.
-async function freshNode(id: string, h: DbHandle = db): Promise<NodeRow> {
+export async function freshNode(id: string, h: DbHandle = db): Promise<NodeRow> {
   const row = (await h.select().from(nodeRuns).where(eq(nodeRuns.id, id)))[0]
   if (!row) throw new Error(`node run ${id} vanished`)
   return row
 }
 
-function outcomeOf(state: string): Outcome['outcome'] | null {
+export function outcomeOf(state: string): Outcome['outcome'] | null {
   if (state === 'passed' || state === 'failed' || state === 'cancelled' || state === 'skipped') return state
   return null
 }
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[] }
-type AttemptResult =
+export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[] }
+export type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
   | { kind: 'ended' }
@@ -247,7 +251,7 @@ type AttemptResult =
   | { kind: 'timeout' }
   | { kind: 'cancelled' }
 
-async function runAttempt(
+export async function runAttempt(
   provider: AgentProvider,
   block: PlannedBlock,
   request: string,
@@ -288,6 +292,14 @@ async function runAttempt(
         ...(block.kind === 'build' && workspace.jobs ? { jobs: workspace.jobs } : {}),
         ...((block.kind === 'build' || block.kind === 'plan') && workspace.notes && workspace.notes.length > 0 ? { notes: workspace.notes } : {}),
         ...((block.kind === 'build' || block.kind === 'plan') && workspace.standing && workspace.standing.length > 0 ? { standing: workspace.standing } : {}),
+        ...(block.kind === 'review' && workspace.review
+          ? {
+              focus: workspace.review.focus,
+              ...(workspace.review.builderSummary ? { builderSummary: workspace.review.builderSummary } : {}),
+              ...(workspace.review.since ? { reviewSince: workspace.review.since } : {}),
+              ...(workspace.standing && workspace.standing.length > 0 ? { standing: workspace.standing } : {}),
+            }
+          : {}),
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
@@ -360,7 +372,7 @@ async function writeEvidence(tx: DbHandle, node: NodeRow, blockId: string, measu
 
 // What a finished block leaves behind besides its state: the usage the provider reported (cost is never stored for
 // the subscription builder — not reported, never 0), and its sentence as a claim when a model wrote it.
-async function recordDoneFacts(tx: DbHandle, node: NodeRow, done: Done): Promise<void> {
+export async function recordDoneFacts(tx: DbHandle, node: NodeRow, done: Done): Promise<void> {
   if (done.tokens !== undefined) {
     await tx.insert(usageRecords).values({ id: ulid(), projectId: node.projectId, nodeRunId: node.id, tokens: done.tokens, costCents: null, createdAt: now() })
   }
@@ -369,7 +381,56 @@ async function recordDoneFacts(tx: DbHandle, node: NodeRow, done: Done): Promise
   }
 }
 
-async function runProviderNode(
+type Unfinished = Exclude<AttemptResult, { kind: 'done' } | { kind: 'cancelled' }>
+
+/** Why an attempt did not finish, in the app's words; the exception's own text is kept, redacted. */
+export function describeFailure(result: Unfinished, block: PlannedBlock): { cause: string; message: string; detail?: string } {
+  const cause =
+    result.kind === 'timeout'
+      ? 'timeout'
+      : result.kind === 'error'
+        ? result.noRetry
+          ? 'tests_failed'
+          : 'provider_error'
+        : result.kind === 'crashed'
+          ? 'provider_crashed'
+          : 'no_result'
+  const message =
+    result.kind === 'timeout'
+      ? strings.run.timedOut(Math.round(block.timeoutMs / 1000))
+      : result.kind === 'error'
+        ? result.message
+        : result.kind === 'crashed'
+          ? strings.run.providerCrashed
+          : strings.run.noResult
+  // The exception's own text is kept: a failure whose cause is lost cannot be explained to the person reading it.
+  // Redacted like every other text from a provider: an exception message can carry a token or a path with one.
+  const detail = result.kind === 'crashed' ? clip(redact(result.detail), 300) : undefined
+  return { cause, message, ...(detail ? { detail } : {}) }
+}
+
+/** Row, node.queued and node.started commit together: a node is never left queued. `lines` are said on the card after the model note. */
+export async function openProviderNode(runId: string, block: PlannedBlock, lines: readonly string[] = []): Promise<NodeRow | Outcome> {
+  return withTx(runId, async (tx): Promise<NodeRow | Outcome> => {
+    const node = (await openNodeIn(tx, runId, block.id))
+    if (!node) return { outcome: 'cancelled' }
+    const settled = outcomeOf(node.state)
+    if (settled) return { outcome: settled } // replay of a step that already finished
+    if (node.state === 'queued') {
+      if (!(await transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } }))) {
+        return { outcome: 'cancelled' }
+      }
+      await tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id))
+      // Which model was chosen for this request, and why: first on the card, before the agent's own steps.
+      for (const text of [...(block.routeNote ? [block.routeNote] : []), ...lines]) {
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: node.attempt, text } }, tx)
+      }
+    }
+    return node
+  })
+}
+
+export async function runProviderNode(
   runId: string,
   plan: Plan,
   block: PlannedBlock,
@@ -381,24 +442,7 @@ async function runProviderNode(
   // Resolved before any row exists, so an unknown provider cannot strand a node.
   const provider = deps.resolveProvider(plan.providerId)
 
-  // Row, node.queued and node.started commit together: a node is never left queued.
-  const opened = (await withTx(runId, async (tx): Promise<NodeRow | Outcome> => {
-    const node = (await openNodeIn(tx, runId, block.id))
-    if (!node) return { outcome: 'cancelled' }
-    const settled = outcomeOf(node.state)
-    if (settled) return { outcome: settled } // replay of a step that already finished
-    if (node.state === 'queued') {
-      if (!(await transitionNode(tx, node, 'running', { type: 'node.started', payload: { attempt: node.attempt } }))) {
-        return { outcome: 'cancelled' }
-      }
-      await tx.update(nodeRuns).set({ startedAt: now() }).where(eq(nodeRuns.id, node.id))
-      // Which model was chosen for this request, and why: first on the card, before the agent's own steps.
-      if (block.routeNote) {
-        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt: node.attempt, text: block.routeNote } }, tx)
-      }
-    }
-    return node
-  }))
+  const opened = await openProviderNode(runId, block)
   if ('outcome' in opened) return opened
 
   // The copy is a fresh worktree, without node_modules: install once, before the first build, so the agent and the
@@ -478,27 +522,7 @@ async function runProviderNode(
       return done ? { outcome: 'passed', ...(result.review ? { review: result.review } : {}) } : { outcome: 'cancelled' }
     }
 
-    const cause =
-      result.kind === 'timeout'
-        ? 'timeout'
-        : result.kind === 'error'
-          ? result.noRetry
-            ? 'tests_failed'
-            : 'provider_error'
-          : result.kind === 'crashed'
-            ? 'provider_crashed'
-            : 'no_result'
-    const message =
-      result.kind === 'timeout'
-        ? strings.run.timedOut(Math.round(block.timeoutMs / 1000))
-        : result.kind === 'error'
-          ? result.message
-          : result.kind === 'crashed'
-            ? strings.run.providerCrashed
-            : strings.run.noResult
-    // The exception's own text is kept: a failure whose cause is lost cannot be explained to the person reading it.
-    // Redacted like every other text from a provider: an exception message can carry a token or a path with one.
-    const detail = result.kind === 'crashed' ? clip(redact(result.detail), 300) : undefined
+    const { cause, message, detail } = describeFailure(result, block)
 
     // maxAttempts is 2 per node, with one deliberate exception: a timeout is never retried. A hang that already
     // used the whole timeout would double the wait before a person sees anything, and the cause is recorded
@@ -600,7 +624,7 @@ function ownCommand(b: { kind: string; config: Record<string, unknown> }): { tes
   return command !== '' && command.length <= 500 && !/[\r\n\0]/.test(command) ? { testCommand: command } : {}
 }
 
-async function testFactsOf(runId: string): Promise<TestFacts> {
+export async function testFactsOf(runId: string): Promise<TestFacts> {
   // The latest test run of each block: an earlier round's result says nothing about the change as it is now.
   const latest = new Map<string, { createdAt: string; id: string; data: TestRun }>()
   for (const e of (await db.select().from(evidence).where(eq(evidence.runId, runId)))) {
@@ -616,7 +640,7 @@ async function testFactsOf(runId: string): Promise<TestFacts> {
     testsPassed: runsOfTests.length > 0 && runsOfTests.every(t => t.exitCode === 0 && !t.signal),
     // Unknown (null) counts as changed: what could not be checked is not assumed untouched.
     testsChanged: runsOfTests.some(t => t.changedTestFiles === null || (t.changedTestFiles?.length ?? 0) > 0),
-    reviewOpen: (await latestReview(runId)) === 'changes',
+    reviewOpen: (await findingsOf(runId)).some(f => f.state === 'open'),
   }
 }
 
@@ -652,25 +676,21 @@ async function assessGate(runId: string, block: PlannedBlock, workspace: Workspa
 /** How many times a reviewer may send the work back to the builder before it goes to the person as it is. */
 const MAX_REVIEW_ROUNDS = 2
 
-/** The latest verdict any reviewer recorded on this run, or null when none did. */
-async function latestReview(runId: string): Promise<'ok' | 'changes' | null> {
-  const rows = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.reviewed'))).orderBy(desc(events.sequence)))
-  const verdict = rows[0] ? (JSON.parse(rows[0].payloadJson) as { verdict?: string }).verdict : null
-  return verdict === 'ok' || verdict === 'changes' ? verdict : null
+/** Whether any reviewer gave a verdict on this run. */
+async function anyReviewRan(runId: string): Promise<boolean> {
+  return (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.reviewed'))).limit(1)).length > 0
 }
 
-// Approve, for the real agent: a plain summary, from the record, of what the reviewers concluded. It always passes:
-// the final yes is the person's, at the human check.
-async function sumUpReviews(runId: string, block: PlannedBlock, sentBack: number): Promise<Outcome> {
-  const latest = (await latestReview(runId))
-  const summary =
-    latest === null
-      ? strings.review.approve.none
-      : latest === 'changes'
-        ? strings.review.approve.open
-        : sentBack > 0
-          ? strings.review.approve.fixed(sentBack)
-          : strings.review.approve.clean
+// Approve, for the real agent: a plain summary, from the record, of what the reviewers found and what became of it.
+// It always passes: the final yes is the person's, at the human check.
+async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome> {
+  const rows = await findingsOf(runId)
+  const count = (...states: string[]) => rows.filter(f => states.includes(f.state)).length
+  const summary = !(await anyReviewRan(runId))
+    ? strings.review.approve.none
+    : rows.length === 0
+      ? strings.review.approve.clean
+      : strings.review.approve.summary({ found: rows.length, fixed: count('fixed_unchecked'), discarded: count('refuted', 'discarded'), needsYou: count('open') })
   return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
@@ -1012,8 +1032,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
       }
     } else if (block.kind === 'approve' && provider.needsWorkspace) {
       // The real agent's Approve is a summary of what the reviewers said, never a yes: that stays the person's.
-      const rounds = reviewRounds
-      result = await step.run(id(`node-${block.id}`), () => sumUpReviews(runId, block, rounds))
+      result = await step.run(id(`node-${block.id}`), () => sumUpReviews(runId, block))
     } else if (block.kind === 'human') {
       // A run that changed files is measured before the gate, so the card can say what it would be waved through or
       // stopped for. It passes on its own only when the person turned that on and the measurement says low risk.
@@ -1061,21 +1080,20 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         const approved = decided.decision === 'approved'
         result = await step.run(id(`decide-${block.id}`), () => decideHumanNode(runId, block, approved))
       }
-    } else {
-      const note = revisionNote
-      const images = revisionImages
-      const workspace: Workspace = { ...prepared, revisionFrom }
-      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, workspace, note, images))
-      // The reviewer found problems: back to the builder with them, a bounded number of times. After that the problems
-      // stay on the record for the person, and the run goes on to them.
-      if (block.kind === 'review' && result.outcome === 'passed' && result.review?.verdict === 'changes' && reviewRounds < MAX_REVIEW_ROUNDS) {
+    } else if (block.kind === 'review' && provider.needsWorkspace) {
+      // One reader or three, and what they found is checked against the code before the builder is told any of it.
+      const stage = await runReviewStage({ runId, plan, block, step, id, deps, workspace: prepared, round, reviewSince: null })
+      result = { outcome: stage.outcome }
+      // Problems that held up go back to the builder, a bounded number of times. After that they stay on the record
+      // for the person, and the run goes on to them.
+      if (stage.sendBack.length > 0) {
         const builder = plan.blocks.findIndex(b => b.kind === 'build' && b.enabled)
-        if (builder !== -1 && builder < index) {
+        if (reviewRounds < MAX_REVIEW_ROUNDS && builder !== -1 && builder < index) {
           const next = round + 1
-          const findings = result.review.findings
-          const reviewNote = reviewRevisionNote(findings)
+          const reviewNote = reviewRevisionNote(stage.sendBack)
           const reopened = await step.run(id(`reopen-${block.id}`), () => reopenForRevision(runId, plan.blocks.slice(builder, index + 1), next, reviewNote, 'reviewer'))
           if (!reopened) return
+          await step.run(id(`settle-${block.id}`), () => settleFindings(stage.sendBack, 'fixed_unchecked'))
           round = next
           reviewRounds += 1
           revisionNote = reviewNote
@@ -1084,7 +1102,13 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           from = builder
           continue rounds
         }
+        await step.run(id(`settle-${block.id}`), () => settleFindings(stage.sendBack, 'open'))
       }
+    } else {
+      const note = revisionNote
+      const images = revisionImages
+      const workspace: Workspace = { ...prepared, revisionFrom }
+      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, workspace, note, images))
     }
     if (result.outcome === 'cancelled') return // run.cancelled and node.cancelled were written by cancelRun
     if (result.outcome === 'failed') {
