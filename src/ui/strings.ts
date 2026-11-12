@@ -153,6 +153,11 @@ export const strings = {
   review: {
     revisionNote: (list: string) => `A code reviewer found these problems in your change. Fix each one, and change nothing else:\n${list}`,
     found: (where: string, problem: string) => (where ? `Problem at ${where}: ${problem}` : `Problem: ${problem}`),
+    focus: {
+      logic: 'Your focus: does it do what was asked, and is it correct? Look for bugs, broken behaviour and missing cases.',
+      security: 'Your focus: security. Look for exposed secrets, missing checks on who may do what, unsafe input, and data that leaks.',
+      effects: 'Your focus: what else this change breaks. Find what uses the changed code and check it still works the same.',
+    },
     noProblems: 'The reviewer found no problems.',
     problems: (n: number) => `The reviewer found ${n} ${n === 1 ? 'problem' : 'problems'}.`,
     sentBack: 'Sent back to Build to fix them.',
@@ -923,17 +928,34 @@ export const strings = {
           'Work only inside the current directory. Do not commit, push or create branches.',
           'When you are done, reply with one plain sentence saying what you changed.',
         ].join('\n'),
-      reviewPrompt: (request: string, baseCommit: string) =>
+      // Read by the model, not shown to the person, so it may name files and decision numbers.
+      reviewPrompt: (o: {
+        request: string
+        baseCommit: string
+        focus?: 'logic' | 'security' | 'effects'
+        jobs?: readonly { title: string }[]
+        builderSummary?: string
+        standing?: readonly { number: number; text: string }[]
+        since?: string
+      }) =>
         [
           'You are a code reviewer. Do not change any file: read only.',
-          `Someone asked for this change: ${request}`,
-          `It has been made in this directory. See it with: git diff ${baseCommit} (and git status for new files).`,
+          `Someone asked for this change: ${o.request}`,
+          ...(o.jobs && o.jobs.length > 0 ? ['The plan they approved:', ...o.jobs.map((j, i) => `${i + 1}. ${j.title}`)] : []),
+          ...(o.builderSummary ? [`The builder says: ${o.builderSummary}`] : []),
+          ...(o.standing && o.standing.length > 0
+            ? ['What was agreed for this project:', ...o.standing.map(e => (e.number > 0 ? `D-${String(e.number).padStart(2, '0')}: ${e.text}` : `- ${e.text}`))]
+            : []),
+          `It has been made in this directory. See it with: git diff ${o.since ?? o.baseCommit} (and git status for new files).`,
           'Check that it does what was asked, and look for bugs, broken behaviour, missing cases and anything else that was changed without being asked.',
+          ...(o.focus ? [strings.review.focus[o.focus]] : []),
+          'Open the files that use what was changed, not only the changed files.',
           'Only report real problems that should be fixed before this is merged; not style preferences.',
+          'When a problem goes against something that was agreed, put its number (the 7 of D-07) in "decisions".',
           'End your reply with one JSON object and nothing after it, exactly in this form:',
           '{"verdict":"ok","findings":[]}',
-          'or, when something must be fixed:',
-          '{"verdict":"changes","findings":[{"file":"path/to/file","line":12,"problem":"what is wrong and how to fix it"}]}',
+          'or, when something must be fixed (type is logic, security or effect; severity is high, medium or low; affects lists up to 5 other things the problem touches):',
+          '{"verdict":"changes","findings":[{"type":"logic","file":"path/to/file","line":12,"problem":"what is wrong and how to fix it","severity":"medium","affects":["what else it touches"],"decisions":[]}]}',
         ].join('\n'),
       noBase: 'This run does not know where its change started, so it cannot be reviewed.',
       plannerChangedFiles: 'The planner changed files, which planning must never do, so its plan was not used.',

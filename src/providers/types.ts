@@ -1,6 +1,6 @@
 import type { BlockKind } from '@/domain/graph'
 import type { Job } from '@/engine/plan'
-import type { Review } from '@/engine/review'
+import type { Focus, Review } from '@/engine/review'
 import type { TestRun } from '@/engine/test-runner'
 import type { Standing } from '@/engine/register'
 
@@ -48,6 +48,12 @@ export type AgentExecutionInput = {
   notes?: string[]
   /** Everything the project's register stands on for this task: rules, decisions and core areas, numbered. */
   standing?: Standing[]
+  /** A review block: the one thing this reviewer looks for. Absent: a general review. */
+  focus?: Focus
+  /** A review block: what the builder said it did. */
+  builderSummary?: string
+  /** A review block: a tree id; review only what changed since it, not since the base commit. */
+  reviewSince?: string
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

@@ -104,7 +104,18 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
   }
   const workdir = input.workdir
   const before = deps.snapshot(workdir)
-  for await (const ev of runClaude(deps, workdir, reviewerArgs(strings.providers.claude.reviewPrompt(input.request, input.baseCommit), input.model), controls)) {
+  for await (const ev of runClaude(deps, workdir, reviewerArgs(
+    strings.providers.claude.reviewPrompt({
+      request: input.request,
+      baseCommit: input.baseCommit,
+      focus: input.focus,
+      jobs: input.jobs,
+      builderSummary: input.builderSummary,
+      standing: input.standing,
+      since: input.reviewSince,
+    }),
+    input.model,
+  ), controls)) {
     if (ev.type !== 'done') {
       yield ev
       if (ev.type === 'error') return

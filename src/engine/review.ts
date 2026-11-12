@@ -4,11 +4,32 @@ import { strings } from '@/ui/strings'
 // "AI says", never as a measurement. It is read from a small JSON object the reviewer is asked to end with; anything
 // that is not that object is not turned into a verdict.
 
-export type Finding = { file?: string; line?: number; problem: string }
+export type Focus = 'logic' | 'security' | 'effects'
+export const FOCUSES: readonly Focus[] = ['logic', 'security', 'effects']
+export type FindingType = 'logic' | 'security' | 'effect'
+export type Severity = 'high' | 'medium' | 'low'
+export type Finding = {
+  type: FindingType
+  file?: string
+  line?: number
+  problem: string
+  severity: Severity
+  /** What else the problem touches, in the reviewer's words. */
+  affects: string[]
+  /** Numbers of the project's decisions the change touches. */
+  decisions: number[]
+}
 export type Review = { verdict: 'ok' | 'changes'; findings: Finding[] }
 
 const MAX_FINDINGS = 10
 const MAX_PROBLEM = 300
+const MAX_AFFECTS = 5
+const MAX_AFFECT = 80
+
+/** A small change gets one reviewer on the logic; a risky one gets one for each focus. */
+export function focusesFor(risk: 'low' | 'high'): Focus[] {
+  return risk === 'high' ? [...FOCUSES] : ['logic']
+}
 
 /** The reviewer's verdict and findings, from the last JSON object in its answer; null when there is none. */
 export function parseReview(text: string): Review | null {
@@ -33,9 +54,13 @@ function validReview(value: { verdict?: unknown; findings?: unknown }): Review |
   if (value.verdict !== 'ok' && value.verdict !== 'changes') return null
   const raw = Array.isArray(value.findings) ? value.findings : []
   const findings: Finding[] = []
-  for (const f of raw.slice(0, MAX_FINDINGS) as { file?: unknown; line?: unknown; problem?: unknown }[]) {
+  for (const f of raw.slice(0, MAX_FINDINGS) as { type?: unknown; file?: unknown; line?: unknown; problem?: unknown; severity?: unknown; affects?: unknown; decisions?: unknown }[]) {
     if (typeof f?.problem !== 'string' || f.problem.trim() === '') continue
     findings.push({
+      type: f.type === 'security' || f.type === 'effect' ? f.type : 'logic',
+      severity: f.severity === 'high' || f.severity === 'low' ? f.severity : 'medium',
+      affects: Array.isArray(f.affects) ? f.affects.filter((a): a is string => typeof a === 'string' && a.trim() !== '').slice(0, MAX_AFFECTS).map(a => a.trim().slice(0, MAX_AFFECT)) : [],
+      decisions: Array.isArray(f.decisions) ? f.decisions.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0) : [],
       problem: f.problem.trim().slice(0, MAX_PROBLEM),
       ...(typeof f.file === 'string' && f.file.trim() !== '' ? { file: f.file.trim().slice(0, 200) } : {}),
       ...(typeof f.line === 'number' && Number.isInteger(f.line) && f.line > 0 ? { line: f.line } : {}),

@@ -238,10 +238,47 @@ describe('the reviewer', () => {
     finish(child, [{ type: 'result', is_error: false, result: 'Fine. {"verdict":"ok","findings":[]}' }])
     await pending
     const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
-    expect(args).toEqual(reviewerArgs(strings.providers.claude.reviewPrompt('make it blue', 'abc123'), 'sonnet'))
+    expect(args).toEqual(reviewerArgs(strings.providers.claude.reviewPrompt({ request: 'make it blue', baseCommit: 'abc123' }), 'sonnet'))
     expect(args).not.toContain('bypassPermissions')
     expect(args).toContain('--disallowedTools')
     expect(args[args.indexOf('--model') + 1]).toBe('sonnet')
+  })
+
+  test('a focused reviewer is told the request, the plan, what the builder said, what was agreed and to open the files that use the change', async () => {
+    const child = fakeChild()
+    const spawn = vi.fn(() => child)
+    const provider = createClaudeProvider({ spawn: spawn as never, snapshot: () => 'same' })
+    const input = {
+      ...review,
+      focus: 'effects' as const,
+      jobs: [{ title: 'Make the header blue', done: ['it is blue'] }, { title: 'Update the footer', done: [] }],
+      builderSummary: 'I changed the header colour.',
+      standing: [
+        { number: 7, kind: 'decision' as const, text: 'Keep the header sticky', paths: [] },
+        { number: 0, kind: 'rule' as const, text: 'Use plain words', paths: [] },
+      ],
+    }
+    const pending = collect(provider.execute(input, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result: '{"verdict":"ok","findings":[]}' }])
+    await pending
+    const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
+    const prompt = args[args.indexOf('-p') + 1] ?? args.join('\n')
+    expect(prompt).toBe(strings.providers.claude.reviewPrompt({ request: 'make it blue', baseCommit: 'abc123', focus: 'effects', jobs: input.jobs, builderSummary: input.builderSummary, standing: input.standing }))
+    expect(prompt).toContain('make it blue')
+    expect(prompt).toContain('Make the header blue')
+    expect(prompt).toContain('Update the footer')
+    expect(prompt).toContain('I changed the header colour.')
+    expect(prompt).toContain('D-07: Keep the header sticky')
+    expect(prompt).toContain('Use plain words')
+    expect(prompt).not.toContain('D-00')
+    expect(prompt).toContain('Open the files that use what was changed')
+    expect(prompt).toContain('git diff abc123')
+  })
+
+  test('after a fix, it reviews only what changed since the tree it was given', () => {
+    const prompt = strings.providers.claude.reviewPrompt({ request: 'r', baseCommit: 'abc123', since: 'tree999' })
+    expect(prompt).toContain('git diff tree999')
+    expect(prompt).not.toContain('git diff abc123')
   })
 
   test('its findings become steps, and its verdict travels with the result as its own claim', async () => {

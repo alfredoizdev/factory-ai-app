@@ -522,7 +522,7 @@ describe('the reviewer', () => {
         seen.push({ kind: input.blockKind, model: input.model, from: input.revisionFrom, note: input.revisionNote })
         if (input.blockKind === 'review') {
           const verdict = verdicts[Math.min(reviews++, verdicts.length - 1)]!
-          const review = verdict === 'ok' ? { verdict, findings: [] } : { verdict, findings: [{ file: 'a.tsx', line: 3, problem: 'wrong colour' }] }
+          const review = verdict === 'ok' ? { verdict, findings: [] } : { verdict, findings: [{ type: 'logic' as const, file: 'a.tsx', line: 3, problem: 'wrong colour', severity: 'medium' as const, affects: [], decisions: [] }] }
           yield { type: 'done', summary: verdict, source: 'provider', review }
           return
         }
