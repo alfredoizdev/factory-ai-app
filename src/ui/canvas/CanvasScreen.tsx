@@ -673,6 +673,7 @@ export function CanvasScreen({
           canRetry={mode === 'failed' && retryFor === run?.runId}
           onDetails={run ? setDetailsOf : undefined}
           blank={nothingOpen}
+          taskId={run?.runId ?? null}
           flushRef={flushRef}
           loading={loading}
           overlay={

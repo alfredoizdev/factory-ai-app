@@ -226,6 +226,7 @@ export function Canvas({
   sidebarLog,
   loading = false,
   blank = false,
+  taskId = null,
   overlay,
   onFailedClick,
   onDetails,
@@ -241,6 +242,8 @@ export function Canvas({
   overlay?: ReactNode
   /** A task is still loading: placeholders stand where its cards will be, and the cards appear once it is whole. */
   loading?: boolean
+  /** The task on screen. When it changes, a card opened by hand on the last one is let go. */
+  taskId?: string | null
   /** Nothing is open and nothing is being started: the flow is not drawn, so the screen can say what to do. */
   blank?: boolean
   graph: Graph
@@ -270,6 +273,14 @@ export function Canvas({
   const [issues, setIssues] = useState<ValidationIssue[]>([])
   // Null means the canvas follows the work by itself; a value means a person chose a block and it stays open.
   const [focusOverride, setFocusOverride] = useState<string | null>(null)
+  // Another task came on screen: the card the person had opened belonged to the last one, so the lane goes back to
+  // following the work. Done while rendering, so the new task is never drawn once with the old card open.
+  const [shownTask, setShownTask] = useState(taskId)
+  if (shownTask !== taskId) {
+    setShownTask(taskId)
+    setFocusOverride(null)
+    setSelectedId(null)
+  }
   // Pointing at a block from the event bar is a request to see it, so it also becomes the focus. This is the
   // adjust-state-while-rendering pattern, deliberately: doing it from an effect would render the lane twice.
   const [pointedAt, setPointedAt] = useState(highlightedId)
