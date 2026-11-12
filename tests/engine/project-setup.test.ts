@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { analyzeProject, commandsOf, githubRepoOf, runScript } from '@/engine/project-setup'
+import { analyzeProject, commandsOf, githubRepoOf, runScript, testCommandOnMain } from '@/engine/project-setup'
 
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
 
@@ -66,4 +66,20 @@ test('a GitHub remote gives owner/name, never a token in it', () => {
   expect(githubRepoOf('https://user:ghp_secret@github.com/alice/shop.git')).toBe('alice/shop')
   expect(githubRepoOf('git@github.com:alice/shop.git')).toBe('alice/shop')
   expect(githubRepoOf('https://gitlab.com/a/b')).toBeNull()
+})
+
+test('tests that arrive on the main branch are noticed; ones only on a side branch, or the npm placeholder, are not', () => {
+  const dir = repo({ 'package.json': JSON.stringify({ name: 'landing', scripts: { build: 'next build', test: 'echo "Error: no test specified" && exit 1' } }) })
+  expect(testCommandOnMain(dir)).toBeNull()
+
+  // A task's branch gets tests: not on main yet, so nothing is offered.
+  git(dir, 'checkout', '-q', '-b', 'ai/add-tests')
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'landing', scripts: { build: 'next build', test: 'vitest run' } }))
+  git(dir, 'commit', '-q', '-am', 'add tests')
+  expect(testCommandOnMain(dir)).toBeNull()
+
+  // Merged into main: now it is.
+  git(dir, 'checkout', '-q', 'main')
+  git(dir, 'merge', '-q', 'ai/add-tests')
+  expect(testCommandOnMain(dir)).toBe('npm test')
 })

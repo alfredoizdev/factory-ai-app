@@ -136,3 +136,25 @@ test('a project with no task at all invites the first one, and its button puts t
   fireEvent.click(screen.getByRole('button', { name: strings.history.firstTaskAction }))
   expect(document.activeElement?.tagName).toBe('TEXTAREA')
 })
+
+test('tests that arrived after the project was added are offered, and saved only on a yes', async () => {
+  const { CanvasScreen } = await import('@/ui/canvas/CanvasScreen')
+  const { defaultGraph } = await import('@/domain/graph')
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  const settings = { projectId: 'p1', repoPath: '/repo', testCommand: null, autoApproveLowRisk: false, currentBranch: 'main', defaultBranch: 'main', suggestedTestCommand: 'npm test' }
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/projects/p1' && init?.method === 'PUT') return new Response(JSON.stringify({ ...settings, testCommand: 'npm test', suggestedTestCommand: null }))
+    return new Response(JSON.stringify({ runs: [] }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={settings} />)
+  expect(screen.getByTestId('test-suggestion')).toHaveTextContent(strings.testSuggestion.text('npm test'))
+  fireEvent.click(screen.getByRole('button', { name: strings.testSuggestion.accept }))
+  await vi.waitFor(() => expect(screen.queryByTestId('test-suggestion')).toBeNull())
+  const put = fetchMock.mock.calls.find(([u, i]) => u === '/api/projects/p1' && i?.method === 'PUT')!
+  expect(JSON.parse(String(put[1]!.body))).toEqual({ testCommand: 'npm test' })
+})

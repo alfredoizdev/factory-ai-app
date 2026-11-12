@@ -9,7 +9,7 @@ import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { SettingsIcon } from './SettingsIcon'
 import { shipView } from './shipView'
 import type { ShipState } from '@/engine/ship'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { Block, Graph, ValidationIssue } from '@/domain/graph'
 import type { ProjectSettings } from '@/engine/project-settings'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
@@ -32,6 +32,9 @@ export type RunInfo = {
   here?: boolean
   machine?: string | null
 }
+
+/** For values read from the browser that never change on their own. */
+const noSubscription = () => () => undefined
 
 const LIVE: ReadonlySet<RunStatus> = new Set<RunStatus>(['queued', 'running', 'waiting_approval'])
 
@@ -236,6 +239,59 @@ export function CanvasScreen({
   // at past tasks that do not exist.
   const [taskCount, setTaskCount] = useState<number | null>(noTasksYet ? 0 : null)
 
+  // Reads the project's settings again: its branch may have changed, and its main branch may now have tests.
+  const projectId = settings?.projectId
+  const refreshSettings = useCallback(() => {
+    if (!projectId) return
+    fetch(`/api/projects/${projectId}`)
+      .then(r => (r.ok ? (r.json() as Promise<ProjectSettings>) : null))
+      .then(next => next && setSettings(next))
+      .catch(() => undefined)
+  }, [projectId])
+
+  // Tests that arrived after the project was added (a task installed them): offered once, until answered.
+  const suggested = settings?.suggestedTestCommand ?? null
+  // What was answered "not now" before, kept in this browser; read after hydration so the server's page still matches.
+  const storedDismissal = useSyncExternalStore(
+    noSubscription,
+    () => {
+      try {
+        return projectId ? localStorage.getItem(`factory.testSuggestion.${projectId}`) : null
+      } catch {
+        return null
+      }
+    },
+    () => null,
+  )
+  const [dismissedNow, setDismissedNow] = useState<string | null>(null)
+  const dismissedSuggestion = dismissedNow ?? storedDismissal
+  const [suggestionBusy, setSuggestionBusy] = useState(false)
+  const [suggestionError, setSuggestionError] = useState(false)
+  function dismissSuggestion() {
+    if (!suggested || !projectId) return
+    setDismissedNow(suggested)
+    try {
+      localStorage.setItem(`factory.testSuggestion.${projectId}`, suggested)
+    } catch {
+      // Not remembered across reloads; fine.
+    }
+  }
+  async function acceptSuggestion() {
+    if (!suggested || !projectId) return
+    setSuggestionBusy(true)
+    setSuggestionError(false)
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ testCommand: suggested }) })
+      const body = (await res.json().catch(() => null)) as ProjectSettings | null
+      if (!res.ok || !body) return setSuggestionError(true)
+      setSettings(body)
+    } catch {
+      setSuggestionError(true)
+    } finally {
+      setSuggestionBusy(false)
+    }
+  }
+
   function newTask(reason: 'new' | 'none' = 'new') {
     setEmptyBecause(reason)
     setRun(null)
@@ -243,12 +299,7 @@ export function CanvasScreen({
     setHighlightedId(null)
     setMessage(null)
     clearComposer()
-    if (settings) {
-      fetch(`/api/projects/${settings.projectId}`)
-        .then(r => (r.ok ? (r.json() as Promise<ProjectSettings>) : null))
-        .then(next => next && setSettings(next))
-        .catch(() => undefined)
-    }
+    refreshSettings()
     // A new task is written in the card: put the cursor there.
     if (reason === 'new') requestAnimationFrame(() => document.getElementById(RUN_INPUT_ID)?.focus())
   }
@@ -436,6 +487,20 @@ export function CanvasScreen({
           )
         )}
       </header>
+      {suggested && dismissedSuggestion !== suggested && (
+        <div data-testid="test-suggestion" role="status" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: `1px solid ${theme.border}`, background: 'rgba(34, 197, 94, 0.07)', fontSize: 13 }}>
+          <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke={theme.passed} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M5 12.5l4.5 4.5L19 7.5" />
+          </svg>
+          <span>{suggestionError ? strings.testSuggestion.failed : strings.testSuggestion.text(suggested)}</span>
+          <button type="button" disabled={suggestionBusy} onClick={() => void acceptSuggestion()} style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: suggestionBusy ? 'wait' : 'pointer' }}>
+            {strings.testSuggestion.accept}
+          </button>
+          <button type="button" disabled={suggestionBusy} onClick={dismissSuggestion} style={{ ...headerButton, padding: '5px 12px' }}>
+            {strings.testSuggestion.dismiss}
+          </button>
+        </div>
+      )}
       {/* Clipped: the closed drawer waits just off the right edge, and must not make the page scroll. */}
       {/* clip, not hidden: a hidden box can still be scrolled by the browser (find in page, scrollIntoView), which would
           slide the whole canvas sideways to show the closed drawer. A clipped one cannot scroll at all. */}
@@ -541,7 +606,10 @@ export function CanvasScreen({
           startOptions={agent === CLAUDE_PROVIDER_ID ? startOptions : []}
           startFrom={startFrom}
           onStartFrom={setStartFrom}
-          onRecorded={reopen}
+          onRecorded={() => {
+            reopen()
+            refreshSettings()
+          }}
           away={run && run.here === false ? { machine: run.machine ?? null } : null}
           taskName={taskName}
           onTaskName={setTaskName}

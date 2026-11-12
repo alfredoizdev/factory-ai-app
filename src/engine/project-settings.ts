@@ -8,6 +8,7 @@ import { projects } from '@/db/schema'
 import { detectTestCommand } from '@/engine/test-runner'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
+import { testCommandOnMain } from '@/engine/project-setup'
 
 // One project = one local repository (design §7). A path is only stored once it is shown to be a repository root
 // with at least one commit, because a worktree is made from it and an agent then works there unattended.
@@ -28,6 +29,8 @@ export type ProjectSettings = {
   currentBranch: string | null
   /** The project's main branch, where a new task starts unless the person picks another. */
   defaultBranch: string | null
+  /** A test command the main branch now has while the project has none set: offered to the person, never set silently. */
+  suggestedTestCommand?: string | null
 }
 
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -35,7 +38,16 @@ const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, en
 export async function getProjectSettings(projectId: string): Promise<ProjectSettings> {
   const row = await projectHere(projectId)
   if (!row) throw new ProjectSettingsError(strings.settings.noProject)
-  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk, currentBranch: branchOf(row.repoPath), defaultBranch: mainOf(row.repoPath) }
+  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk, currentBranch: branchOf(row.repoPath), defaultBranch: mainOf(row.repoPath), suggestedTestCommand: suggestionFor(row.repoPath, row.testCommand) }
+}
+
+function suggestionFor(repo: string | null, testCommand: string | null): string | null {
+  if (!repo || (testCommand ?? '').trim() !== '') return null
+  try {
+    return testCommandOnMain(repo)
+  } catch {
+    return null
+  }
 }
 
 function mainOf(repo: string | null): string | null {

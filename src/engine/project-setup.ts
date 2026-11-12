@@ -82,6 +82,26 @@ export function commandsOf(dir: string): Record<CheckName, string | null> {
   return { test: pick('test'), lint: pick('lint'), build: pick('build'), typecheck: pick('typecheck', 'type-check', 'tsc') }
 }
 
+/**
+ * The test command the project's main branch has, here or on origin (as last fetched): what a new task would start
+ * with. Used to notice tests that arrived after the project was added. Null when there is none.
+ */
+export function testCommandOnMain(repo: string): string | null {
+  const pm = packageManagerOf(repo)
+  const branch = defaultBranch(repo)
+  if (!pm || !branch) return null
+  for (const ref of [branch, `origin/${branch}`]) {
+    try {
+      const pkg = JSON.parse(execFileSync('git', ['show', `${ref}:package.json`], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })) as Pkg
+      const script = pkg.scripts?.test
+      if (typeof script === 'string' && script.trim() !== '' && !PLACEHOLDER.test(script)) return runScript(pm, 'test')
+    } catch {
+      // No such ref, or no package.json on it: try the next.
+    }
+  }
+  return null
+}
+
 export function frameworkOf(dir: string): string | null {
   const pkg = readPkg(dir)
   const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) }

@@ -635,6 +635,12 @@ export const strings = {
     staleDraft: 'This flow was changed somewhere else since this page opened, so your edit here was not saved. Reload the page to see the latest.',
     unattributedIssues: 'Problems with the flow',
   },
+  testSuggestion: {
+    text: (command: string) => `This project now has tests. Check every change with ${command}?`,
+    accept: 'Yes, use it',
+    dismiss: 'Not now',
+    failed: 'The test command could not be saved. You can set it in the project settings.',
+  },
   settings: {
     noProject: 'That project does not exist.',
     notAbsolute: 'Give the full path to the repository, starting with /.',

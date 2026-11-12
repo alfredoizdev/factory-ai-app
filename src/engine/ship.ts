@@ -244,6 +244,13 @@ export async function mergePullRequest(runId: string, gh: Gh = defaultGh): Promi
   } catch (e) {
     throw ghFailure(e)
   }
+  // Learn what main looks like now (new tests, for one) without waiting for the next task to fetch it. Best effort.
+  const main = defaultBranch(repo)
+  if (main) {
+    await new Promise<void>(resolve =>
+      execFile('git', ['fetch', '--quiet', 'origin', `refs/heads/${main}:refs/remotes/origin/${main}`], { cwd: repo, timeout: 15_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, () => resolve()),
+    )
+  }
   await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number: current.pr!.number } }, tx)))
   return shipState(runId, gh)
 }
