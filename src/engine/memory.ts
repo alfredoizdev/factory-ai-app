@@ -1,10 +1,11 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { projectNotes, runs } from '@/db/schema'
+import { projectNotes, projects, runs } from '@/db/schema'
 import { askClaude, type AskModel } from '@/engine/branch-name'
 import type { DbHandle } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
-import { addEntry, listRegister, MAX_GIVEN, type Entry } from '@/engine/register'
+import { addEntry, CoreError, listRegister, MAX_GIVEN, normaliseCorePath, toEntry, type Entry, type EntryKind } from '@/engine/register'
+import { strings } from '@/ui/strings'
 
 export { MAX_GIVEN }
 
@@ -14,17 +15,20 @@ export { MAX_GIVEN }
 // card can show them. A rule a model distilled is still the person's words, shortened: where it came from is kept.
 
 export type NoteSource = 'person' | 'approved' | 'changes' | 'rejected' | 'replan'
-export type ProjectNote = { id: string; text: string; source: NoteSource; runId: string | null; enabled: boolean; createdAt: string }
+export type ProjectNote = { id: string; number: number; kind: EntryKind; text: string; paths: string[]; source: NoteSource; runId: string | null; enabled: boolean; createdAt: string }
 
 export const MAX_NOTE = 240
+/** A decision is written by the app from a question and its answer, so it may be longer than a rule. */
+const MAX_ENTRY = 600
+/** What the person can reword, switch off and remove. A finding line is a log of what happened: it is not theirs to edit. */
+const EDITABLE: readonly EntryKind[] = ['rule', 'decision', 'core']
 
-
-export function cleanNote(raw: string): string | null {
-  const text = clip(redact(raw.replace(/\s+/g, ' ').trim()), MAX_NOTE)
+export function cleanNote(raw: string, max: number = MAX_NOTE): string | null {
+  const text = clip(redact(raw.replace(/\s+/g, ' ').trim()), max)
   return text === '' ? null : text
 }
 
-const toNote = (e: Pick<Entry, 'id' | 'text' | 'source' | 'runId' | 'enabled' | 'createdAt'>): ProjectNote => ({ id: e.id, text: e.text, source: e.source as NoteSource, runId: e.runId, enabled: e.enabled, createdAt: e.createdAt })
+const toNote = (e: Pick<Entry, 'id' | 'number' | 'kind' | 'text' | 'paths' | 'source' | 'runId' | 'enabled' | 'createdAt'>): ProjectNote => ({ id: e.id, number: e.number, kind: e.kind, text: e.text, paths: e.paths, source: e.source as NoteSource, runId: e.runId, enabled: e.enabled, createdAt: e.createdAt })
 
 /** The project's rules, oldest first. Decisions, core areas and finding lines are in the register, not here. */
 export async function listNotes(projectId: string, h: DbHandle = db): Promise<ProjectNote[]> {
@@ -40,22 +44,37 @@ export async function addNote(projectId: string, raw: string, source: NoteSource
   return entry ? toNote(entry) : null
 }
 
-export async function updateNote(projectId: string, id: string, change: { text?: string; enabled?: boolean }): Promise<ProjectNote | null> {
-  const set: { text?: string; enabled?: boolean } = {}
+/**
+ * Rewords an entry, switches it off or on, or (a core area) moves it to another folder or file. Rules, decisions and core
+ * areas only: a finding line is a log. Throws a CoreError with the plain sentence when the new path is refused.
+ */
+export async function updateNote(projectId: string, id: string, change: { text?: string; enabled?: boolean; path?: string }): Promise<ProjectNote | null> {
+  const where = and(eq(projectNotes.id, id), eq(projectNotes.projectId, projectId), inArray(projectNotes.kind, [...EDITABLE]))
+  const current = (await db.select().from(projectNotes).where(where))[0]
+  if (!current) return null
+  const set: { text?: string; enabled?: boolean; paths?: string } = {}
   if (change.text !== undefined) {
-    const text = cleanNote(change.text)
+    const text = cleanNote(change.text, current.kind === 'rule' ? MAX_NOTE : MAX_ENTRY)
     if (!text) return null
     set.text = text
   }
   if (change.enabled !== undefined) set.enabled = change.enabled
-  const where = and(eq(projectNotes.id, id), eq(projectNotes.projectId, projectId), eq(projectNotes.kind, 'rule'))
-  if ((await db.update(projectNotes).set(set).where(where).returning({ id: projectNotes.id })).length === 0) return null
+  if (change.path !== undefined && current.kind === 'core') {
+    const repoPath = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, projectId)))[0]?.repoPath ?? null
+    const n = normaliseCorePath(change.path, repoPath)
+    if (!n.ok) throw new CoreError(n.reason)
+    const before = (JSON.parse(current.paths ?? '[]') as string[]).join(', ')
+    set.paths = JSON.stringify([n.path])
+    // The sentence the app wrote for the old place follows the entry to the new one; the person's own words stay.
+    if (set.text === undefined && current.text === strings.memory.core.entryText(before)) set.text = strings.memory.core.entryText(n.path)
+  }
+  if (Object.keys(set).length > 0) await db.update(projectNotes).set(set).where(where)
   const row = (await db.select().from(projectNotes).where(where))[0]
-  return row ? toNote(row) : null
+  return row ? toNote(toEntry(row)) : null
 }
 
 export async function deleteNote(projectId: string, id: string): Promise<boolean> {
-  return (await db.delete(projectNotes).where(and(eq(projectNotes.id, id), eq(projectNotes.projectId, projectId), eq(projectNotes.kind, 'rule'))).returning({ id: projectNotes.id })).length > 0
+  return (await db.delete(projectNotes).where(and(eq(projectNotes.id, id), eq(projectNotes.projectId, projectId), inArray(projectNotes.kind, [...EDITABLE]))).returning({ id: projectNotes.id })).length > 0
 }
 
 /** The rules a task starts with: switched on, newest first, bounded. */

@@ -221,6 +221,26 @@ export function problemGroups(rows: FindingRow[]): FindingRow[][] {
 /** The row of a problem from the latest round (the last recorded on a tie). */
 export const latestOf = (group: FindingRow[]): FindingRow => group.reduce((latest, r) => (r.round >= latest.round ? r : latest))
 
+export type Ending = 'fixed' | 'needs_you' | 'set_aside' | 'in_progress'
+
+/**
+ * How a problem stands, from every row that reported it. The one rule behind the sentence on Approve and the list on
+ * the screen, so they cannot disagree.
+ * Fixed: a fix of it was kept and its latest word is not a problem for the person: the latest row is `corrected`, or
+ * some row was and the latest is `refuted` (the fix worked, so the checker no longer finds it) or `discarded` with no
+ * reproduction (set aside because it could not be shown, which is no evidence against the fix). A latest word of
+ * `discarded` on a problem that was shown to happen (the person left it, or undid the fix) is set aside by choice.
+ * Needs you: the latest word still needs the person, so a fix that did not hold counts here only.
+ */
+export function endingOf(group: FindingRow[]): Ending {
+  const latest = latestOf(group)
+  const fixedOnce = group.some(r => r.state === 'corrected')
+  if (latest.state === 'corrected' || (fixedOnce && (latest.state === 'refuted' || (latest.state === 'discarded' && !latest.repro)))) return 'fixed'
+  if (needsPerson(latest)) return 'needs_you'
+  if (latest.state === 'refuted' || latest.state === 'discarded') return 'set_aside'
+  return 'in_progress'
+}
+
 /** One row per problem, however many rounds reported it: the one from the latest round (the last recorded on a tie), in order of first appearance. */
 export function distinctProblems(rows: FindingRow[]): FindingRow[] {
   return problemGroups(rows).map(latestOf)

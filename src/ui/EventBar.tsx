@@ -16,6 +16,8 @@ const EVENT_STATE: Record<string, NodeState> = {
   'node.queued': 'queued',
   'node.started': 'running',
   'node.waiting_approval': 'waiting_approval',
+  'node.question_asked': 'waiting_approval',
+  'node.question_answered': 'running',
   'node.completed': 'passed',
   'node.failed': 'failed',
   'node.skipped': 'skipped',
@@ -30,6 +32,8 @@ export function describeEvent(event: Wire, block: Block): { text: string; isClai
   if (event.type === 'node.step') return { text: str(payload.text) ?? '', isClaim: false }
   if (event.type === 'node.started') return { text: strings.events.started, isClaim: false }
   if (event.type === 'node.waiting_approval') return { text: strings.events.waiting, isClaim: false }
+  if (event.type === 'node.question_asked') return { text: strings.question.cardWaiting, isClaim: false }
+  if (event.type === 'node.question_answered') return { text: strings.question.answered, isClaim: false }
   if (event.type === 'node.reopened') {
     const round = typeof payload.round === 'number' ? payload.round : 2
     // Sent back by the reviewer: its problems are a model's claim, and are shown on the Review card as such.

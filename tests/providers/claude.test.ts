@@ -358,14 +358,14 @@ describe('the reviewer', () => {
     expect(seen).toContain('+zed')
   })
 
-  test('its findings become steps, and its verdict travels with the result as its own claim', async () => {
+  test('its findings are not steps on the card (they hold file paths); its verdict travels with the result as its own claim', async () => {
     const child = fakeChild()
     const provider = createClaudeProvider({ spawn: (() => child) as never, snapshot: () => 'same' })
     const pending = collect(provider.execute(review, { signal: signal() }))
     finish(child, [{ type: 'result', is_error: false, result: '{"verdict":"changes","findings":[{"file":"a.tsx","line":4,"problem":"wrong colour"}]}' }])
     const events = await pending
-    expect(events[0]).toEqual({ type: 'step', text: strings.review.found('a.tsx:4', 'wrong colour') })
-    expect(events[1]).toMatchObject({ type: 'done', source: 'provider', summary: strings.review.problems(1), review: { verdict: 'changes' } })
+    expect(events.filter(e => e.type === 'step')).toEqual([])
+    expect(events[0]).toMatchObject({ type: 'done', source: 'provider', summary: strings.review.problems(1), review: { verdict: 'changes' } })
   })
 
   test('a reviewer that changed files is not a review', async () => {

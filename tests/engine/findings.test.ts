@@ -7,7 +7,7 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { events, nodeRuns, projects, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { bySeverity, citeCheck, distinctProblems, problemGroups, latestOf, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, DUPLICATE_WINDOW } from '@/engine/findings'
+import { bySeverity, citeCheck, distinctProblems, endingOf, problemGroups, latestOf, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, DUPLICATE_WINDOW } from '@/engine/findings'
 import type { Finding } from '@/engine/review'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { FindingRow } from '@/engine/findings'
@@ -194,5 +194,38 @@ describe('distinctProblems', () => {
     const out = distinctProblems(rows)
     expect(out).toHaveLength(2)
     expect(out.map(r => r.id)).toEqual([rows[2]!.id, rows[1]!.id])
+  })
+})
+
+describe('endingOf', () => {
+  let n = 0
+  const row = (over: Partial<FindingRow>): FindingRow => ({
+    ...f({ file: 'a.ts', line: 3 }), id: `e${n++}`, runId: 'r', projectId: 'p', round: 1, reporters: ['logic'], count: 1, state: 'reported', reason: null, repro: null, evidence: null, entryNumber: null, ...over,
+  })
+  const repro = { command: 'node x.js', marker: 'MARKER-123', files: [] }
+  const ends = (...rows: FindingRow[]) => endingOf(rows)
+
+  test('fixed: the latest row is corrected', () => {
+    expect(ends(row({ round: 1, state: 'confirmed' }), row({ round: 2, state: 'corrected' }))).toBe('fixed')
+  })
+  test('fixed: it was corrected once and the latest word is refuted, or set aside with no reproduction', () => {
+    expect(ends(row({ round: 1, state: 'corrected' }), row({ round: 2, state: 'refuted' }))).toBe('fixed')
+    expect(ends(row({ round: 1, state: 'corrected' }), row({ round: 2, state: 'discarded' }))).toBe('fixed')
+  })
+  test('not fixed: set aside after being shown to happen is a problem left by choice', () => {
+    expect(ends(row({ round: 1, state: 'corrected' }), row({ round: 2, state: 'discarded', repro }))).toBe('set_aside')
+  })
+  test('needs you: open, asked, or fixed and not checked', () => {
+    for (const state of ['open', 'asked', 'fixed_unchecked'] as const) expect(ends(row({ state }))).toBe('needs_you')
+  })
+  test('needs you wins when the fix did not hold', () => {
+    expect(ends(row({ round: 1, state: 'corrected' }), row({ round: 2, state: 'open' }))).toBe('needs_you')
+  })
+  test('set aside: refuted or discarded and never fixed', () => {
+    expect(ends(row({ state: 'refuted' }))).toBe('set_aside')
+    expect(ends(row({ state: 'discarded' }))).toBe('set_aside')
+  })
+  test('still being worked on: reported, confirmed, unbacked', () => {
+    for (const state of ['reported', 'confirmed', 'unbacked'] as const) expect(ends(row({ state }))).toBe('in_progress')
   })
 })

@@ -205,9 +205,20 @@ describe('what the reviewers found', () => {
     await drive(runId, provider, dir, base)
     expect(seen.filter(s => s.kind === 'build')).toHaveLength(1)
     expect((await node(runId, 'review')).state).toBe('passed')
-    expect((await node(runId, 'review')).summary).toBe(strings.review.noProblemsLeft)
+    expect((await node(runId, 'review')).summary).toBe(strings.review.noneWasReal(1))
     expect((await findingsOf(runId)).map(r => r.state)).toEqual(['refuted'])
     expect((await eventsSince(runId, 0)).some(e => e.type === 'node.reopened')).toBe(false)
+  })
+
+  test('when the checker could not show any report to be real, the card does not say the reviewers found problems', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const { provider } = reviewers(focus => (focus === 'logic' ? says(finding({ line: 1 }), finding({ line: 5, problem: 'other' })) : says()))
+    await drive(runId, provider, dir, base)
+    const summary = (await node(runId, 'review')).summary
+    expect((await findingsOf(runId)).map(r => r.state)).toEqual(['discarded', 'discarded'])
+    expect(summary).toBe(strings.review.noneWasReal(2))
+    expect(summary).not.toMatch(/found/)
   })
 
   test('a reviewer that changed a file fails the block, and no reviewer\'s findings are used', async () => {
@@ -227,7 +238,7 @@ describe('what the reviewers found', () => {
 describe('Approve sums up the findings', () => {
   test('the sentence reads plainly and leaves out what is zero', () => {
     expect(strings.review.approve.summary({ found: 3, fixed: 2, discarded: 0, needsYou: 1 })).toBe('3 problems found. 2 fixed, 1 needs you.')
-    expect(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 1, needsYou: 0 })).toBe('1 problem found. 1 discarded.')
+    expect(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 1, needsYou: 0 })).toBe('1 problem found. 1 set aside.')
   })
 })
 

@@ -1,6 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { MAX_REVIEW_ROUNDS, defaultReviewerModel, type Focus, type Review } from '@/engine/review'
-import { distinctProblems, findingsOf, latestOf, needsPerson, problemGroups } from '@/engine/findings'
+import { distinctProblems, endingOf, findingsOf, needsPerson, problemGroups, type Ending } from '@/engine/findings'
 import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
 import { giveStanding, type Standing } from '@/engine/register'
@@ -695,21 +695,15 @@ async function anyReviewRan(runId: string): Promise<boolean> {
 // Approve, for the real agent: a plain summary, from the record, of what the reviewers found and what became of it.
 // It always passes: the final yes is the person's, at the human check.
 async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome> {
-  // One problem is one, however many rounds a reviewer reported it in. It counts as fixed when a fix of it was kept and
-  // its latest word is not a problem for the person: a re-report the checker refuted is the fix having worked, and one
-  // set aside because it could not be shown is no evidence against it. A latest word of "discarded" on a problem that was
-  // shown to happen (the person left it, or undid the fix) is a problem set aside by choice: "discarded", not fixed.
-  // When the latest word still needs the person, the fix did not hold and it counts under "needs you" only.
-  const groups = problemGroups(await findingsOf(runId)).map(g => ({ latest: latestOf(g), fixedOnce: g.some(r => r.state === 'corrected') }))
-  const wasFixed = (g: (typeof groups)[number]) =>
-    g.latest.state === 'corrected' || (g.fixedOnce && (g.latest.state === 'refuted' || (g.latest.state === 'discarded' && !g.latest.repro)))
-  const fixed = groups.filter(wasFixed).length
-  const dropped = groups.filter(g => !wasFixed(g) && (g.latest.state === 'refuted' || g.latest.state === 'discarded')).length
+  // One problem is one, however many rounds a reviewer reported it in; endingOf is the one rule for how it stands, shared
+  // with the list on the screen.
+  const endings = problemGroups(await findingsOf(runId)).map(endingOf)
+  const count = (e: Ending) => endings.filter(x => x === e).length
   const summary = !(await anyReviewRan(runId))
     ? strings.review.approve.none
-    : groups.length === 0
+    : endings.length === 0
       ? strings.review.approve.clean
-      : strings.review.approve.summary({ found: groups.length, fixed, discarded: dropped, needsYou: groups.filter(g => needsPerson(g.latest)).length })
+      : strings.review.approve.summary({ found: endings.length, fixed: count('fixed'), discarded: count('set_aside'), needsYou: count('needs_you') })
   return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }

@@ -22,6 +22,8 @@ export type NodeRunView = {
   risk?: { level: 'low' | 'high'; reasons: string[] }
   /** Which round of the run this block is on, from the second on: the person asked for changes. */
   round?: number
+  /** Waiting on a question for the person (not on a decision): the card says so, in the same waiting colour as the human check. */
+  asking?: true
   /** Skipped because this stage is not built yet, not because of anything in this run: drawn as such, not as a skip. */
   notBuilt?: boolean
   /** The run whose before and after pictures this card shows (the Ship card, once the change reached the person). */
@@ -47,7 +49,7 @@ export type RunEvidence = {
 
 /** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
 export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'summaryIsClaim' | 'usage'> &
-  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round' | 'notBuilt' | 'results' | 'asked'>>
+  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round' | 'asking' | 'notBuilt' | 'results' | 'asked'>>
 
 // The domain and visual vocabularies are separate on purpose.
 const VISUAL: Record<NodeState, VisualState> = {
@@ -135,7 +137,7 @@ export function BlockCard({
 }) {
   const visual = visualStateOf(view.state)
   const accent = theme[visual]
-  const stateLabel = view.notBuilt ? strings.canvas.notBuilt : strings.canvas.stateLabel[view.state]
+  const stateLabel = view.notBuilt ? strings.canvas.notBuilt : view.asking && view.state === 'waiting_approval' ? strings.question.stateLabel : strings.canvas.stateLabel[view.state]
   const allSteps = view.steps ?? []
   const steps = allSteps.slice(-MAX_STEPS)
   const hiddenSteps = allSteps.length - steps.length

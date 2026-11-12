@@ -1,9 +1,12 @@
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { existsSync, realpathSync, statSync } from 'node:fs'
+import { join, relative, isAbsolute, sep } from 'node:path'
+import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { projectNotes, projects, runs } from '@/db/schema'
 import { appendEventSync, type DbHandle, lockRun } from '@/engine/events'
 import { SENSITIVE } from '@/engine/risk'
+import { strings } from '@/ui/strings'
 
 // The project's numbered register: the short rules the person taught, the decisions made on earlier tasks, the core
 // areas that always ask the person first, and the log lines of what reviewers found. One table (project_notes), one
@@ -44,7 +47,7 @@ function parsePaths(raw: string | null): string[] {
   }
 }
 
-function toEntry(r: Row): Entry {
+export function toEntry(r: Row): Entry {
   return {
     id: r.id,
     number: r.number ?? 0,
@@ -186,3 +189,77 @@ export async function giveStanding(runId: string): Promise<Standing[]> {
 
 /** How many rules a task is given, newest first: enough to matter, few enough to read. */
 export const MAX_GIVEN = 20
+
+/** A refusal the person can read as it is. */
+export class CoreError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CoreError'
+  }
+}
+
+export type CorePath = { ok: true; path: string } | { ok: false; reason: string }
+
+/**
+ * What the person typed for a core area, as what `touchesCore` needs: repo-relative, forward slashes, no "./" or leading
+ * "/", a trailing "/" on a folder and none on a file. Whether it is a folder is read from the project's own folder
+ * here, never taken from the client. Refused: nothing, a way out of the project (".." or an absolute path), and, when
+ * the project's folder can be read, something that is not in it.
+ */
+export function normaliseCorePath(raw: string, repoPath: string | null): CorePath {
+  const slashed = raw.trim().replace(/\\/g, '/')
+  const outside = { ok: false as const, reason: strings.memory.core.outside }
+  const root = repoPath ? repoPath.replace(/\\/g, '/').replace(/\/+$/, '') : null
+  if (/^[A-Za-z]:/.test(slashed) || slashed.startsWith('~') || (root && (slashed === root || slashed.startsWith(`${root}/`)))) return outside
+  const parts = slashed.split('/').filter(p => p !== '' && p !== '.')
+  if (parts.includes('..')) return outside
+  if (parts.length === 0) return { ok: false, reason: strings.memory.core.empty }
+  const path = parts.join('/')
+  const folderWritten = slashed.endsWith('/')
+  if (!repoPath || !existsSync(repoPath)) return { ok: true, path: folderWritten ? `${path}/` : path }
+  try {
+    const wanted = join(repoPath, path)
+    const real = realpathSync(wanted)
+    const inside = relative(realpathSync(repoPath), real)
+    if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return outside
+    return { ok: true, path: statSync(real).isDirectory() ? `${path}/` : path }
+  } catch {
+    return { ok: false, reason: strings.memory.core.notFound }
+  }
+}
+
+/** Marks core areas the person chose: one path they typed, or the files of a suggestion they confirmed. */
+export async function addCoreArea(projectId: string, a: { path?: string; paths?: string[]; area?: string }): Promise<Entry> {
+  const project = (await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, projectId)))[0]
+  if (!project) throw new CoreError(strings.memory.notFound)
+  const given = a.paths ?? (a.path !== undefined ? [a.path] : [])
+  const paths: string[] = []
+  for (const raw of given.length > 0 ? given : ['']) {
+    const n = normaliseCorePath(raw, project.repoPath)
+    if (!n.ok) throw new CoreError(n.reason)
+    if (!paths.includes(n.path)) paths.push(n.path)
+  }
+  const have = (await listRegister(projectId)).filter(e => e.kind === 'core').flatMap(e => e.paths)
+  if (paths.every(p => have.includes(p))) throw new CoreError(strings.memory.core.already)
+  const text = a.area?.trim() ? strings.memory.core.areaText(a.area.trim()) : strings.memory.core.entryText(paths.join(', '))
+  const entry = await addEntry(projectId, { kind: 'core', text, paths, source: 'person' })
+  if (!entry) throw new CoreError(strings.memory.notFound)
+  return entry
+}
+
+/** The sensitive areas touched by the files of the project's latest change on record, that are not core already. */
+export async function candidatesFor(projectId: string): Promise<{ area: string; paths: string[] }[]> {
+  const latest = (
+    await db.select({ reviewJson: runs.reviewJson }).from(runs).where(and(eq(runs.projectId, projectId), isNotNull(runs.reviewJson))).orderBy(desc(runs.createdAt)).limit(1)
+  )[0]
+  if (!latest?.reviewJson) return []
+  let files: string[] = []
+  try {
+    const v = (JSON.parse(latest.reviewJson) as { files?: { path?: unknown }[] }).files
+    files = Array.isArray(v) ? v.flatMap(f => (typeof f?.path === 'string' ? [f.path] : [])) : []
+  } catch {
+    return []
+  }
+  const core = await corePaths(projectId)
+  return coreCandidates(files.filter(f => !touchesCore(f, core)))
+}

@@ -8,7 +8,7 @@ import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
 import { parsePlan, workList } from '@/engine/plan'
 import { MAX_REPRO_BYTES, parseRepro, parseVerifierAnswer } from '@/engine/repro'
-import { parseReview, whereOf } from '@/engine/review'
+import { parseReview } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
 import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
 import { mapStreamLine } from '@/providers/claude-stream'
@@ -205,7 +205,7 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
       yield { type: 'done', source: 'system', summary: strings.review.unreadable, usage: ev.usage }
       return
     }
-    for (const f of review.findings) yield { type: 'step', text: strings.review.found(whereOf(f), f.problem) }
+    // The findings travel in `review`, and the list under the card shows them; the card's own lines carry no file or line.
     const summary = review.verdict === 'ok' ? strings.review.noProblems : strings.review.problems(review.findings.length)
     // The verdict is the reviewer's own claim about the code, so it is marked as the provider's words.
     yield { type: 'done', source: 'provider', summary, usage: ev.usage, review }

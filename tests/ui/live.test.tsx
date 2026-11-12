@@ -181,3 +181,30 @@ test('a hidden tab closes its stream and reopens it from where it was when shown
   visibility.mockRestore()
   FakeEventSource.prototype.close = () => {}
 })
+
+test('a question from the review waits in the same card as the other checks, and the answer sends the card back to working', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/findings') ? new Response(JSON.stringify({ findings: [], question: null, touched: [] })) : url.endsWith('/prompts') ? new Response(JSON.stringify({ prompts: [] })) : new Response('{}', { status: 404 }))))
+  page()
+  await emit('run.started')
+  await emit('node.started', { blockId: 'review' })
+  expect(screen.getByTestId('command-card')).toHaveAttribute('data-mode', 'working')
+  await emit('run.waiting_approval', { blockId: 'review' })
+  await emit('node.question_asked', { blockId: 'review', questionId: 'q1', kind: 'finding' })
+  expect(state('review')).toBe('waiting_approval')
+  expect(screen.getByTestId('command-card')).toHaveAttribute('data-mode', 'question')
+  expect(screen.getByTestId('block-card-review')).toHaveTextContent(strings.question.stateLabel)
+  await emit('node.question_answered', { blockId: 'review', questionId: 'q1', option: 'fix' })
+  await emit('run.started', { resumed: true })
+  expect(state('review')).toBe('running')
+  expect(screen.getByTestId('command-card')).toHaveAttribute('data-mode', 'working')
+})
+
+test('the human check is still the human check', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/findings') ? new Response(JSON.stringify({ findings: [], question: null, touched: [] })) : url.endsWith('/prompts') ? new Response(JSON.stringify({ prompts: [] })) : new Response('{}', { status: 404 }))))
+  page()
+  await emit('run.started')
+  await emit('node.started', { blockId: 'human' })
+  await emit('run.waiting_approval', { blockId: 'human' })
+  await emit('node.waiting_approval', { blockId: 'human' })
+  expect(screen.getByTestId('command-card')).toHaveAttribute('data-mode', 'waiting')
+})

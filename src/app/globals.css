@@ -104,3 +104,13 @@ select {
   background: rgba(239, 68, 68, 0.16) !important;
   border-color: rgba(239, 68, 68, 0.45) !important;
 }
+
+/* Choices and small buttons in the question and the list of problems: a visible ring for whoever uses the keyboard. */
+.factory-choice:focus-within {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
+.factory-action:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}

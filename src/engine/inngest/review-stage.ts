@@ -116,6 +116,8 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
   const resolve = (row: FindingRow, end: End) => step.run(id(`resolve-${row.id}`), () => resolveFinding(ctx, opened.nodeId, row, end))
   // Beyond the limit they are not checked, and are not dismissed either: they stay open for the person.
   for (const row of alive.slice(MAX_FINDINGS)) await resolve(row, { state: 'open', outcome: 'open', reason: strings.findings.tooMany })
+  // Those left open are for the person, so they are real as far as the card is concerned.
+  let real = alive.length - checked.length
 
   const core = checked.length > 0 ? await step.run(id(`review-core-${block.id}`), () => corePaths(checked[0]!.projectId)) : []
   let fixed = false
@@ -155,10 +157,12 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
       }
     }
     await resolve(row, end!)
+    // A report the checker refuted, or could not make happen, was not a problem; anything else (fixed, left by choice, still open) was.
+    if (!((end!.state === 'refuted' || end!.state === 'discarded') && end!.outcome === 'discarded')) real++
     if (fixAs && workspace.workdir) releaseAttempts(workspace.workdir, row.id, ctx.deps.snapshotStore ? { store: ctx.deps.snapshotStore } : {})
   }
 
-  const summary = alive.length > 0 ? strings.review.problems(alive.length) : rows.length > 0 ? strings.review.noProblemsLeft : strings.review.noProblems
+  const summary = real > 0 ? strings.review.problems(real) : rows.length > 0 ? strings.review.noneWasReal(rows.length) : strings.review.noProblems
   const outcome = await step.run(id(`review-close-${block.id}`), () => closeReview(runId, opened.nodeId, summary))
   return none(outcome, fixed)
 }

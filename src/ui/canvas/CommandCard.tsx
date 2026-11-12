@@ -8,18 +8,21 @@ import { RUN_INPUT_ID } from './Canvas'
 import { WorkingSpinner } from './BlockCard'
 import { Composer, imagesBusy, readyImageIds, type ComposerImage, type ComposerSend } from './Composer'
 import { GateSection } from './GatePanel'
+import { QuestionSection } from './QuestionPanel'
+import type { ReviewRecord } from './useReviewRecord'
 import { PlanSection } from './PlanSection'
 import { ResultSection } from './ResultPanel'
 import { COMMAND_CARD_WIDTH } from './layout'
 import { CardSkeleton } from './Skeleton'
 import type { ShipState } from '@/engine/ship'
 
-export type CardMode = 'idle' | 'working' | 'plan' | 'waiting' | 'done' | 'failed'
+export type CardMode = 'idle' | 'working' | 'plan' | 'question' | 'waiting' | 'done' | 'failed'
 
 const FRAME: Record<CardMode, { tone: 'running' | 'waiting' | 'passed' | 'failed'; from: string; to: string; strength: number }> = {
   idle: { tone: 'running', from: '#141b27', to: '#10151e', strength: 0.35 },
   working: { tone: 'running', from: '#121a29', to: '#0f1520', strength: 0.5 },
   plan: { tone: 'waiting', from: '#1f1a10', to: '#16130d', strength: 0.55 },
+  question: { tone: 'waiting', from: '#1f1a10', to: '#16130d', strength: 0.55 },
   waiting: { tone: 'waiting', from: '#1f1a10', to: '#16130d', strength: 0.55 },
   done: { tone: 'passed', from: '#0f1f16', to: '#0c1711', strength: 0.5 },
   failed: { tone: 'failed', from: '#211214', to: '#170e10', strength: 0.5 },
@@ -66,8 +69,13 @@ export const CommandCard = forwardRef<
     onCanContinue?: (can: boolean) => void
     /** Opens the Human check window, where the change being decided on is shown. */
     onSeeChanges?: () => void
+    /** What the reviewers reported and the question the run waits on; read again by the screen when the run's events say it changed. */
+    record?: ReviewRecord | null
+    onRecordChanged?: () => void
+    /** The reviewers ran on this task: the human check lists what they found. */
+    showFindings?: boolean
   }
->(function CommandCard({ onSeeChanges, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
+>(function CommandCard({ onSeeChanges, record = null, onRecordChanged, showFindings = false, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : mode === 'failed' ? strings.failure.label : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : mode === 'failed' ? strings.failure.placeholder : strings.run.requestPlaceholder
@@ -91,7 +99,7 @@ export const CommandCard = forwardRef<
       tabIndex={-1}
       data-testid="command-card"
       data-mode={mode}
-      aria-label={mode === 'plan' ? strings.plan.title : mode === 'waiting' ? strings.gate.title : mode === 'done' ? strings.delivery.title : strings.sidebar.runTitle}
+      aria-label={mode === 'plan' ? strings.plan.title : mode === 'question' ? strings.question.title : mode === 'waiting' ? strings.gate.title : mode === 'done' ? strings.delivery.title : strings.sidebar.runTitle}
       style={{
         position: 'absolute',
         right: 16,
@@ -166,8 +174,9 @@ export const CommandCard = forwardRef<
         </div>
       )}
       {!loading && mode === 'plan' && runId && <PlanSection away={away} runId={runId} note={text} composer={withSend} onSent={onSent} />}
+      {!loading && mode === 'question' && runId && <QuestionSection runId={runId} record={record} onChanged={() => onRecordChanged?.()} />}
       {!loading && mode === 'waiting' && runId && (
-        <GateSection away={away} runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} onSeeChanges={onSeeChanges} />
+        <GateSection findings={showFindings ? record?.findings : undefined} away={away} runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} onSeeChanges={onSeeChanges} />
       )}
       {!loading && mode === 'done' && runId && (
         <ResultSection

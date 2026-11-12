@@ -240,3 +240,65 @@ test('the event bar says the person\'s round, and for a reopen after fixes only 
   expect(fixes.text).not.toMatch(/round/i)
   expect(strings.run.reopenedChecksAfterFixes).not.toMatch(/round|\d/i)
 })
+
+// ---- Task 10: the Review card while it asks, the person's round during the app's own pass ----
+
+const asking = [
+  { type: 'node.started' as const, payload: { blockId: 'review' } },
+  { type: 'node.step' as const, payload: { blockId: 'review', text: strings.review.reading.logic } },
+  { type: 'node.step' as const, payload: { blockId: 'review', text: strings.review.reading.security } },
+  { type: 'node.question_asked' as const, payload: { blockId: 'review', questionId: 'q1', kind: 'finding' } },
+]
+
+test('while a question is open the Review card is waiting for the person\'s answer, like the human check, not running', () => {
+  const view = fold(asking).review!
+  expect(view.state).toBe('waiting_approval')
+  expect(view.asking).toBe(true)
+  expect(view.summary).toBe(strings.summary.review.waiting_approval)
+  expect(view.summary).toBe(strings.question.cardWaiting)
+  render(<BlockCard block={blocks.find(b => b.id === 'review')!} view={view} />)
+  expect(screen.getByLabelText(strings.canvas.stateAria(strings.question.stateLabel))).toBeInTheDocument()
+  expect(screen.queryByText(strings.canvas.stateLabel.running)).toBeNull()
+})
+
+test('after the answer the Review card is working again', () => {
+  const view = fold([...asking, { type: 'node.question_answered' as const, payload: { blockId: 'review', questionId: 'q1', option: 'fix' } }]).review!
+  expect(view.state).toBe('running')
+  expect(view.asking).toBeUndefined()
+  expect(view.summary).toBe(strings.summary.review.running)
+})
+
+test('the event bar names both moments in plain words', async () => {
+  const { describeEvent } = await import('@/ui/EventBar')
+  const review = blocks.find(b => b.id === 'review')!
+  expect(describeEvent({ sequence: 1, type: 'node.question_asked', payload: { blockId: 'review' } }, review)).toEqual({ text: strings.question.cardWaiting, isClaim: false })
+  expect(describeEvent({ sequence: 2, type: 'node.question_answered', payload: { blockId: 'review' } }, review)).toEqual({ text: strings.question.answered, isClaim: false })
+})
+
+test('the Review card says one line per reviewer and one summary sentence, with no file path and no register number', () => {
+  const view = fold([
+    { type: 'node.started' as const, payload: { blockId: 'review' } },
+    { type: 'node.step' as const, payload: { blockId: 'review', text: strings.review.depth.three } },
+    { type: 'node.step' as const, payload: { blockId: 'review', text: strings.review.reading.logic } },
+    { type: 'node.step' as const, payload: { blockId: 'review', text: strings.review.reading.security } },
+    { type: 'node.step' as const, payload: { blockId: 'review', text: strings.review.reading.effects } },
+    { type: 'node.completed' as const, payload: { blockId: 'review', summary: strings.review.noneWasReal(2), summarySource: 'system' } },
+  ]).review!
+  const { container } = render(<BlockCard expanded block={blocks.find(b => b.id === 'review')!} view={view} />)
+  expect(view.steps.filter(s => s.startsWith('One reviewer'))).toHaveLength(3)
+  const text = container.textContent ?? ''
+  expect(text).toContain(strings.review.noneWasReal(2))
+  expect(text).not.toMatch(/[\w-]+\/[\w.-]+|\.tsx?\b|D-\d/)
+  expect(text).not.toMatch(/found 2 problems/)
+})
+
+test('the round a card shows stays the person\'s during the app\'s own pass, and is none when they never asked', () => {
+  const done = { type: 'node.completed' as const, payload: { blockId: 'tests', summary: 'x', summarySource: 'system' } }
+  const person = { type: 'node.reopened' as const, payload: { blockId: 'tests', round: 2, asked: 2, note: 'make it red', by: 'person' } }
+  const fixes = { type: 'node.reopened' as const, payload: { blockId: 'tests', round: 3, note: 'Problems were fixed.', by: 'fixes' } }
+  expect(fold([done, person, done, fixes]).tests!.round).toBe(2)
+  expect(fold([done, fixes]).tests!.round).toBeUndefined()
+  expect(fold([done, person, done, fixes, done, { ...person, payload: { ...person.payload, round: 4, asked: 3 } }]).tests!.round).toBe(3)
+  const { container } = render(<BlockCard block={tests} view={fold([done, person, done, fixes]).tests!} />)
+  expect(container.querySelector('[data-testid="round-tests"]')).toHaveTextContent(strings.gate.round(2))
+})

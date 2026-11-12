@@ -9,6 +9,8 @@ import { WorkingSpinner } from './BlockCard'
 import { PreviewButton } from './PreviewButton'
 import { BeforeAfterCard, TakePictures } from './BeforeAfter'
 import { Bone } from './Skeleton'
+import { FindingsList } from './FindingsList'
+import type { FindingView } from '@/engine/finding-view'
 
 /** How long a decision may wait for the run to move before the panel says it has not. */
 const PICKUP_WAIT_MS = 20_000
@@ -24,6 +26,7 @@ type Review = Pick<ChangeUnderReview, 'hash' | 'files' | 'diff' | 'truncated'>
  * the change moved meanwhile the server refuses it and this panel reloads what is there now.
  */
 export function GateSection({
+  findings,
   away = null,
   runId,
   risk,
@@ -37,6 +40,8 @@ export function GateSection({
   /** The run's working copy is on another computer: no preview or pictures from here. */
   away?: { machine: string | null } | null
   runId: string
+  /** What the reviewers found and how each ended, listed under what is being decided. Absent: no review ran, nothing is listed. */
+  findings?: readonly FindingView[]
   risk?: { level: 'low' | 'high'; reasons: string[] }
   /** The shared composer's text: the note recorded with a decision, and what a request for changes asks for. */
   note: string
@@ -162,6 +167,7 @@ export function GateSection({
         </button>
       )}
 
+      {findings && <FindingsList findings={findings} />}
 
       {/* Before and after pictures, taken as soon as the change reaches the person. */}
       {review && review.files.length > 0 && !decided && (onSeeChanges ? <TakePictures runId={runId} autoStart={!away} /> : <BeforeAfterCard runId={runId} autoStart={!away} canTake={!away} />)}

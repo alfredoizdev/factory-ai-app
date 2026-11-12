@@ -16,6 +16,9 @@ const NODE_EVENT_STATE: Record<string, NodeState> = {
   'node.queued': 'queued',
   'node.started': 'running',
   'node.waiting_approval': 'waiting_approval',
+  // A question for the person parks the node like a human check does; the answer sends it on.
+  'node.question_asked': 'waiting_approval',
+  'node.question_answered': 'running',
   'node.completed': 'passed',
   'node.failed': 'failed',
   'node.skipped': 'skipped',
@@ -36,6 +39,8 @@ type RawNode = {
   evidence?: NodeRunView['evidence']
   /** From node.reopened: which round this block is on, when it is past the first. */
   round?: number
+  /** From node.question_asked until the answer: the node waits on a question for the person, not on a decision. */
+  asking?: true
   /** From node.assessed: the measured risk of the run's change. */
   risk?: NodeRunView['risk']
   /** From node.completed: tokens the provider reported. Undefined: it said nothing; null: it said "unknown". */
@@ -92,8 +97,9 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   // into its view — not its steps, its sentence, its measurement — because none of it describes the work now.
   if (event.type === 'node.reopened') {
     if (!node) return moved
-    // The person's own count of requests. A reopen after fixes is not one: no round on the card. Events recorded before this was kept say `round`.
-    const shown = typeof payload.asked === 'number' ? payload.asked : payload.by === 'fixes' ? undefined : payload.round
+    // The person's own count of requests. A reopen after fixes is not one: the card keeps the round the person had (none, if they never asked).
+    // Events recorded before this was kept say `round`.
+    const shown = typeof payload.asked === 'number' ? payload.asked : payload.by === 'fixes' ? node.round : payload.round
     const round = typeof shown === 'number' && shown > 1 ? shown : undefined
     return { ...prev, nodes: { ...prev.nodes, [blockId]: { state: 'queued', steps: [], round } }, lastSequence: event.sequence }
   }
@@ -113,6 +119,8 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   if (node && node.state !== state && !canTransition(node.state, state)) return moved
 
   const updated: RawNode = { ...node, state, steps: node?.steps ?? [] }
+  if (event.type === 'node.question_asked') updated.asking = true
+  else delete updated.asking
   // A planner's proposal waits for the person with its own words (how many jobs), marked as whose they are.
   if (event.type === 'node.waiting_approval' && typeof payload.summary === 'string') {
     updated.reportedSummary = text(payload.summary)
@@ -158,9 +166,10 @@ function evidenceOf(payload: Record<string, unknown>): RawNode['evidence'] {
 const KINDS: ReadonlySet<string> = new Set<BlockKind>(['input', 'plan', 'build', 'tests', 'review', 'approve', 'human', 'ship'])
 
 // Evidence and usage travel to the card as they were recorded; usage cost is never reported for a real builder.
-function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk' | 'round'> {
+function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk' | 'round' | 'asking'> {
   return {
     ...(n.round ? { round: n.round } : {}),
+    ...(n.asking ? { asking: true as const } : {}),
     ...(n.evidence ? { evidence: n.evidence } : {}),
     ...(n.risk ? { risk: n.risk } : {}),
     ...(n.tokens !== undefined ? { usage: { tokens: n.tokens, costCents: null } } : {}),

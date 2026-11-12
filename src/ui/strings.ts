@@ -194,7 +194,6 @@ export const strings = {
     checksFailed: 'A check failed, so it is not merged.',
   },
   review: {
-    found: (where: string, problem: string) => (where ? `Problem at ${where}: ${problem}` : `Problem: ${problem}`),
     focus: {
       logic: 'Your focus: does it do what was asked, and is it correct? Look for bugs, broken behaviour and missing cases.',
       security: 'Your focus: security. Look for exposed secrets, missing checks on who may do what, unsafe input, and data that leaks.',
@@ -214,7 +213,7 @@ export const strings = {
       summary: (n: { found: number; fixed: number; discarded: number; needsYou: number }) => {
         const parts = [
           ...(n.fixed > 0 ? [`${n.fixed} fixed`] : []),
-          ...(n.discarded > 0 ? [`${n.discarded} discarded`] : []),
+          ...(n.discarded > 0 ? [`${n.discarded} set aside`] : []),
           ...(n.needsYou > 0 ? [`${n.needsYou} ${n.needsYou === 1 ? 'needs' : 'need'} you`] : []),
         ]
         return `${n.found} ${n.found === 1 ? 'problem' : 'problems'} found.${parts.length > 0 ? ` ${parts.join(', ')}.` : ''}`
@@ -232,7 +231,8 @@ export const strings = {
       security: 'One reviewer is checking that it is safe.',
       effects: 'One reviewer is checking that it does not break anything else.',
     },
-    noProblemsLeft: 'Nothing the reviewers reported held up when it was checked, so there is nothing to fix.',
+    // Every report was looked at and none was a real problem: say that, not that problems were found.
+    noneWasReal: (n: number) => `The reviewers sent ${n} ${n === 1 ? 'report' : 'reports'}. None was a real problem when the app checked, so there is nothing to fix.`,
   },
   findings: {
     noSuchFile: "The file it points to is not in this change's copy.",
@@ -255,6 +255,35 @@ export const strings = {
     fixNotTakenBack: (paths: readonly string[]) =>
       `The fix could not be taken back completely, so the project may still contain part of it${paths.length > 0 ? `. Files to look at: ${paths.slice(0, 20).join(', ')}${paths.length > 20 ? ` and ${paths.length - 20} more` : ''}` : ''}. This one needs a look from you.`,
     unclearAnswer: 'The answer was not one the app can act on by itself, so this one still needs you.',
+    // The list under what is being decided: every problem the reviewers reported and how each one ended.
+    heading: 'What the reviewers found',
+    none: 'The reviewers found no problems.',
+    group: { fixed: 'Fixed', needs_you: 'Needs you', set_aside: 'Set aside', in_progress: 'Being checked' },
+    how: { checked: 'The app checked it', ai: 'AI says so', not_checked: 'Not checked' },
+    howMeans: {
+      checked: 'The app ran its own check, or looked in your project, and saw this itself.',
+      ai: 'An AI said so. The app did not check it.',
+      not_checked: 'Nothing could be run to check this.',
+    },
+    detail: { aiSaid: 'What the AI reviewer said', where: 'Where', command: 'What the app ran', output: 'What it printed', why: 'Why it ended this way', none: 'Nothing more was recorded.' },
+    // What kind of problem it is, in the app's own words: the list never opens with the reviewer's text.
+    title: {
+      logic: 'The change may not do what you asked.',
+      security: 'The change may not be safe.',
+      effect: 'The change may break something else.',
+    },
+    // How each one ended, in one sentence.
+    ended: {
+      fixedChecked: 'Fixed. The app ran its check again and the problem is gone.',
+      fixedUnchecked: 'Fixed, but the app could not check the fix. Please have a look.',
+      asked: 'The app is asking you about this one.',
+      open: 'The app left this one for you to decide.',
+      notThere: 'The place it points to is not in the project, so there was nothing to fix.',
+      checkerNotThere: 'A checker looked at the code and found the problem is not there.',
+      youLeft: 'You chose to leave it as it is. The app had seen it happen.',
+      notReproduced: 'The app could not make the problem happen, so it left it alone.',
+      beingChecked: 'Still being checked.',
+    },
     risk: {
       core: 'It touches a core area you marked.',
       sensitive: (area: string) => `It touches a sensitive area: ${area}.`,
@@ -264,6 +293,26 @@ export const strings = {
     },
   },
   question: {
+    // The card and the window while the review waits for the person's answer.
+    stateLabel: 'Waiting for your answer',
+    cardWaiting: 'Waiting for your answer.',
+    answered: 'You answered. The task goes on.',
+    title: 'A question for you',
+    waiting: 'The task is paused until you answer.',
+    position: (n: number, of: number) => `Problem ${n} of ${of}`,
+    choicesLabel: 'Your choices',
+    recommended: 'Recommended',
+    ownWordsLabel: 'Or say what you want in your own words',
+    ownWordsPlaceholder: 'Write what you would like the app to do.',
+    confirm: 'Confirm my answer',
+    sending: 'Sending your answer…',
+    sent: 'Answer sent. The task goes on.',
+    failed: 'Your answer could not be sent. Try again.',
+    touchesTitle: 'This is about',
+    earlierDecision: 'an earlier decision of yours',
+    seeDetails: 'See details',
+    aiSaid: 'What the AI reviewer said',
+    where: 'Where',
     leaveLabel: 'Leave it as it is',
     leaveMeans: 'Nothing is changed for this. The task goes on without it.',
     needWords: 'Write a few words about what you want, then send it.',
@@ -384,6 +433,7 @@ export const strings = {
     review: {
       queued: 'Waits for the tests.',
       running: 'A reviewer is reading the change.',
+      waiting_approval: 'Waiting for your answer.',
       passed: 'Review passed.',
       failed: 'Review found problems.',
     },
@@ -688,7 +738,39 @@ export const strings = {
     empty: 'Write the rule first.',
     notFound: 'That rule is gone.',
     failed: 'That did not save. Try again.',
+    groups: { rule: 'Rules you gave', decision: 'Decisions you made', core: 'Core areas', finding: 'What the reviewers found before' },
+    groupNone: {
+      decision: 'None yet. When you answer a question during a review, your answer is kept here.',
+      core: 'None yet. Mark a folder or file below.',
+    },
+    number: (label: string) => `Entry ${label}`,
+    saveEdit: 'Save',
+    cancelEdit: 'Cancel',
+    removeAsk: (text: string) => `Remove this? ${text}`,
+    removeYes: 'Yes, remove it',
+    removeNo: 'Keep it',
+    showLog: (n: number) => `Show ${n} earlier ${n === 1 ? 'problem' : 'problems'}`,
+    hideLog: 'Hide them',
+    logAi: 'The AI reviewer said',
+    logEnded: { done: 'Fixed.', asked_yes: 'Fixed after you said yes.', asked_no: 'Left as it is, as you chose.', discarded: 'Set aside.', unchecked: 'Fixed, but not checked.', open: 'Needed you.' },
+    suggestionsTitle: 'Suggested core areas',
+    suggestionWhy: (area: string) => `Your latest change touched ${area}.`,
+    suggestionYes: 'Yes, mark it as core',
+    coreWhat: 'A core area is a folder or file the agents must not change without asking you first.',
+    coreLabel: 'Folder or file',
+    corePlaceholder: 'e.g. src/app',
+    coreHint: 'The app will ask you before changing anything here.',
+    coreAdd: 'Mark as core',
+    core: {
+      empty: 'Write the folder or file first.',
+      outside: 'Write the folder or file as it is inside the project, for example src/app. Not a full path from your computer.',
+      notFound: 'That folder or file is not in the project. Check the name and try again.',
+      already: 'That is already marked as a core area.',
+      entryText: (path: string) => `Ask me before changing ${path}`,
+      areaText: (area: string) => `Ask me before changing anything to do with ${area}`,
+    },
     source: {
+      question: 'Decided when you answered a question',
       person: 'Written by you',
       approved: 'Learned when you approved',
       changes: 'Learned when you asked for changes',
