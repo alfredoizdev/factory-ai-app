@@ -15,3 +15,7 @@ npm-debug.log*
 /e2e/.tmp/
 /test-results/
 /playwright-report/
+.neon
+
+# Isolated worktrees for larger changes
+.worktrees/
