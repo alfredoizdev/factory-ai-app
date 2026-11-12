@@ -143,4 +143,15 @@ describe('recordFindings', () => {
     await setFinding(rows[0]!.id, { state: 'confirmed', reason: 'ok', entryNumber: 3 })
     expect((await findingsOf(runId))[0]).toMatchObject({ state: 'confirmed', reason: 'ok', entryNumber: 3 })
   })
+
+  test('findings come back in the order they were recorded, even when recorded together', async () => {
+    const { runId, nodeRunId } = await node()
+    const dir = copy()
+    // Ten findings in one call share one createdAt; only the id orders them within it, so the ids must increase.
+    const merged = Array.from({ length: 10 }, (_, i) => ({ finding: f({ file: 'src/a.ts', line: i + 1 }), reporters: ['logic' as const], count: 1 }))
+    const rows = await recordFindings(runId, nodeRunId, 1, merged, dir)
+    expect(rows).toHaveLength(10)
+    expect(rows.every(r => r.state === 'reported')).toBe(true)
+    expect((await findingsOf(runId)).map(r => r.id)).toEqual(rows.map(r => r.id))
+  })
 })

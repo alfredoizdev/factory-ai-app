@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { asc, eq } from 'drizzle-orm'
-import { ulid } from 'ulid'
+import { monotonicFactory } from 'ulid'
 import { db } from '@/db/client'
 import { findings, nodeRuns, runs } from '@/db/schema'
 import { appendEventSync } from '@/engine/events'
@@ -34,6 +34,9 @@ export type FindingRow = Finding & {
 export const DUPLICATE_WINDOW = 3
 
 const RANK: Record<Severity, number> = { high: 0, medium: 1, low: 2 }
+
+// Monotonic ids: ids made in one millisecond still increase, so rows written together sort in the order they were written.
+const nextId = monotonicFactory()
 
 /** Whether the file and line a finding cites exist in the working copy. Never reads outside it, symlinks included. */
 export function citeCheck(workdir: string, f: Finding): { ok: true } | { ok: false; reason: string } {
@@ -167,7 +170,7 @@ export async function recordFindings(runId: string, nodeRunId: string, round: nu
       const inserted = await tx
         .insert(findings)
         .values({
-          id: ulid(),
+          id: nextId(),
           projectId: run.projectId,
           runId,
           round,
