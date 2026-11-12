@@ -1,4 +1,3 @@
-
 // What a reviewer says about a change, as data. The reviewer is a model, so all of this is its claim: it is shown as
 // "AI says", never as a measurement. It is read from a small JSON object the reviewer is asked to end with; anything
 // that is not that object is not turned into a verdict.

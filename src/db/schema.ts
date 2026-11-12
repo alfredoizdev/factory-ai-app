@@ -305,6 +305,8 @@ export const questions = pgTable(
     kind: text('kind').notNull(),
     text: text('text').notNull(),
     why: text('why').notNull(),
+    /** What the AI reviewer said, in its own words (redacted, clipped): shown one click away, never as the app's voice. */
+    detail: text('detail'),
     optionsJson: text('options_json').notNull(),
     recommended: text('recommended'),
     touchesJson: text('touches_json').notNull(),

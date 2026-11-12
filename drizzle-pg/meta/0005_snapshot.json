@@ -1,5 +1,5 @@
 {
-  "id": "d6f876c1-0520-4002-91dc-f7bfa6b057a8",
+  "id": "a048be49-8b7f-41d2-b899-f3fe54215960",
   "prevId": "37dc63f9-7968-43d7-a68f-2879d7a9b7ca",
   "version": "7",
   "dialect": "postgresql",
@@ -1431,6 +1431,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "options_json": {
           "name": "options_json",

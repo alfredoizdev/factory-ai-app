@@ -23,6 +23,8 @@ export type Question = {
   kind: 'finding' | 'fix_held'
   text: string
   why: string
+  /** What the AI reviewer said, in its own words: shown one click away and labelled as the AI's. */
+  detail: string | null
   options: Option[]
   recommended: string | null
   /** Register numbers of the entries this question concerns. */
@@ -42,6 +44,7 @@ export const OTHER = 'other'
 // Strings come from agents and from a form; they are trimmed, then cut to these lengths.
 const MAX_TEXT = 500
 const MAX_WHY = 1000
+const MAX_DETAIL = 1000
 const MAX_LABEL = 80
 const MAX_MEANS = 300
 const MAX_ANSWER = 1000
@@ -75,6 +78,7 @@ function toQuestion(r: Row): Question {
     kind: r.kind as Question['kind'],
     text: r.text,
     why: r.why,
+    detail: r.detail,
     options: parse<Option[]>(r.optionsJson, []),
     recommended: r.recommended,
     touches: parse<number[]>(r.touchesJson, []),
@@ -116,7 +120,7 @@ const runCan = (from: string, to: NodeState) => canTransition(from as NodeState,
 export async function askPerson(
   runId: string,
   nodeRunId: string,
-  q: Pick<Question, 'findingId' | 'kind' | 'text' | 'why' | 'options' | 'recommended' | 'touches'>,
+  q: Pick<Question, 'findingId' | 'kind' | 'text' | 'why' | 'options' | 'recommended' | 'touches'> & { detail?: string | null },
 ): Promise<Question> {
   const text = cap(q.text, MAX_TEXT)
   if (!text) throw new Error('A question needs its words.')
@@ -148,6 +152,7 @@ export async function askPerson(
       kind: q.kind,
       text,
       why: cap(q.why, MAX_WHY),
+      detail: q.detail?.trim() ? cap(q.detail, MAX_DETAIL) : null,
       optionsJson: JSON.stringify(options),
       recommended,
       touchesJson: JSON.stringify(touches),

@@ -58,6 +58,15 @@ describe('asking', () => {
     expect(await takeAnswer(q.id)).toBeNull()
   })
 
+  test('the detail is trimmed and capped; without one it is null', async () => {
+    const a = await runningRun()
+    expect((await askPerson(a.runId, a.nodeRunId, ask())).detail).toBeNull()
+    const b = await runningRun()
+    const q = await askPerson(b.runId, b.nodeRunId, { ...ask(), detail: `  ${'x'.repeat(2000)}  ` })
+    expect(q.detail).toHaveLength(1000)
+    expect((await openQuestion(b.runId))!.detail).toHaveLength(1000)
+  })
+
   test('the option to leave it comes last, and other is never listed', async () => {
     const { runId, nodeRunId } = await runningRun()
     const q = await askPerson(runId, nodeRunId, ask())
@@ -206,7 +215,7 @@ describe('answering', () => {
 })
 
 describe('what the person decided, in words', () => {
-  const base: Question = { id: 'q', runId: 'r', nodeRunId: 'n', findingId: null, kind: 'finding', text: 'Which way?', why: '', options: [...opts, { id: LEAVE, label: 'Leave it', means: '' }], recommended: null, touches: [], state: 'answered', answerOption: 'b', answerText: null, actor: 'x', answeredAt: now() }
+  const base: Question = { id: 'q', runId: 'r', nodeRunId: 'n', findingId: null, kind: 'finding', text: 'Which way?', why: '', detail: null, options: [...opts, { id: LEAVE, label: 'Leave it', means: '' }], recommended: null, touches: [], state: 'answered', answerOption: 'b', answerText: null, actor: 'x', answeredAt: now() }
   test('the question and the choice; the person\'s own words after', () => {
     expect(decisionText(base)).toBe('Which way? — Use the new way')
     expect(decisionText({ ...base, answerText: 'but carefully' })).toBe('Which way? — Use the new way — but carefully')

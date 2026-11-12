@@ -8,13 +8,13 @@ import { db, migrateDb } from '@/db/client'
 import { nodeRuns, projects, questions, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
-import { findingsOf } from '@/engine/findings'
+import { findingsOf, needsPerson, type FindingRow } from '@/engine/findings'
 import { MAX_FINDINGS } from '@/engine/review'
 import { addEntry, listRegister } from '@/engine/register'
 import { answerQuestion, LEAVE, openQuestion, OTHER } from '@/engine/questions'
 import type { Repro, ReproRun } from '@/engine/repro'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
-import { createRun, publishVersion, saveDraft } from '@/engine/run'
+import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { Finding, Focus } from '@/engine/review'
 import { createDemoProvider } from '@/providers/demo'
 import type { AgentEvent, AgentProvider } from '@/providers/types'
@@ -29,12 +29,13 @@ class Parked extends Error {}
 // Like Inngest: a step that finished is not run again, its stored result is handed back. Every id asked for is kept.
 function recordingStep(onWait: () => Promise<{ data: Record<string, never> } | null> = async () => {
   throw new Parked()
-}): StepApi & { ids: string[]; onWait: typeof onWait } {
+}): StepApi & { ids: string[]; onWait: typeof onWait; forget: (id: string) => void } {
   const ids: string[] = []
   const done = new Map<string, unknown>()
   const self = {
     ids,
     onWait,
+    forget: (id: string) => void done.delete(id),
     run: async <T,>(id: string, fn: () => Promise<T> | T): Promise<T> => {
       ids.push(id)
       if (done.has(id)) return JSON.parse(JSON.stringify(done.get(id)))
@@ -247,6 +248,10 @@ type Script = {
   verify?: (problem: string) => AgentEvent[]
   /** What the app's own run of the reproduction shows. Default: the problem happened. */
   repro?: (problem: string) => ReproRun
+  /** The fixer ends in an error instead of a fix. */
+  fixerFails?: boolean
+  /** Runs inside the verifier call, before it answers (to cancel the run while it works). */
+  duringVerify?: () => Promise<void>
 }
 const reproduces = (): AgentEvent[] => [{ type: 'done', summary: 'v', source: 'provider', repro }]
 
@@ -261,11 +266,13 @@ function scripted(script: Script) {
     async *execute(input) {
       calls.push({ role: input.role, workdir: input.workdir, problem: input.finding?.problem, repro: input.repro, kind: input.blockKind })
       if (input.role === 'verifier') {
+        await script.duringVerify?.()
         for (const ev of (script.verify ?? reproduces)(input.finding!.problem)) yield ev
         return
       }
       if (input.role === 'fixer') {
-        yield { type: 'done', summary: 'fixed', source: 'provider' }
+        if (script.fixerFails) yield { type: 'error', message: 'could not', source: 'provider' }
+        else yield { type: 'done', summary: 'fixed', source: 'provider' }
         return
       }
       if (input.blockKind === 'tests') yield passingTests
@@ -291,6 +298,15 @@ function scripted(script: Script) {
   return { provider, deps, calls, copies, reproRuns }
 }
 const send = async () => {}
+const projectOf = async (runId: string) => (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.projectId
+const withCore = async (runId: string) => addEntry(await projectOf(runId), { kind: 'core', text: 'Money code', paths: ['a.tsx'], source: 'test' })
+/** The steps of one finding that has been asked about and fixed. */
+const stepsOf = (row: FindingRow) => [`verify-${row.id}`, `ask-${row.id}`, `fix-${row.id}`, `resolve-${row.id}`]
+const counts = async (runId: string) => ({
+  register: (await listRegister(await projectOf(runId))).filter(e => e.kind === 'finding').length,
+  resolved: (await eventsSince(runId, 0)).filter(e => e.type === 'node.finding_resolved').length,
+  questions: (await questionRows(runId)).length,
+})
 const questionRows = (runId: string) => db.select().from(questions).where(eq(questions.runId, runId))
 
 describe('a finding is verified, then fixed or asked about', () => {
@@ -319,7 +335,8 @@ describe('a finding is verified, then fixed or asked about', () => {
     expect(await payloads(runId, 'node.finding_resolved', 'review')).toEqual([{ blockId: 'review', findingId: row!.id, state: 'fixed_unchecked', outcome: 'unchecked' }])
     expect((await eventsSince(runId, 0)).some(e => e.type === 'node.reopened')).toBe(false)
     const approve = await payloads(runId, 'node.completed', 'approve')
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 1, discarded: 0, needsYou: 0 }))
+    // A fix nobody has checked yet is still the person's to look at.
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 1, discarded: 0, needsYou: 1 }))
   })
 
   test('a reproduced problem in a core area parks the run with one question; "leave it" discards it with the person\'s reason', async () => {
@@ -460,7 +477,9 @@ describe('a finding is verified, then fixed or asked about', () => {
     expect(s.calls.filter(c => c.role === 'verifier')).toHaveLength(MAX_FINDINGS)
     const rows = await findingsOf(runId)
     expect(rows.filter(r => r.reason === strings.findings.tooMany).map(r => r.problem)).toEqual(['problem 0', 'problem 1'])
-    expect(rows.every(r => r.entryNumber !== null && r.state === 'discarded')).toBe(true)
+    expect(rows.filter(r => r.reason === strings.findings.tooMany).every(r => r.entryNumber !== null && r.state === 'open')).toBe(true)
+    const projectId = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.projectId
+    expect((await listRegister(projectId)).filter(e => e.reason === strings.findings.tooMany).map(e => e.outcome)).toEqual(['open', 'open'])
     const approve = await payloads(runId, 'node.completed', 'approve')
     expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: MAX_FINDINGS + 2, fixed: 0, discarded: MAX_FINDINGS, needsYou: 2 }))
   })
@@ -491,6 +510,202 @@ describe('a finding is verified, then fixed or asked about', () => {
     await drive(runId, s.provider, dir, base, step, s.deps) // everything memoised: nothing happens again
     expect({ events: (await eventsSince(runId, 0)).length, register: (await listRegister(projectId)).length }).toEqual(before)
     expect((await listRegister(projectId)).filter(e => e.kind === 'finding')).toHaveLength(3)
+  })
+})
+
+describe('the question is in the app\'s own words', () => {
+  const technical = '`parseAmount` in src/pay/x.ts:42 returns NaN'
+  for (const [type, said] of [['logic', 'may not do what you asked'], ['security', 'may not be safe'], ['effect', 'may break something else']] as const) {
+    test(`a ${type} problem is described by its kind, not by the reviewer's text`, async () => {
+      const runId = await newRun()
+      await withCore(runId)
+      const { dir, base } = workdir(false)
+      const s = scripted({ found: [finding({ type, problem: technical, decisions: [7] })] })
+      await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+      const q = (await openQuestion(runId))!
+      expect(q.text).toContain(said)
+      expect(q.text).toContain('saw the problem happen')
+      for (const secret of ['parseAmount', 'src/pay', 'x.ts', 'a.tsx', 'NaN']) {
+        expect(q.text).not.toContain(secret)
+        expect(q.why).not.toContain(secret)
+      }
+      expect(q.detail).toContain('parseAmount')
+      expect(q.detail).toContain('a.tsx:3')
+    })
+  }
+
+  test('a problem that could not be made to happen says so', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const s = scripted({ found: [finding({ severity: 'high', problem: technical })], verify: () => [{ type: 'done', summary: 'v', source: 'provider', repro: null }] })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    const q = (await openQuestion(runId))!
+    expect(q.text).toContain('could not make the problem happen')
+    expect(q.text).not.toContain('parseAmount')
+  })
+
+  test('what the reviewer said is redacted before it is kept', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(false)
+    const s = scripted({ found: [finding({ problem: 'the key is API_TOKEN=sk-abcdefghijklmnopqrstuvwx in the file' })] })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect((await openQuestion(runId))!.detail).not.toContain('sk-abcdefghijklmnopqrstuvwx')
+  })
+})
+
+describe('what still needs the person holds the gate', () => {
+  const row = (state: FindingRow['state']) => ({ state }) as FindingRow
+  test('needsPerson is one definition', () => {
+    expect((['open', 'asked', 'fixed_unchecked'] as const).map(st => needsPerson(row(st)))).toEqual([true, true, true])
+    expect((['reported', 'refuted', 'unbacked', 'confirmed', 'corrected', 'discarded'] as const).map(st => needsPerson(row(st)))).toEqual([false, false, false, false, false, false])
+  })
+
+  async function lowRiskRun(found: Finding[]) {
+    const runId = await newRun()
+    const projectId = await projectOf(runId)
+    await db.update(projects).set({ autoApproveLowRisk: true, testCommand: 'npm test' }).where(eq(projects.id, projectId))
+    const { dir, base } = workdir(true)
+    const s = scripted({ found })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    return runId
+  }
+
+  test('with auto-approve on, a clean small change passes the human check by itself', async () => {
+    const runId = await lowRiskRun([])
+    expect((await node(runId, 'human')).state).toBe('passed')
+  })
+
+  test('with auto-approve on, a fix nobody has checked does not', async () => {
+    const runId = await lowRiskRun([finding()])
+    expect((await findingsOf(runId))[0]!.state).toBe('fixed_unchecked')
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  })
+
+  test('with auto-approve on, a finding that was not checked for being too many does not', async () => {
+    const found = Array.from({ length: MAX_FINDINGS + 1 }, (_, i) => finding({ file: undefined, line: undefined, problem: `p${i}`, severity: i === 0 ? 'low' : 'medium' }))
+    const runId = await newRun()
+    const projectId = await projectOf(runId)
+    await db.update(projects).set({ autoApproveLowRisk: true, testCommand: 'npm test' }).where(eq(projects.id, projectId))
+    const { dir, base } = workdir(true)
+    const s = scripted({ found, verify: () => [{ type: 'done', summary: 'v', source: 'provider', repro: null }] })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect((await findingsOf(runId)).filter(r => r.state === 'open')).toHaveLength(1)
+    expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  })
+})
+
+describe('a step that runs again writes nothing twice', () => {
+  for (const prefix of ['verify-', 'ask-', 'resolve-', 'fix-'] as const) {
+    test(`${prefix}<finding> forgotten and run again`, async () => {
+      const runId = await newRun()
+      await withCore(runId)
+      const { dir, base } = workdir(false)
+      const s = scripted({ found: [finding()] })
+      const step = recordingStep(async () => {
+        const q = await openQuestion(runId)
+        if (!q) throw new Parked() // the human gate's wait
+        await answerQuestion(q.id, { option: 'fix' }, { send })
+        return { data: {} }
+      })
+      await drive(runId, s.provider, dir, base, step, s.deps)
+      const [row] = await findingsOf(runId)
+      const before = await counts(runId)
+      const verifiers = s.calls.filter(c => c.role === 'verifier').length
+      const fixers = s.calls.filter(c => c.role === 'fixer').length
+      expect(before).toEqual({ register: 1, resolved: 1, questions: 1 })
+      step.forget(stepsOf(row!).find(id => id.startsWith(prefix))!)
+      await drive(runId, s.provider, dir, base, step, s.deps)
+      expect(await counts(runId)).toEqual(before)
+      expect(s.calls.filter(c => c.role === 'verifier').length).toBe(verifiers)
+      // A second fixer call on re-execution of fix- is accepted in this task (Task 8 closes it); only the records are held to account there.
+      if (prefix !== 'fix-') expect(s.calls.filter(c => c.role === 'fixer').length).toBe(fixers)
+      expect((await findingsOf(runId))[0]).toMatchObject({ state: 'fixed_unchecked', entryNumber: row!.entryNumber })
+    })
+  }
+
+  test('a person who answered before the step ran: the answered question is found again and the finding resolves without waiting', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(false)
+    const s = scripted({ found: [finding()] })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    const [row] = await findingsOf(runId)
+    await answerQuestion((await openQuestion(runId))!.id, { option: LEAVE, text: 'no' }, { send })
+    step.forget(`ask-${row!.id}`)
+    step.ids.length = 0
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(step.ids.some(id => id.startsWith(`question-${row!.id}`))).toBe(false)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'discarded', reason: 'no' })
+    expect((await counts(runId)).questions).toBe(1)
+  })
+
+  test('an event that is not an answer to this question resolves nothing', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(false)
+    const s = scripted({ found: [finding()] })
+    let woken = 0
+    const step = recordingStep(async () => {
+      if (woken++ === 0) return { data: {} } // an event for some other question: no answer is recorded
+      throw new Parked()
+    })
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    const [row] = await findingsOf(runId)
+    expect(row).toMatchObject({ state: 'asked', entryNumber: null })
+    expect(step.ids).toContain(`question-${row!.id}-0`)
+    expect(step.ids).toContain(`question-${row!.id}-1`)
+    expect(await openQuestion(runId)).not.toBeNull()
+  })
+})
+
+describe('cancelling and failing', () => {
+  test('cancelled while a verifier works: its copy is removed and nothing is written after', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const s = scripted({
+      found: [finding()],
+      duringVerify: async () => {
+        await cancelRun(runId)
+        await new Promise(r => setTimeout(r, 400)) // the run notices the cancel while the verifier is still going
+      },
+    })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect(s.copies.every(c => !existsSync(c))).toBe(true)
+    expect(s.calls.some(c => c.role === 'fixer')).toBe(false)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'reported', entryNumber: null })
+    const all = await eventsSince(runId, 0)
+    const cancelled = all.findIndex(e => e.type === 'run.cancelled')
+    expect(cancelled).toBeGreaterThan(-1)
+    expect(all.slice(cancelled).some(e => ['node.finding_resolved', 'node.question_asked'].includes(e.type))).toBe(false)
+    expect(await counts(runId)).toEqual({ register: 0, resolved: 0, questions: 0 })
+  })
+
+  test('cancelled while a question is open: the stage stops and nothing is resolved', async () => {
+    const runId = await newRun()
+    await withCore(runId)
+    const { dir, base } = workdir(false)
+    const s = scripted({ found: [finding()] })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    await cancelRun(runId)
+    step.onWait = async () => ({ data: {} })
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(await counts(runId)).toEqual({ register: 0, resolved: 0, questions: 1 })
+    expect(s.calls.some(c => c.role === 'fixer')).toBe(false)
+    expect((await findingsOf(runId))[0]!.entryNumber).toBeNull()
+    expect((await node(runId, 'approve')).state).not.toBe('passed')
+  })
+
+  test('a fixer that errors leaves the finding open with the reason', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const s = scripted({ found: [finding()], fixerFails: true })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixFailed })
+    const line = (await listRegister(await projectOf(runId))).find(e => e.kind === 'finding')!
+    expect(line.outcome).toBe('open')
   })
 })
 

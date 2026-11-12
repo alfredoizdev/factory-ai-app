@@ -1,6 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { defaultReviewerModel, type Focus, type Review } from '@/engine/review'
-import { distinctProblems, findingsOf } from '@/engine/findings'
+import { distinctProblems, findingsOf, needsPerson } from '@/engine/findings'
 import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
 import { giveStanding, type Standing } from '@/engine/register'
@@ -652,7 +652,7 @@ export async function testFactsOf(runId: string): Promise<TestFacts> {
     testsPassed: runsOfTests.length > 0 && runsOfTests.every(t => t.exitCode === 0 && !t.signal),
     // Unknown (null) counts as changed: what could not be checked is not assumed untouched.
     testsChanged: runsOfTests.some(t => t.changedTestFiles === null || (t.changedTestFiles?.length ?? 0) > 0),
-    reviewOpen: distinctProblems(await findingsOf(runId)).some(f => f.state === 'open'),
+    reviewOpen: distinctProblems(await findingsOf(runId)).some(needsPerson),
   }
 }
 
@@ -696,13 +696,11 @@ async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome
   // One problem is one, however many rounds a reviewer reported it in.
   const rows = distinctProblems(await findingsOf(runId))
   const count = (...states: string[]) => rows.filter(f => states.includes(f.state)).length
-  // Problems never checked because there were too many are not dismissed: they wait for the person.
-  const tooMany = rows.filter(f => f.state === 'discarded' && f.reason === strings.findings.tooMany).length
   const summary = !(await anyReviewRan(runId))
     ? strings.review.approve.none
     : rows.length === 0
       ? strings.review.approve.clean
-      : strings.review.approve.summary({ found: rows.length, fixed: count('fixed_unchecked'), discarded: count('refuted', 'discarded') - tooMany, needsYou: count('open') + tooMany })
+      : strings.review.approve.summary({ found: rows.length, fixed: count('fixed_unchecked'), discarded: count('refuted', 'discarded'), needsYou: rows.filter(needsPerson).length })
   return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }

@@ -7,6 +7,7 @@ CREATE TABLE "questions" (
 	"kind" text NOT NULL,
 	"text" text NOT NULL,
 	"why" text NOT NULL,
+	"detail" text,
 	"options_json" text NOT NULL,
 	"recommended" text,
 	"touches_json" text NOT NULL,

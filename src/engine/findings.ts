@@ -200,6 +200,9 @@ export async function recordFindings(runId: string, nodeRunId: string, round: nu
   })
 }
 
+/** Whether a finding still needs the person: open, being asked about, or fixed by a model and not yet checked. The one definition. */
+export const needsPerson = (row: Pick<FindingRow, 'state'>): boolean => row.state === 'open' || row.state === 'asked' || row.state === 'fixed_unchecked'
+
 const placed = (r: Finding) => r.file !== undefined && r.line !== undefined
 
 /** One row per problem, however many rounds reported it: the one from the latest round (the last recorded on a tie), in order of first appearance. */

@@ -158,7 +158,8 @@ async function* runFixer(input: AgentExecutionInput, controls: ExecutionControls
     yield { type: 'error', source: 'system', message: strings.providers.claude.badModel(input.model) }
     return
   }
-  const prompt = strings.providers.claude.fixPrompt(input.request, input.finding, input.repro)
+  const asked = strings.providers.claude.fixPrompt(input.request, input.finding, input.repro)
+  const prompt = input.notes && input.notes.length > 0 ? `${asked}\n\n${strings.providers.claude.rulesNote(input.notes)}` : asked
   yield* runClaude(deps, input.workdir, claudeArgs(prompt, undefined, input.model), controls)
 }
 

@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { findings, nodeRuns } from '@/db/schema'
+import { findings, nodeRuns, runs } from '@/db/schema'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
 import { bySeverity, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, type FindingRow } from '@/engine/findings'
@@ -31,7 +31,7 @@ import {
   type StepApi,
   type Workspace,
 } from '@/engine/inngest/execute-run'
-import { MAX_FINDINGS, focusesFor, type Finding, type Focus, type Review } from '@/engine/review'
+import { MAX_FINDINGS, focusesFor, whereOf, type Finding, type Focus, type Review } from '@/engine/review'
 import { clip, redact } from '@/engine/redact'
 import { assessRisk } from '@/engine/risk'
 import { strings } from '@/ui/strings'
@@ -101,8 +101,8 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
   const alive = bySeverity(rows.filter(r => r.state === 'reported'))
   const checked = alive.slice(0, MAX_FINDINGS)
   const resolve = (row: FindingRow, end: End) => step.run(id(`resolve-${row.id}`), () => resolveFinding(ctx, opened.nodeId, row, end))
-  // Beyond the limit they are not checked, and are not dismissed either: they wait for the person.
-  for (const row of alive.slice(MAX_FINDINGS)) await resolve(row, { state: 'discarded', outcome: 'discarded', reason: strings.findings.tooMany })
+  // Beyond the limit they are not checked, and are not dismissed either: they stay open for the person.
+  for (const row of alive.slice(MAX_FINDINGS)) await resolve(row, { state: 'open', outcome: 'open', reason: strings.findings.tooMany })
 
   const core = checked.length > 0 ? await step.run(id(`review-core-${block.id}`), () => corePaths(checked[0]!.projectId)) : []
   let fixed = false
@@ -128,7 +128,7 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
         if (answer.answerOption === FIX) fixAs = 'asked_yes'
         else if (answer.answerOption === LEAVE) end = { state: 'discarded', outcome: 'asked_no', reason: words || strings.findings.leftByChoice }
         // The person's own words: the app cannot act on them by itself, so the problem stays in front of them.
-        else end = { state: 'open', outcome: 'open', reason: words || strings.findings.fixFailed }
+        else end = { state: 'open', outcome: 'open', reason: words || strings.findings.unclearAnswer }
       }
     }
     if (fixAs) {
@@ -154,7 +154,11 @@ const asFinding = (r: FindingRow) => ({ type: r.type, ...(r.file !== undefined ?
 async function whileRunLasts<T>(runId: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const stop = new AbortController()
   const timer = setInterval(async () => {
-    if (await isCancelled(runId)) stop.abort()
+    try {
+      if (await isCancelled(runId)) stop.abort()
+    } catch {
+      // not read this time; the next tick tries again
+    }
   }, 500)
   try {
     return await fn(stop.signal)
@@ -240,8 +244,11 @@ async function askAndWait(ctx: Context, nodeId: string, row: FindingRow, reasons
   const asked = await step.run(id(`ask-${row.id}`), async (): Promise<Question | null> => {
     if (await isCancelled(runId)) return null
     const q = strings.question.forFinding(row, reasons, notChecked)
-    const question = await askPerson(runId, nodeId, { findingId: row.id, kind: 'finding', text: q.text, why: q.why, options: q.options, recommended: FIX, touches: row.decisions })
-    await setFinding(row.id, { state: 'asked' })
+    // The app's own sentence is the question; what the AI reviewer said travels beside it, redacted, for one click away.
+    const detail = `${whereOf(row) ? `${whereOf(row)}: ` : ''}${row.problem}`
+    const question = await askPerson(runId, nodeId, { findingId: row.id, kind: 'finding', text: q.text, why: q.why, detail: clip(redact(detail), 600), options: q.options, recommended: FIX, touches: row.decisions })
+    // A step that runs again after the answer came in must not take the finding back to "asked".
+    if (question.state === 'open') await setFinding(row.id, { state: 'asked' })
     return question
   })
   if (asked === null) return 'cancelled'
@@ -251,7 +258,9 @@ async function askAndWait(ctx: Context, nodeId: string, row: FindingRow, reasons
     const arrived = await step.waitForEvent(id(`question-${row.id}-${attempt}`), { event: QUESTION_ANSWERED, timeout: APPROVAL_WAIT, match: 'data.runId' })
     // No answer (the wait expired) leaves the run waiting on the person; nothing is decided for them.
     if (!arrived) return 'parked'
-    answer = await step.run(id(`read-answer-${row.id}-${attempt}`), () => takeAnswer(asked.id))
+    const read = await step.run(id(`read-answer-${row.id}-${attempt}`), async () => ((await isCancelled(runId)) ? ('cancelled' as const) : takeAnswer(asked.id)))
+    if (read === 'cancelled') return 'cancelled'
+    answer = read
   }
   return answer ?? 'parked'
 }
@@ -260,6 +269,9 @@ async function askAndWait(ctx: Context, nodeId: string, row: FindingRow, reasons
 async function resolveFinding(ctx: Context, nodeId: string, row: FindingRow, end: End): Promise<void> {
   const { runId, block } = ctx
   await withTx(runId, async tx => {
+    // A run that was cancelled while this was waiting to start records nothing more.
+    const status = (await tx.select({ s: runs.status }).from(runs).where(eq(runs.id, runId)))[0]?.s
+    if (status === 'cancelled') return
     const current = (await tx.select().from(findings).where(eq(findings.id, row.id)))[0]
     if (!current || current.entryNumber !== null) return
     const entry = await addEntry(
