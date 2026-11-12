@@ -10,36 +10,81 @@ import { strings } from '@/ui/strings'
 // without changing it) proposes it; the person reads it, edits it, and says when to build. What the planner wrote is
 // its claim; what the person confirms is what the builder is given. Both are on the record as events.
 
-export type Job = { title: string; done: string[] }
+export type Job = { title: string; done: string[]; paths?: string[] } // paths absent: the planner gave none
+export type PlanOption = { id: string; label: string; means: string }
+export type PlanQuestion = { text: string; why: string; paths: string[]; options: PlanOption[] }
+export type PlannerAnswer = { jobs: Job[]; question: PlanQuestion | 'unreadable' | null }
 
 export const MAX_JOBS = 8
+export const MAX_PATHS_PER_JOB = 20
+export const MAX_PLAN_OPTIONS = 4
 const MAX_TITLE = 200
 const MAX_DONE = 5
 const MAX_DONE_TEXT = 200
+const MAX_PATH = 300
+const OPTION_ID = /^[a-z0-9_-]{1,20}$/
+const RESERVED_IDS = new Set(['other', 'leave'])
+
+/** File names as the planner wrote them (a single string is a list of one): trimmed, "./" dropped, bounded. Not redacted. */
+function cleanPaths(raw: unknown): string[] | undefined {
+  const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : null
+  if (!list) return undefined
+  return list
+    .filter((p): p is string => typeof p === 'string')
+    .map(p => p.trim().replace(/^(\.\/)+/, ''))
+    .filter(p => p !== '')
+    .slice(0, MAX_PATHS_PER_JOB)
+    .map(p => clip(p, MAX_PATH))
+}
 
 /** Jobs as given (by a planner or a person), cleaned and bounded; null when there is not one usable job. */
 export function cleanJobs(raw: unknown): Job[] | null {
   if (!Array.isArray(raw)) return null
   const jobs: Job[] = []
-  for (const j of raw.slice(0, MAX_JOBS) as { title?: unknown; done?: unknown }[]) {
+  for (const j of raw.slice(0, MAX_JOBS) as { title?: unknown; done?: unknown; paths?: unknown }[]) {
     const title = typeof j?.title === 'string' ? clip(redact(j.title.trim()), MAX_TITLE) : ''
     if (title === '') continue
     const done = (Array.isArray(j.done) ? j.done : [])
       .filter((d): d is string => typeof d === 'string' && d.trim() !== '')
       .slice(0, MAX_DONE)
       .map(d => clip(redact(d.trim()), MAX_DONE_TEXT))
-    jobs.push({ title, done })
+    const paths = cleanPaths(j.paths)
+    jobs.push(paths ? { title, done, paths } : { title, done })
   }
   return jobs.length > 0 ? jobs : null
 }
 
-/** The planner's jobs, from the last JSON object with usable "jobs" in its answer; null when there is none. */
-export function parsePlan(text: string): Job[] | null {
+const asText = (v: unknown, max: number): string => (typeof v === 'string' ? clip(redact(v.trim()), max) : '')
+
+/** The planner's question: null when it asked none; 'unreadable' when it asked one the person could not be given. */
+function cleanQuestion(raw: unknown): PlanQuestion | 'unreadable' | null {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'object' || Array.isArray(raw)) return 'unreadable'
+  const q = raw as { text?: unknown; why?: unknown; paths?: unknown; options?: unknown }
+  const text = asText(q.text, 500)
+  const options: PlanOption[] = []
+  for (const o of (Array.isArray(q.options) ? q.options : []) as { id?: unknown; label?: unknown; means?: unknown }[]) {
+    const id = typeof o?.id === 'string' ? o.id.trim() : ''
+    const label = asText(o?.label, 80)
+    if (!OPTION_ID.test(id) || RESERVED_IDS.has(id) || options.some(x => x.id === id) || label === '') continue
+    options.push({ id, label, means: asText(o.means, 300) })
+  }
+  if (text === '' || options.length < 2) return 'unreadable'
+  return { text, why: asText(q.why, 1000), paths: cleanPaths(q.paths) ?? [], options: options.slice(0, MAX_PLAN_OPTIONS) }
+}
+
+/** The planner's answer: jobs and question, both from the last JSON object with usable "jobs"; null when there is none. */
+export function readPlannerAnswer(text: string): PlannerAnswer | null {
   for (const value of jsonObjectsFromEnd(text)) {
     const jobs = cleanJobs(value.jobs)
-    if (jobs) return jobs
+    if (jobs) return { jobs, question: cleanQuestion(value.question) }
   }
   return null
+}
+
+/** The planner's jobs, from the last JSON object with usable "jobs" in its answer; null when there is none. */
+export function parsePlan(text: string): Job[] | null {
+  return readPlannerAnswer(text)?.jobs ?? null
 }
 
 /** The jobs as the builder reads them: a numbered work list with how to tell each is done. */

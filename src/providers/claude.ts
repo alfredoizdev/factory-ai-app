@@ -6,7 +6,7 @@ import { dirname, join, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
-import { parsePlan, workList } from '@/engine/plan'
+import { readPlannerAnswer, workList } from '@/engine/plan'
 import { MAX_REPRO_BYTES, checkRepro, parseVerifierAnswer, type NoRepro } from '@/engine/repro'
 import { checkReview } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
@@ -105,7 +105,8 @@ const cleanReview = (r: Review): Review => ({
   ...r,
   findings: r.findings.map(f => ({ ...f, problem: redact(f.problem), affects: f.affects.map(a => redact(a)) })),
 })
-const cleanJobs = (jobs: Job[]): Job[] => jobs.map(j => ({ title: redact(j.title), done: j.done.map(d => redact(d)) }))
+// Paths are file names the app compares: kept as written, never redacted.
+const cleanJobs = (jobs: Job[]): Job[] => jobs.map(j => ({ title: redact(j.title), done: j.done.map(d => redact(d)), ...(j.paths ? { paths: j.paths } : {}) }))
 
 /**
  * What the task stands on, after the prompt: every rule, decision and core area it was given, in the lines the reviewers
@@ -278,15 +279,15 @@ async function* runPlanner(input: AgentExecutionInput, controls: ExecutionContro
       yield { type: 'error', source: 'system', message: strings.providers.claude.plannerChangedFiles }
       return
     }
-    const planned = parsePlan(ev.fullText ?? ev.summary)
+    const planned = readPlannerAnswer(ev.fullText ?? ev.summary)
     if (!planned) {
       yield { type: 'done', source: 'system', summary: strings.plan.unreadable, usage: ev.usage }
       return
     }
-    const jobs = cleanJobs(planned)
+    const jobs = cleanJobs(planned.jobs)
     for (const [i, j] of jobs.entries()) yield { type: 'step', text: strings.plan.jobStep(i + 1, j.title) }
     // The jobs are the planner's proposal, so the summary is marked as the provider's words.
-    yield { type: 'done', source: 'provider', summary: strings.plan.proposed(jobs.length), usage: ev.usage, plan: jobs }
+    yield { type: 'done', source: 'provider', summary: strings.plan.proposed(jobs.length), usage: ev.usage, plan: jobs, ...(planned.question !== null ? { planQuestion: planned.question } : {}) }
     return
   }
 }

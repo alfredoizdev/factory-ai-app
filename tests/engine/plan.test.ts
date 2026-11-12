@@ -5,7 +5,7 @@ import { nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
 import { orchestrateRun, type StepApi } from '@/engine/inngest/execute-run'
-import { cleanJobs, currentPlan, decidePlan, parsePlan, PlanError, workList, type Job } from '@/engine/plan'
+import { cleanJobs, currentPlan, decidePlan, parsePlan, readPlannerAnswer, PlanError, workList, type Job } from '@/engine/plan'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { AgentExecutionInput, AgentProvider } from '@/providers/types'
 import { strings } from '@/ui/strings'
@@ -25,6 +25,55 @@ test('a plan is read from the planner\'s last JSON object, cleaned and bounded',
 test('a plan is read even when the planner quoted code with braces before it', () => {
   const text = 'The page renders `<p>{sum(2, 2)}</p>` today.\n```json\n{"jobs":[{"title":"Add the sum","done":["shows 4"]}]}\n```'
   expect(parsePlan(text)).toEqual([{ title: 'Add the sum', done: ['shows 4'] }])
+})
+
+describe('the planner\'s answer: paths and one question', () => {
+  const form = '{"jobs":[{"title":"Add footer","done":["shows year"],"paths":["src/ui/Footer.tsx","src/ui/footer/"]}]}'
+  const q = (extra: string) => `{"jobs":[{"title":"a","done":[]}],"question":${extra}}`
+  const opts = '[{"id":"a","label":"Email","means":"as today"},{"id":"b","label":"Username","means":"new field"}]'
+
+  test('paths are read as written; a string is a list of one; none stays none', () => {
+    expect(readPlannerAnswer(`I looked.\n${form}`)).toEqual({ jobs: [{ title: 'Add footer', done: ['shows year'], paths: ['src/ui/Footer.tsx', 'src/ui/footer/'] }], question: null })
+    expect(readPlannerAnswer('{"jobs":[{"title":"a","done":[],"paths":"./src/a.ts"}]}')!.jobs[0]!.paths).toEqual(['src/a.ts'])
+    expect(readPlannerAnswer('{"jobs":[{"title":"a","done":[],"paths":[]}]}')!.jobs[0]!.paths).toEqual([])
+    expect(readPlannerAnswer('{"jobs":[{"title":"a","done":[],"paths":7}]}')!.jobs[0]!.paths).toBeUndefined()
+    expect(readPlannerAnswer('{"jobs":[{"title":"a","done":[]}]}')!.jobs[0]!.paths).toBeUndefined()
+  })
+
+  test('paths are neither redacted nor lower-cased, and are bounded', () => {
+    const many = Array.from({ length: 30 }, (_, i) => `src/F${i}.ts`)
+    const jobs = cleanJobs([{ title: 'a', done: [], paths: [' ./src/Ui/Footer.TSX ', ...many, 'x'.repeat(400)] }])!
+    expect(jobs[0]!.paths).toHaveLength(20)
+    expect(jobs[0]!.paths![0]).toBe('src/Ui/Footer.TSX')
+    expect(cleanJobs([{ title: 'a', done: [], paths: ['x'.repeat(400)] }])![0]!.paths![0]).toHaveLength(300)
+  })
+
+  test('a question with text, why, paths and two options is read', () => {
+    const a = readPlannerAnswer(q(`{"text":"Which way?","why":"It changes sign-in","paths":["src/auth/"],"options":${opts}}`))!
+    expect(a.question).toEqual({ text: 'Which way?', why: 'It changes sign-in', paths: ['src/auth/'], options: [{ id: 'a', label: 'Email', means: 'as today' }, { id: 'b', label: 'Username', means: 'new field' }] })
+  })
+
+  test('a question with one option or no text is unreadable; leave and other are dropped before counting', () => {
+    expect(readPlannerAnswer(q('{"text":"Which?","options":[{"id":"a","label":"A","means":"m"}]}'))!.question).toBe('unreadable')
+    expect(readPlannerAnswer(q(`{"why":"w","options":${opts}}`))!.question).toBe('unreadable')
+    expect(readPlannerAnswer(q('{"text":"Which?","options":[{"id":"a","label":"A","means":"m"},{"id":"leave","label":"L","means":"m"},{"id":"other","label":"O","means":"m"}]}'))!.question).toBe('unreadable')
+    expect(readPlannerAnswer(q('"just words"'))!.question).toBe('unreadable')
+    expect(readPlannerAnswer(q('{"text":"Which?","options":[{"id":"a","label":"A","means":"m"},{"id":"a","label":"B","means":"m"},{"id":"Bad Id","label":"C","means":"m"}]}'))!.question).toBe('unreadable')
+  })
+
+  test('at most four options, and the question is read from the same object as the jobs', () => {
+    const five = Array.from({ length: 5 }, (_, i) => `{"id":"o${i}","label":"L${i}","means":"m"}`).join(',')
+    const a = readPlannerAnswer(q(`{"text":"Which?","options":[${five}]}`))!
+    expect((a.question as { options: unknown[] }).options).toHaveLength(4)
+    const earlier = `{"jobs":[{"title":"old","done":[]}],"question":{"text":"Which?","options":[${five}]}}\nChanged my mind: {"jobs":[{"title":"new","done":[]}]}`
+    expect(readPlannerAnswer(earlier)).toEqual({ jobs: [{ title: 'new', done: [] }], question: null })
+  })
+
+  test('code with braces before the object still parses; today\'s form gives the same jobs', () => {
+    expect(readPlannerAnswer(`It renders {sum(2,2)} today.\n${form}`)!.jobs[0]!.title).toBe('Add footer')
+    expect(parsePlan('{"jobs":[{"title":"a","done":["x"]}]}')).toEqual([{ title: 'a', done: ['x'] }])
+    expect(readPlannerAnswer('no plan')).toBeNull()
+  })
 })
 
 class Parked extends Error {}
@@ -119,6 +168,16 @@ test('the reviewers are given the plan the person checked, with how to tell each
   const readers = provider.calls.filter(c => c.blockKind === 'review' && !c.role)
   expect(readers.length).toBeGreaterThan(0)
   for (const r of readers) expect(r.jobs).toEqual(edited)
+})
+
+test('the person\'s plan records the paths of its jobs, and none for jobs without', async () => {
+  const runId = await newRun()
+  await drive(runId, planningProvider([[{ title: 'A', done: [] }]]), wordsStep(runId, []))
+  await decidePlan(runId, { action: 'build', jobs: [{ title: 'x', done: [], paths: ['a.ts'] }, { title: 'y', done: [] }] })
+  const planned = (await eventsSince(runId, 0)).filter(e => e.type === 'node.planned').at(-1)!.payload as { jobs: Job[] }
+  expect(planned.jobs[0]!.paths).toEqual(['a.ts'])
+  expect('paths' in planned.jobs[1]!).toBe(false)
+  expect((await currentPlan(runId))!.jobs[0]!.paths).toEqual(['a.ts'])
 })
 
 test('a word on the plan is refused when no plan waits, and a plan needs a job', async () => {

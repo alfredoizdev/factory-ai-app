@@ -887,3 +887,45 @@ test('the checker is told the app reads the end of what its script prints, and s
   expect(prompt).toMatch(/2 minutes/)
   expect(prompt).toMatch(/end of what it prints/)
 })
+
+describe('the planner asks for paths and may ask one question', () => {
+  const FORM = '{"jobs":[{"title":"what to do","done":["how to tell it is done"],"paths":["path/to/file.ts"]}],"question":{"text":"what to decide","why":"why it matters","paths":["files it is about"],"options":[{"id":"a","label":"short choice","means":"what happens then"}]}}'
+  const plannerRun = async (result: string) => {
+    const child = fakeChild()
+    const spawn = vi.fn(() => child)
+    const pending = collect(createClaudeProvider({ spawn: spawn as never, snapshot: () => 'same', readCopyFile: () => 'x' }).execute({ blockKind: 'plan', request: 'r', workdir: '/wt' } as never, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result }])
+    const events = await pending
+    const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
+    return { events, prompt: args[args.indexOf('-p') + 1]!, done: events.find(e => e.type === 'done') as Extract<AgentEvent, { type: 'done' }> }
+  }
+
+  test('the prompt asks for paths, allows one question, and ends with the exact form', async () => {
+    const { prompt } = await plannerRun('{"jobs":[{"title":"a","done":[]}]}')
+    expect(prompt).toContain('"paths"')
+    expect(prompt).toContain('For each job, list in "paths" every file it will change or add, as the project names it (for example src/ui/Footer.tsx). End a folder with / only when the job changes many files inside it.')
+    expect(prompt).toContain('If something must be decided by the person before the work can be planned (which way sign-in works, what a price is), add "question" with two to four options. Otherwise leave "question" out.')
+    expect(prompt).toContain('Leave out "question" when nothing needs deciding.')
+    expect(prompt.trimEnd().endsWith(FORM)).toBe(true)
+  })
+
+  test('the done event carries the jobs with paths and a readable question', async () => {
+    const answer = '{"jobs":[{"title":"Add footer","done":["shows year"],"paths":["src/ui/Footer.tsx"]}],"question":{"text":"Which way?","why":"It matters","paths":["src/auth/"],"options":[{"id":"a","label":"Email","means":"as today"},{"id":"b","label":"Username","means":"new"}]}}'
+    const { done } = await plannerRun(answer)
+    expect(done.plan![0]!.paths).toEqual(['src/ui/Footer.tsx'])
+    expect(done.planQuestion).toEqual({ text: 'Which way?', why: 'It matters', paths: ['src/auth/'], options: [{ id: 'a', label: 'Email', means: 'as today' }, { id: 'b', label: 'Username', means: 'new' }] })
+  })
+
+  test('an unreadable question says so, and no question leaves the field out', async () => {
+    const bad = await plannerRun('{"jobs":[{"title":"a","done":[]}],"question":{"text":"Which?","options":[{"id":"a","label":"A","means":"m"}]}}')
+    expect(bad.done.planQuestion).toBe('unreadable')
+    const none = await plannerRun('{"jobs":[{"title":"a","done":[]}]}')
+    expect('planQuestion' in none.done).toBe(false)
+    expect(none.done.plan![0]!.paths).toBeUndefined()
+  })
+
+  test('paths are kept as written while the job words are redacted', async () => {
+    const { done } = await plannerRun('{"jobs":[{"title":"a","done":[],"paths":["src/Ui/Footer.tsx"]}]}')
+    expect(done.plan![0]!.paths).toEqual(['src/Ui/Footer.tsx'])
+  })
+})

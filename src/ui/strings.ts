@@ -1353,8 +1353,11 @@ export const strings = {
           'Read the parts of the project this touches, then split the work into as few jobs as it really needs (one is fine for a small change, at most 8).',
           'Each job is one thing a builder does, named plainly so a person who does not program understands it, with one to three short checks that tell it is done.',
           'Do not plan anything they did not ask for.',
+          'For each job, list in "paths" every file it will change or add, as the project names it (for example src/ui/Footer.tsx). End a folder with / only when the job changes many files inside it.',
+          'If something must be decided by the person before the work can be planned (which way sign-in works, what a price is), add "question" with two to four options. Otherwise leave "question" out.',
+          'Leave out "question" when nothing needs deciding.',
           'End your reply with one JSON object and nothing after it, exactly in this form:',
-          '{"jobs":[{"title":"what to do","done":["how to tell it is done"]}]}',
+          '{"jobs":[{"title":"what to do","done":["how to tell it is done"],"paths":["path/to/file.ts"]}],"question":{"text":"what to decide","why":"why it matters","paths":["files it is about"],"options":[{"id":"a","label":"short choice","means":"what happens then"}]}}',
         ].join('\n'),
     },
     demo: {

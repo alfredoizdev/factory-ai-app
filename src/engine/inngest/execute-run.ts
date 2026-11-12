@@ -5,7 +5,7 @@ import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
 import { corePaths, giveStanding, type Standing } from '@/engine/register'
 import { markWaiting } from '@/engine/relay'
-import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
+import { currentPlan, planDecision, type Job, type PlanDecision, type PlanQuestion } from '@/engine/plan'
 import { and, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 import { ulid } from 'ulid'
@@ -250,7 +250,7 @@ export function outcomeOf(state: string): Outcome['outcome'] | null {
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
+export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; planQuestion?: PlanQuestion | 'unreadable'; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
 export type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
