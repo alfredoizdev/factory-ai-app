@@ -48,3 +48,8 @@ test('a low-risk change gets one reviewer; a high-risk one gets all three', () =
   expect(focusesFor('high')).toEqual(['logic', 'security', 'effects'])
   expect(FOCUSES).toEqual(['logic', 'security', 'effects'])
 })
+
+test('a finding\'s decision numbers are kept once each, five at most', () => {
+  const text = JSON.stringify({ verdict: 'changes', findings: [{ type: 'logic', problem: 'p', decisions: [3, 3, 1, 2, 4, 5, 6, 7, 1] }] })
+  expect(parseReview(text)!.findings[0]!.decisions).toEqual([3, 1, 2, 4, 5])
+})

@@ -24,6 +24,8 @@ export const MAX_FINDINGS = 10
 export const MAX_REVIEW_ROUNDS = 2
 const MAX_PROBLEM = 300
 const MAX_AFFECTS = 5
+/** How many decision numbers one finding may name. */
+const MAX_DECISIONS = 5
 const MAX_AFFECT = 80
 
 /** A small change gets one reviewer on the logic; a risky one gets one for each focus. */
@@ -60,7 +62,8 @@ function validReview(value: { verdict?: unknown; findings?: unknown }): Review |
       type: f.type === 'security' || f.type === 'effect' ? f.type : 'logic',
       severity: f.severity === 'high' || f.severity === 'low' ? f.severity : 'medium',
       affects: Array.isArray(f.affects) ? f.affects.filter((a): a is string => typeof a === 'string' && a.trim() !== '').slice(0, MAX_AFFECTS).map(a => a.trim().slice(0, MAX_AFFECT)) : [],
-      decisions: Array.isArray(f.decisions) ? f.decisions.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0) : [],
+      // Each number once, and a few at most: each becomes a sentence in the question about it.
+      decisions: Array.isArray(f.decisions) ? [...new Set(f.decisions.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0))].slice(0, MAX_DECISIONS) : [],
       problem: f.problem.trim().slice(0, MAX_PROBLEM),
       ...(typeof f.file === 'string' && f.file.trim() !== '' ? { file: f.file.trim().slice(0, 200) } : {}),
       ...(typeof f.line === 'number' && Number.isInteger(f.line) && f.line > 0 ? { line: f.line } : {}),
