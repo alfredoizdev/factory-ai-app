@@ -216,7 +216,9 @@ export async function runRepro(repro: Repro, workdir: string, signal: AbortSigna
     }
     const giveUp = new AbortController()
     const stopAt = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs), giveUp.signal])
-    const running = runTestCommand(repro.command, copy, stopAt, { GIT_CEILING_DIRECTORIES: root })
+    // The marker is looked for in the output as printed: cleaning it first could hide a marker that looks like a secret.
+    let raw = ''
+    const running = runTestCommand(repro.command, copy, stopAt, { GIT_CEILING_DIRECTORIES: root }, tail => (raw = tail))
     // runTestCommand answers when every holder of the output pipes lets go, and a process that left its group can
     // hold them for as long as it likes. The deadline does not wait for it.
     const deadline = new Promise<null>(resolve => {
@@ -233,7 +235,7 @@ export async function runRepro(repro: Repro, workdir: string, signal: AbortSigna
     })
     const run = await Promise.race([running, deadline])
     if (!run) return notRun
-    const lines = stripAnsi(run.outputTail).split(/\r?\n/)
+    const lines = stripAnsi(raw).split(/\r?\n/)
     return {
       exitCode: run.exitCode,
       // Only a line that is the marker and nothing else: an error message that quotes the command does not count.

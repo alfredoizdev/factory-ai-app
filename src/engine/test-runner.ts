@@ -76,7 +76,14 @@ export function parseCounts(raw: string): TestCounts | null {
 }
 
 /** Runs the project's configured test command. That string is the allow-list: nothing else is ever run here. */
-export function runTestCommand(command: string, cwd: string, signal: AbortSignal, env: Record<string, string> = {}): Promise<TestRun> {
+export function runTestCommand(
+  command: string,
+  cwd: string,
+  signal: AbortSignal,
+  env: Record<string, string> = {},
+  /** Handed the end of the output as it was printed, before it is cleaned: for a caller that reads it and keeps nothing of it. */
+  onRawTail?: (tail: string) => void,
+): Promise<TestRun> {
   const started = Date.now()
   return new Promise(resolve => {
     let output = ''
@@ -104,6 +111,7 @@ export function runTestCommand(command: string, cwd: string, signal: AbortSignal
       signal.removeEventListener('abort', stop)
       // Counts read from the raw output, then the output is redacted before it is kept anywhere.
       const counts = stopped ? null : parseCounts(output)
+      onRawTail?.(stripAnsi(output))
       resolve({
         command,
         exitCode: stopped ? null : code,

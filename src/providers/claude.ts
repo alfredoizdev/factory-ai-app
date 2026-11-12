@@ -12,6 +12,8 @@ import { parseReview } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
 import { CLAUDE_PROVIDER_ID } from '@/providers/ids'
 import { mapStreamLine } from '@/providers/claude-stream'
+import type { Review } from '@/engine/review'
+import type { Job } from '@/engine/plan'
 import type { AgentEvent, AgentExecutionInput, AgentProvider, BlockRoute, ExecutionControls } from '@/providers/types'
 import { strings } from '@/ui/strings'
 
@@ -97,7 +99,15 @@ export function reviewerArgs(prompt: string, model?: string): string[] {
   return model ? [...args, '--model', model] : args
 }
 
-export /**
+export // An answer is read first and cleaned after: what is kept or shown is cleaned field by field; a file path and a command
+// the app runs are kept as written (a command is cleaned where it is shown).
+const cleanReview = (r: Review): Review => ({
+  ...r,
+  findings: r.findings.map(f => ({ ...f, problem: redact(f.problem), affects: f.affects.map(a => redact(a)) })),
+})
+const cleanJobs = (jobs: Job[]): Job[] => jobs.map(j => ({ title: redact(j.title), done: j.done.map(d => redact(d)) }))
+
+/**
  * What the task stands on, after the prompt: every rule, decision and core area it was given, in the lines the reviewers
  * get. A run from before the register had only its rules' words, and they are given as they were.
  */
@@ -152,7 +162,7 @@ async function* runVerifier(input: AgentExecutionInput, controls: ExecutionContr
     }
     const text = ev.fullText ?? ev.summary
     // What a developer needs to see why there was no repro: the end of the answer, where the JSON object is.
-    const miss = (why: NoRepro) => ({ why, answer: text.slice(-ANSWER_KEPT) })
+    const miss = (why: NoRepro) => ({ why, answer: redact(text).slice(-ANSWER_KEPT) })
     const answer = parseVerifierAnswer(text)
     if (!answer) {
       yield { type: 'done', source: 'system', summary: strings.providers.claude.verifierUnreadable, usage: ev.usage, repro: null, noRepro: miss('no_answer') }
@@ -162,7 +172,7 @@ async function* runVerifier(input: AgentExecutionInput, controls: ExecutionContr
     const repro = checked && 'repro' in checked ? checked.repro : null
     const summary = repro ? strings.providers.claude.verified : answer.refuted ? strings.providers.claude.refuted : strings.providers.claude.notReproduced
     const noRepro = repro || answer.refuted ? {} : { noRepro: miss(checked && 'why' in checked ? checked.why : 'not_reproduced_by_verifier') }
-    yield { type: 'done', source: 'provider', summary, usage: ev.usage, repro, ...(answer.refuted ? { refuted: answer.refuted } : {}), ...noRepro }
+    yield { type: 'done', source: 'provider', summary, usage: ev.usage, repro, ...(answer.refuted ? { refuted: { why: redact(answer.refuted.why) } } : {}), ...noRepro }
     return
   }
 }
@@ -222,11 +232,12 @@ async function* runReviewer(input: AgentExecutionInput, controls: ExecutionContr
       yield { type: 'error', source: 'system', message: strings.review.reviewerChangedFiles }
       return
     }
-    const review = parseReview(ev.fullText ?? ev.summary)
-    if (!review) {
+    const read = parseReview(ev.fullText ?? ev.summary)
+    if (!read) {
       yield { type: 'done', source: 'system', summary: strings.review.unreadable, usage: ev.usage }
       return
     }
+    const review = cleanReview(read)
     // The findings travel in `review`, and the list under the card shows them; the card's own lines carry no file or line.
     const summary = review.verdict === 'ok' ? strings.review.noProblems : strings.review.problems(review.findings.length)
     // The verdict is the reviewer's own claim about the code, so it is marked as the provider's words.
@@ -262,11 +273,12 @@ async function* runPlanner(input: AgentExecutionInput, controls: ExecutionContro
       yield { type: 'error', source: 'system', message: strings.providers.claude.plannerChangedFiles }
       return
     }
-    const jobs = parsePlan(ev.fullText ?? ev.summary)
-    if (!jobs) {
+    const planned = parsePlan(ev.fullText ?? ev.summary)
+    if (!planned) {
       yield { type: 'done', source: 'system', summary: strings.plan.unreadable, usage: ev.usage }
       return
     }
+    const jobs = cleanJobs(planned)
     for (const [i, j] of jobs.entries()) yield { type: 'step', text: strings.plan.jobStep(i + 1, j.title) }
     // The jobs are the planner's proposal, so the summary is marked as the provider's words.
     yield { type: 'done', source: 'provider', summary: strings.plan.proposed(jobs.length), usage: ev.usage, plan: jobs }

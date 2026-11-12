@@ -16,7 +16,8 @@ export type AgentEvent =
   | { type: 'step'; text: string }
   // `source` says who wrote the summary: 'system' only when the app composed it from facts; anything else is a claim.
   // `usage` carries only what the provider itself reported; a figure it did not report is null, never 0.
-  // `fullText`: the provider's whole final answer, for a block that reads structure from it. `review`: a reviewer's
+  // `fullText`: the provider's whole final answer (its end, when long), for a block that reads structure from it. Not
+  // redacted: whatever is read from it is redacted field by field before it travels further; it is never stored. `review`: a reviewer's
   // verdict and findings, read from that answer — still the model's claim, never a measurement.
   // `plan`: a planner's jobs, read from its answer — its proposal, which the person checks before anything is built.
   // `repro`: a verifier's reproduction (null: it did not reproduce the problem); `refuted`: it showed the cited code

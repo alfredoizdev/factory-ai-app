@@ -191,6 +191,18 @@ describe('runRepro', () => {
     expect(reproduced(r)).toBe(false)
   })
 
+  test('a marker that looks like a secret is still seen: it is compared before the output is cleaned, and only the cleaned output is kept', async () => {
+    const r = await runRepro(script('echo "password: leaked-value"; exit 1', { marker: 'password: leaked-value' }), repo(), live, { root: tmp() })
+    expect(r.markerSeen).toBe(true)
+    expect(reproduced(r)).toBe(true)
+    expect(r.outputTail).not.toContain('leaked-value')
+  })
+
+  test('a command that sets a secret-looking variable is run as written', async () => {
+    const r = await runRepro(script('API_KEY=abc123xyz sh -c \'[ "$API_KEY" = abc123xyz ] && echo MARKER-XYZ-1; exit 1\''), repo(), live, { root: tmp() })
+    expect(r.markerSeen).toBe(true)
+  })
+
   test('the repro files are written in the copy and the command sees them', async () => {
     const r = await runRepro(script('cat r/x.txt; exit 1', { marker: 'inside-marker', files: [{ path: 'r/x.txt', content: 'inside-marker' }] }), repo(), live, { root: tmp() })
     expect(reproduced(r)).toBe(true)

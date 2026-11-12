@@ -75,8 +75,12 @@ export function mapStreamLine(line: unknown, workdir: string): AgentEvent[] {
     }
     // total_cost_usd is deliberately dropped: it is an API-price estimate, not what a subscription pays.
     // The whole answer rides along for a block that reads structure out of it (the reviewer's verdict); the summary is
-    // the short form every card shows.
-    const fullText = clip(redact(str(line.result).trim()), FULL_MAX)
+    // the short form every card shows. It is NOT cleaned: cleaning first breaks an answer that quotes a secret (a
+    // password="x" inside a JSON string loses its closing quote) and changes a command the app must run as written. The
+    // provider reads it, then cleans every field it keeps; it is never stored or shown as it is. A long answer keeps its
+    // end, where the JSON object is.
+    const raw = str(line.result).trim()
+    const fullText = raw.length > FULL_MAX ? raw.slice(-FULL_MAX) : raw
     return [{ type: 'done', summary: text, fullText, source: 'provider', usage: { tokens: reportedTokens(line.usage) } }]
   }
   return []

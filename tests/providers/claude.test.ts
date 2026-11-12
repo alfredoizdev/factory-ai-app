@@ -791,3 +791,47 @@ test('the reviewer is told to cite files relative to the directory, as git shows
   expect(prompt).toMatch(/relative to this directory/)
   expect(prompt).toMatch(/never an absolute path/)
 })
+
+describe('an answer is read before it is cleaned', () => {
+  const review = { blockKind: 'review' as const, request: 'r', workdir: '/wt', baseCommit: 'abc' }
+  const answerOf = async (input: object, result: string) => {
+    const child = fakeChild()
+    const provider = createClaudeProvider({ spawn: (() => child) as never, snapshot: () => 'same', readCopyFile: () => 'body' })
+    const pending = collect(provider.execute(input as never, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result }])
+    return (await pending).at(-1) as Extract<AgentEvent, { type: 'done' }>
+  }
+
+  test('a reviewer that quotes a hard-coded password is still read, and the password is not kept', async () => {
+    const answer = JSON.stringify({ verdict: 'changes', findings: [{ type: 'security', file: 'db.ts', line: 3, problem: 'Hardcoded password="hunter2" in db.ts', severity: 'high', affects: ['token=abcdefgh1234'] }] })
+    const done = await answerOf(review, `I found one. ${answer}`)
+    expect(done.review).toBeDefined()
+    expect(done.review!.findings).toHaveLength(1)
+    const f = done.review!.findings[0]!
+    expect(f.problem).toContain('Hardcoded password')
+    expect(f.problem).not.toContain('hunter2')
+    expect(f.affects.join(' ')).not.toContain('abcdefgh1234')
+    expect(f.file).toBe('db.ts')
+    expect(JSON.stringify(done)).not.toContain('hunter2')
+  })
+
+  test('the verifier\'s command is kept as written, so the app runs what the verifier ran', async () => {
+    const verify = { blockKind: 'review', role: 'verifier', request: 'r', workdir: '/copy', finding: { type: 'logic', file: 'a.ts', problem: 'p' } }
+    const done = await answerOf(verify, JSON.stringify({ reproduced: true, command: 'API_KEY=abcdefgh123 node repro/check.mjs', marker: 'MARKER-XYZ-1', files: ['repro/check.mjs'] }))
+    expect(done.repro?.command).toBe('API_KEY=abcdefgh123 node repro/check.mjs')
+  })
+
+  test('the verifier\'s reason and its kept answer are cleaned', async () => {
+    const verify = { blockKind: 'review', role: 'verifier', request: 'r', workdir: '/copy', finding: { type: 'logic', file: 'a.ts', problem: 'p' } }
+    const refuted = await answerOf(verify, JSON.stringify({ reproduced: false, refuted: true, why: 'it reads token=abcdefgh1234 from the env' }))
+    expect(refuted.refuted?.why).toContain('it reads')
+    expect(refuted.refuted?.why).not.toContain('abcdefgh1234')
+    const missed = await answerOf(verify, 'secret=abcdefgh1234 no json here')
+    expect(missed.noRepro?.answer).not.toContain('abcdefgh1234')
+  })
+
+  test('a long answer keeps its end, where the JSON object is', async () => {
+    const done = await answerOf(review, `${'x'.repeat(30_000)} {"verdict":"ok","findings":[]}`)
+    expect(done.review).toEqual({ verdict: 'ok', findings: [] })
+  })
+})
