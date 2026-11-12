@@ -22,8 +22,8 @@ export function shipView(blockId: string, ship: ShipState): NodeRunView | null {
     }
     return { ...base, state: 'waiting_approval', summary: ship.onHold ? s.cardOnHold : s.cardReady }
   }
-  const after = [...steps, s.merged, ...ship.deploy.map(d => `${d.name}: ${s.checkState[d.state]}`)]
+  const after = [...steps, ship.deployPending ? s.stepMerged : s.merged, ...ship.deploy.map(d => `${d.name}: ${s.checkState[d.state]}`)]
   if (ship.deploy.some(d => d.state === 'failed')) return { ...base, steps: after, state: 'failed', summary: s.deployFailed }
-  if (ship.deploy.some(d => d.state === 'pending')) return { ...base, steps: after, state: 'running', summary: s.cardDeploying }
+  if (ship.deployPending || ship.deploy.some(d => d.state === 'pending')) return { ...base, steps: after, state: 'running', summary: s.cardDeploying }
   return { ...base, steps: after, state: 'passed', summary: ship.deploy.length > 0 ? s.cardLive : s.merged }
 }

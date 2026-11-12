@@ -37,6 +37,8 @@ export type ShipState = {
   /** After the merge: what reported on the merged commit (a deploy, CI on main). Empty: nothing reported. */
   deploy: Check[]
   mergedAt: string | null
+  /** Merged, and what runs on main (a deploy, CI) is still on its way or may still appear: not finished yet. */
+  deployPending?: boolean
   /** The person said: everything is ready, but do not merge yet. Never true once merged or closed. */
   onHold: boolean
 }
@@ -148,6 +150,9 @@ async function adoptPullRequest(runId: string, gh: Gh): Promise<Record<string, u
   return recordOf(runId, 'run.pr_opened')
 }
 
+/** How long after a merge a deploy is given to show up before saying none is connected. */
+const DEPLOY_GRACE_MS = 60_000
+
 /** Where the pull request stands: its checks while open, what reported on the merged commit once merged. */
 export async function shipState(runId: string, gh: Gh = defaultGh): Promise<ShipState> {
   const opened = (await recordOf(runId, 'run.pr_opened')) ?? (await adoptPullRequest(runId, gh))
@@ -183,6 +188,9 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
     checksFailed: checks.some(c => c.state === 'failed'),
     deploy,
     mergedAt: view.mergedAt ?? null,
+    deployPending:
+      state === 'merged' &&
+      (deploy.some(c => c.state === 'pending') || (deploy.length === 0 && !!view.mergedAt && Date.now() - Date.parse(view.mergedAt) < DEPLOY_GRACE_MS)),
     onHold: state === 'open' && (await isOnHold(runId)),
   }
 }

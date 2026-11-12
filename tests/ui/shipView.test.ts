@@ -38,3 +38,11 @@ test('a ready pull request on hold still waits on the person, and says it is on 
 test('just sent, no check reported yet: it says it is looking, not "0 of 0"', () => {
   expect(shipView('ship', { ...base, checksDone: false })).toMatchObject({ state: 'running', summary: strings.ship.cardLooking })
 })
+
+test('merged but the site has not answered yet: still publishing, not passed', () => {
+  const merged = { ...base, pr: { ...base.pr!, state: 'merged' as const }, mergedAt: '2026-11-12T00:00:00Z' }
+  const v = shipView('ship', { ...merged, deployPending: true })!
+  expect(v).toMatchObject({ state: 'running', summary: strings.ship.cardDeploying })
+  expect(v.steps).not.toContain(strings.ship.merged)
+  expect(shipView('ship', { ...merged, deployPending: false })).toMatchObject({ state: 'passed', summary: strings.ship.merged })
+})

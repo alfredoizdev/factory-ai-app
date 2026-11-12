@@ -57,6 +57,9 @@ export function ResultSection({
   const merged = ship?.pr?.state === 'merged'
   // GitHub is still checking the change: the card only says so, and offers nothing else to press meanwhile.
   const checking = ship?.pr?.state === 'open' && !ship.checksDone
+  // Merged, but what runs on main has not answered yet: still publishing, not done.
+  const publishing = merged && ship?.deployPending === true
+  const waitingOnGithub = checking || publishing
   const shipStateSeen = useCallback(
     (next: ShipState) => {
       setShip(next)
@@ -158,9 +161,11 @@ export function ResultSection({
   // One place on one path: Approved → Save → Check → Publish. Each moment shows one main button, its next step.
   // Saved, but the project has no GitHub repository to send it to: said up front, with how to connect it.
   const notConnected = kept && !shipped && !away && delivery.hasRemote === false
-  const step: Step = merged ? 4 : checksOk ? 3 : kept ? 2 : 1
+  const step: Step = merged && !publishing ? 4 : merged || checksOk ? 3 : kept ? 2 : 1
   const d = strings.delivery
-  const headline = merged
+  const headline = publishing
+    ? d.nowPublishing
+    : merged
     ? d.finished
     : checksOk
       ? ship!.onHold
@@ -259,7 +264,7 @@ export function ResultSection({
                 )}
               </>
             ) : (
-              !merged && !away && !checking && (
+              !merged && !away && !waitingOnGithub && (
                 // Trying it locally is a side trip, not the next step: it stays quiet next to the main button.
                 <div style={{ display: 'grid', gap: 2 }}>
                   <button type="button" disabled={busy !== null} onClick={() => void bring('switch')} style={linkButton}>
@@ -274,7 +279,7 @@ export function ResultSection({
         {delivery.delivered && <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{d.done(delivery.files.length)}</div>}
 
         {/* Everything a developer may want and nobody else needs: names, hashes, and the less common moves. Closed. */}
-        {(kept || canApply) && !checking && (
+        {(kept || canApply) && !waitingOnGithub && (
           <div style={{ display: 'grid', gap: 8 }}>
             <button
               type="button"
@@ -318,7 +323,7 @@ export function ResultSection({
           </div>
         )}
       </div>
-      <div style={{ display: checking ? 'none' : 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
+      <div style={{ display: waitingOnGithub ? 'none' : 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
         <div style={{ fontSize: 12, color: theme.dim }}>{strings.followUp.hint}</div>
         {composer({
           label: strings.followUp.start,

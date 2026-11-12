@@ -9,8 +9,6 @@ import { PauseIcon } from './PastTasks'
 import { Bone } from './Skeleton'
 
 const POLL_MS = 8000
-/** After a merge, how long to keep asking GitHub before saying nothing reported. */
-const DEPLOY_PATIENCE_MS = 3 * 60_000
 
 const MARK: Record<Check['state'], { glyph: string; colour: string }> = {
   pending: { glyph: '…', colour: theme.waiting },
@@ -86,8 +84,7 @@ export function ShipSection({
   // Keep asking while something is still on its way: checks on the open pull request, or reports after the merge.
   const open = state?.pr?.state === 'open'
   const merged = state?.pr?.state === 'merged'
-  const mergedAgo = state?.mergedAt ? state.readAt - Date.parse(state.mergedAt) : 0
-  const deployPending = merged && (state!.deploy.some(d => d.state === 'pending') || (state!.deploy.length === 0 && mergedAgo < DEPLOY_PATIENCE_MS))
+  const deployPending = merged && state!.deployPending === true
   const waiting = (open && !state!.checksDone) || deployPending
   useEffect(() => {
     if (!waiting) return
@@ -195,10 +192,16 @@ export function ShipSection({
           )}
           {merged && (
             <>
-              <span style={{ color: theme.passed, fontWeight: 700 }}>✓ {strings.ship.merged}</span>
-              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: theme.dim }}>{strings.ship.deployTitle}</div>
+              {/* Not called published until what runs on main has answered, or enough time passed to know nothing will. */}
+              {deployPending ? (
+                <div role="status" data-testid="ship-publishing" style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '10px 12px', borderRadius: 8, border: `1px solid ${theme.tint('running', 0.5)}`, background: theme.tint('running', 0.1), color: '#cfe0ff', fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>
+                  <WorkingSpinner blockId="ship-deploy" size={18} />
+                  {strings.ship.deployWaiting}
+                </div>
+              ) : (
+                <span style={{ color: theme.passed, fontWeight: 700 }}>✓ {strings.ship.merged}</span>
+              )}
               {state.deploy.length > 0 && <CheckList checks={state.deploy} />}
-              {deployPending && <span style={{ ...hint, display: 'flex', gap: 6, alignItems: 'center' }}><WorkingSpinner blockId="ship-deploy" size={13} /> {strings.ship.deployWaiting}</span>}
               {!deployPending && state.deploy.length === 0 && <span style={hint}>{strings.ship.noDeploy}</span>}
               {!deployPending && state.deploy.length > 0 && !state.deploy.some(d => d.state === 'failed') && <span style={{ color: theme.passed }}>✓ {strings.ship.live}</span>}
               {state.deploy.some(d => d.state === 'failed') && <span style={{ color: theme.failed }}>{strings.ship.deployFailed}</span>}
