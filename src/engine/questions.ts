@@ -2,7 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { canTransition, type NodeState } from '@/domain/states'
-import { nodeRuns, questions, runs } from '@/db/schema'
+import { findings, nodeRuns, questions, runs } from '@/db/schema'
 import { localActor } from '@/engine/approvals'
 import { appendEventSync, lockRun } from '@/engine/events'
 import { QUESTION_ANSWERED } from '@/engine/inngest/client'
@@ -201,12 +201,17 @@ export async function consumeAnswer(questionId: string): Promise<Question | null
   return answer
 }
 
-/** "<question> — <what they chose>", and their own words after it; for `other`, their words stand for the choice. */
-export function decisionText(q: Question): string {
+/**
+ * The decision the project keeps from an answer, or null when there is none to keep: only an answer with the person's
+ * own words is one. It says what it was about (from the finding, in the app's words), what they chose, and their words;
+ * never the question's own sentence, which reads the same for every problem of a kind. A bare choice (fix, keep, undo,
+ * leave) is kept on the problem's own line in the register.
+ */
+export function decisionText(q: Question, finding?: { type: 'logic' | 'security' | 'effect'; file?: string }): string | null {
   const words = q.answerText?.trim() ?? ''
-  if (q.answerOption === OTHER) return strings.question.decided(q.text, words)
-  const label = q.options.find(o => o.id === q.answerOption)?.label ?? q.answerOption ?? ''
-  return words ? strings.question.decidedWithWords(q.text, label, words) : strings.question.decided(q.text, label)
+  if (!words) return null
+  const choice = q.answerOption === OTHER || !q.answerOption ? null : strings.question.chose(q.kind, q.answerOption)
+  return strings.question.decision({ about: strings.question.about(q.kind, finding), choice, words })
 }
 
 export type AnswerDeps = { send: Send; actor?: () => string }
@@ -241,7 +246,9 @@ export async function answerQuestion(questionId: string, a: { option: string; te
     await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, run.id))
     await appendEventSync({ runId: run.id, type: 'run.started', payload: { resumed: true } }, tx)
     const done = toQuestion({ ...row, ...fields })
-    await addEntry(run.projectId, { kind: 'decision', text: decisionText(done), source: 'question', runId: run.id }, tx)
+    const about = row.findingId ? (await tx.select({ type: findings.type, file: findings.file }).from(findings).where(eq(findings.id, row.findingId)))[0] : undefined
+    const text = decisionText(done, about ? { type: about.type as 'logic' | 'security' | 'effect', ...(about.file ? { file: about.file } : {}) } : undefined)
+    if (text) await addEntry(run.projectId, { kind: 'decision', text, source: 'question', runId: run.id }, tx)
     return done
   })
   await tell(answered, deps.send)

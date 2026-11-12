@@ -152,10 +152,8 @@ describe('answering', () => {
     expect((await db.select().from(nodeRuns).where(eq(nodeRuns.id, nodeRunId)))[0]!.state).toBe('running')
     const all = (await db.select().from(events).where(eq(events.runId, runId))).map(e => e.type)
     expect(all).toContain('node.question_answered')
-    const found = await entries(projectId)
-    expect(found).toHaveLength(1)
-    expect(found[0]!.text).toContain('Which way?')
-    expect(found[0]!.text).toContain('Use the new way')
+    // A choice with no words of the person's own is kept with the problem only, not as a decision for later tasks.
+    expect(await entries(projectId)).toHaveLength(0)
     expect(await openQuestion(runId)).toBeNull()
     expect((await takeAnswer(q.id))!.answerOption).toBe('b')
     expect(sent.at(-1)).toEqual({ name: 'factory/question.answered', data: { runId, questionId: q.id } })
@@ -171,13 +169,15 @@ describe('answering', () => {
     expect(await entries(projectId)).toHaveLength(0)
     const done = await answerQuestion(q.id, { option: OTHER, text: 'do it my way' }, deps)
     expect(done).toMatchObject({ answerOption: OTHER, answerText: 'do it my way' })
-    expect((await entries(projectId))[0]!.text).toBe('Which way? — do it my way')
+    const [decision] = await entries(projectId)
+    expect(decision!.text).toContain('do it my way')
+    expect(decision!.text).not.toContain('Which way?')
   })
 
   test('the second answer is refused and adds nothing', async () => {
     const { projectId, runId, nodeRunId } = await runningRun()
     const q = await askPerson(runId, nodeRunId, ask())
-    await answerQuestion(q.id, { option: 'a' }, deps)
+    await answerQuestion(q.id, { option: 'a', text: 'the old way is tested' }, deps)
     await failsWith(answerQuestion(q.id, { option: 'b' }, deps), 409, strings.question.alreadyAnswered)
     expect(await entries(projectId)).toHaveLength(1)
     expect((await takeAnswer(q.id))!.answerOption).toBe('a')
@@ -186,7 +186,7 @@ describe('answering', () => {
   test('two answers at once leave exactly one answer and one decision', async () => {
     const { projectId, runId, nodeRunId } = await runningRun()
     const q = await askPerson(runId, nodeRunId, ask())
-    const results = await Promise.allSettled([answerQuestion(q.id, { option: 'a' }, deps), answerQuestion(q.id, { option: 'b' }, deps)])
+    const results = await Promise.allSettled([answerQuestion(q.id, { option: 'a', text: 'one' }, deps), answerQuestion(q.id, { option: 'b', text: 'two' }, deps)])
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
     expect(results.filter(r => r.status === 'rejected')).toHaveLength(1)
     expect(await entries(projectId)).toHaveLength(1)
@@ -215,11 +215,29 @@ describe('answering', () => {
 })
 
 describe('what the person decided, in words', () => {
-  const base: Question = { id: 'q', runId: 'r', nodeRunId: 'n', findingId: null, kind: 'finding', text: 'Which way?', why: '', detail: null, options: [...opts, { id: LEAVE, label: 'Leave it', means: '' }], recommended: null, touches: [], state: 'answered', answerOption: 'b', answerText: null, actor: 'x', answeredAt: now() }
-  test('the question and the choice; the person\'s own words after', () => {
-    expect(decisionText(base)).toBe('Which way? — Use the new way')
-    expect(decisionText({ ...base, answerText: 'but carefully' })).toBe('Which way? — Use the new way — but carefully')
-    expect(decisionText({ ...base, answerOption: OTHER, answerText: 'my own plan' })).toBe('Which way? — my own plan')
+  const base: Question = { id: 'q', runId: 'r', nodeRunId: 'n', findingId: null, kind: 'finding', text: 'The change may not do what you asked. The app ran a check and saw the problem happen.', why: '', detail: null, options: [{ id: 'fix', label: 'Fix it', means: '' }, { id: LEAVE, label: 'Leave it as it is', means: '' }], recommended: null, touches: [], state: 'answered', answerOption: LEAVE, answerText: null, actor: 'x', answeredAt: now() }
+  const pay = { type: 'logic' as const, file: 'src/pay.ts' }
+
+  test('a choice without the person\'s own words is no decision', () => {
+    for (const answerOption of ['fix', LEAVE]) expect(decisionText({ ...base, answerOption }, pay)).toBeNull()
+    expect(decisionText({ ...base, kind: 'fix_held', answerOption: 'keep' }, pay)).toBeNull()
+    expect(decisionText({ ...base, answerText: '   ' }, pay)).toBeNull()
+  })
+
+  test('with their words it says what it was about, what they chose and their words, never the generic question', () => {
+    const left = decisionText({ ...base, answerText: 'the price is rounded down on purpose' }, pay)!
+    expect(left).toBe(strings.question.decision({ about: strings.question.about('finding', pay), choice: strings.question.chose('finding', LEAVE), words: 'the price is rounded down on purpose' }))
+    expect(left).toContain('src/pay.ts')
+    expect(left).toContain('leave it as it is')
+    expect(left).toContain('the price is rounded down on purpose')
+    expect(left).not.toContain(base.text)
+    const own = decisionText({ ...base, answerOption: OTHER, answerText: 'my own plan' }, pay)!
+    expect(own).toContain('my own plan')
+    expect(own).toContain('src/pay.ts')
+    const kept = decisionText({ ...base, kind: 'fix_held', answerOption: 'keep', answerText: 'that file is fine to touch' }, pay)!
+    expect(kept).toContain('keep the fix')
+    expect(kept).toContain('that file is fine to touch')
+    expect(decisionText({ ...base, answerText: 'later' })).toContain('later')
   })
 })
 
@@ -229,7 +247,7 @@ describe('delivery', () => {
     const q = await askPerson(runId, nodeRunId, ask())
     await db.update(runs).set({ machineId: 'elsewhere' }).where(eq(runs.id, runId))
     const before = sent.length
-    await answerQuestion(q.id, { option: 'a' }, deps)
+    await answerQuestion(q.id, { option: 'a', text: 'keep it simple' }, deps)
     expect(sent.length).toBe(before)
     expect(await entries(projectId)).toHaveLength(1)
     await db.update(runs).set({ machineId: (await import('@/engine/machine')).thisMachine().id }).where(eq(runs.id, runId))
@@ -256,7 +274,7 @@ describe('delivery', () => {
   test('when telling the run fails the answer stays recorded and the relay tells it later', async () => {
     const { projectId, runId, nodeRunId } = await runningRun()
     const q = await askPerson(runId, nodeRunId, ask())
-    const done = await answerQuestion(q.id, { option: 'a' }, { ...deps, send: async () => { throw new Error('inngest is down') } })
+    const done = await answerQuestion(q.id, { option: 'a', text: 'keep it simple' }, { ...deps, send: async () => { throw new Error('inngest is down') } })
     expect(done.state).toBe('answered')
     expect(await entries(projectId)).toHaveLength(1)
     const relayed: unknown[] = []

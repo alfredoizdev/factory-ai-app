@@ -402,9 +402,20 @@ export const strings = {
     }),
     // One click away from the question: the files the fix changed and what the AI reviewer said about the problem.
     heldDetail: (paths: readonly string[], said: string) => `Changed by the fix: ${paths.join(', ')}. The reviewer said: ${said}`,
-    // The line the project's list of decisions keeps: the question, then what the person chose, then their own words.
-    decided: (question: string, answer: string) => `${question} — ${answer}`,
-    decidedWithWords: (question: string, answer: string, words: string) => `${question} — ${answer} — ${words}`,
+    // The decision the project keeps when the person answered in their own words: what it was about, in the app's words,
+    // what they chose, and their words. A choice with no words of their own is kept with the problem only.
+    decision: (o: { about: string; choice: string | null; words: string }) => `${o.about}${o.choice ? `: ${o.choice}.` : '.'} In your words: ${o.words}`,
+    about: (kind: 'finding' | 'fix_held', f?: { type: 'logic' | 'security' | 'effect'; file?: string }) => {
+      const where = f?.file ? ` in ${f.file}` : ''
+      if (kind === 'fix_held') return `About a fix${where} that changed an important part of the project`
+      const what = f ? { logic: 'a problem with what the change does', security: 'a safety problem', effect: 'a problem with what else the change affects' }[f.type] : 'a problem the reviewers reported'
+      return `About ${what}${where}`
+    },
+    // What they chose, said in full; null when they answered in their own words only.
+    chose: (kind: 'finding' | 'fix_held', option: string) =>
+      kind === 'fix_held'
+        ? ({ keep: 'you chose to keep the fix', undo: 'you chose to undo the fix', leave: 'you were not sure, so the fix was undone' } as Record<string, string>)[option] ?? null
+        : ({ fix: 'you chose to have it fixed', leave: 'you chose to leave it as it is' } as Record<string, string>)[option] ?? null,
   },
   history: {
     title: 'Past tasks',
@@ -790,7 +801,7 @@ export const strings = {
     failed: 'That did not save. Try again.',
     groups: { rule: 'Rules you gave', decision: 'Decisions you made', core: 'Core areas', finding: 'What the reviewers found before' },
     groupNone: {
-      decision: 'None yet. When you answer a question during a review, your answer is kept here.',
+      decision: 'None yet. When you answer a question during a review in your own words, what you decided is kept here.',
       core: 'None yet. Mark a folder or file below.',
     },
     number: (label: string) => `Number ${label}: what the agents call this one when they refer to it.`,
