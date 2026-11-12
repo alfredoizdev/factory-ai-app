@@ -1,16 +1,27 @@
 import { getProjectSettings } from '@/engine/project-settings'
 import { notFound } from 'next/navigation'
-import { desc, eq, sql } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { projects, runs, workflowVersions, workflows } from '@/db/schema'
+import { runs, workflowVersions, workflows } from '@/db/schema'
 import type { Graph } from '@/domain/graph'
 import { CanvasScreen, type RunInfo } from '@/ui/canvas/CanvasScreen'
 import { projectHere, runPlace } from '@/engine/machine'
+import { DbDown, isDbFailure } from '@/ui/DbDown'
 
 export const dynamic = 'force-dynamic'
 
 export default async function CanvasPage({ params }: { params: Promise<{ workflowId: string }> }) {
   const { workflowId } = await params
+  try {
+    return await canvasFor(workflowId)
+  } catch (e) {
+    // The database could not be reached: said so, instead of an empty canvas or an error page.
+    if (isDbFailure(e)) return <DbDown />
+    throw e
+  }
+}
+
+async function canvasFor(workflowId: string) {
   const wf = (await db.select().from(workflows).where(eq(workflows.id, workflowId)))[0]
   if (!wf) notFound()
 

@@ -453,6 +453,11 @@ export const strings = {
     save: 'Save the name',
     cancel: 'Keep the old name',
   },
+  dbDown: {
+    title: 'Can\'t reach the database',
+    text: 'Your tasks and history are safe; the app could not reach them just now. Check your internet connection, then try again. On the free plan the database can take a second to wake up.',
+    retry: 'Try again',
+  },
   machine: {
     elsewhere: (name: string | null) =>
       name ? `This task's working copy is on ${name}. Open the app there to do this.` : 'This task\'s working copy is on another computer. Open the app there to do this.',
