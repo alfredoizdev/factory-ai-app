@@ -65,3 +65,24 @@ test('a group with nothing in it has no heading', () => {
   expect(screen.queryByRole('heading', { name: /Needs you/ })).toBeNull()
   expect(within(screen.getByRole('heading', { name: /^Fixed/ })).getByText('1')).toBeInTheDocument()
 })
+
+test('a short legend in plain words says what the three marks mean, as text on the page', () => {
+  render(<FindingsList findings={three} />)
+  for (const how of ['checked', 'ai', 'not_checked'] as const) {
+    expect(screen.getByText(strings.findings.howMeans[how], { selector: '[data-testid="legend"] *' })).toBeInTheDocument()
+  }
+  expect(screen.getByTestId('legend')).toHaveTextContent(strings.findings.how.ai)
+})
+
+test('problems with the same title are told apart by a number, in the order shown', () => {
+  render(<FindingsList findings={[view({ id: 'a', ending: 'set_aside' }), view({ id: 'b', ending: 'needs_you' }), view({ id: 'c', ending: 'needs_you' })]} />)
+  const rows = screen.getAllByTestId('finding')
+  expect(rows.map(r => within(r).getByTestId('finding-number').textContent)).toEqual([strings.findings.number(1), strings.findings.number(2), strings.findings.number(3)])
+  expect(rows[2]).toHaveTextContent(strings.findings.ended.fixedChecked) // the set-aside one is last and carries 3
+})
+
+test('a register number in a reason is never shown bare', () => {
+  render(<FindingsList findings={[view({ detail: { where: '', problem: '', command: '', outputTail: '', reason: 'It touches a decision you made (D-07).' } })]} />)
+  fireEvent.click(screen.getByRole('button', { name: strings.question.seeDetails }))
+  expect(document.body.textContent).not.toMatch(/D-\d/)
+})

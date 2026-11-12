@@ -192,6 +192,7 @@ test('a question from the review waits in the same card as the other checks, and
   await emit('node.question_asked', { blockId: 'review', questionId: 'q1', kind: 'finding' })
   expect(state('review')).toBe('waiting_approval')
   expect(screen.getByTestId('command-card')).toHaveAttribute('data-mode', 'question')
+  expect(screen.getByTestId('run-status')).toHaveTextContent(strings.question.stateLabel)
   expect(screen.getByTestId('block-card-review')).toHaveTextContent(strings.question.stateLabel)
   await emit('node.question_answered', { blockId: 'review', questionId: 'q1', option: 'fix' })
   await emit('run.started', { resumed: true })

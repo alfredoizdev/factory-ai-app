@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { label as entryLabel, type Entry } from '@/engine/register'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
@@ -14,7 +14,8 @@ type Editable = (typeof EDITABLE)[number]
 const isEditable = (e: Entry): e is Entry & { kind: Editable } => (EDITABLE as readonly string[]).includes(e.kind)
 
 const TONE: Record<Editable, string> = { rule: '#2dd4bf', decision: '#a78bfa', core: theme.waiting }
-const small = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11.5 } as const
+// Text buttons keep a tap target of at least 32px tall.
+const small = { background: 'none', border: 'none', padding: '8px 4px', minHeight: 32, cursor: 'pointer', fontSize: 11.5 } as const
 
 /**
  * The project's register, in its settings: the rules every task starts with, the decisions made when the person answered a
@@ -28,6 +29,7 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
   const [corePath, setCorePath] = useState('')
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
   const [removing, setRemoving] = useState<string | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
   const [showLog, setShowLog] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const base = `/api/projects/${projectId}/notes`
@@ -49,13 +51,19 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
     }
   }, [base])
 
+  const lastError = useRef<string | null>(null)
+  const fail = (message: string) => {
+    lastError.current = message
+    setError(message)
+  }
   async function call(url: string, method: string, body?: unknown): Promise<Answer | null> {
     setError(null)
+    lastError.current = null
     const res = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }).catch(() => null)
-    if (!res) return setError(strings.memory.failed), null
+    if (!res) return fail(strings.memory.failed), null
     if (res.status === 204) return {}
     const answer = (await res.json().catch(() => null)) as Answer | null
-    if (!res.ok) return setError(answer?.error ?? strings.memory.failed), null
+    if (!res.ok) return fail(answer?.error ?? strings.memory.failed), null
     return answer
   }
   const added = (note: Answer['note']) => note && setEntries(es => [...(es ?? []), { outcome: null, reason: null, runId: null, enabled: true, paths: [], ...note } as Entry])
@@ -81,10 +89,20 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
       setCandidates(cs => cs.filter(x => x !== c))
     }
   }
-  async function change(id: string, patch: { text?: string; enabled?: boolean; path?: string }) {
+  /** True when the server took the change. A refused edit is left open, with what the person typed. */
+  async function change(id: string, patch: { text?: string; enabled?: boolean; path?: string }): Promise<boolean> {
     const answer = await call(`${base}/${id}`, 'PATCH', patch)
-    if (answer?.note) setEntries(es => (es ?? []).map(e => (e.id === id ? { ...e, ...answer.note } : e)))
-    setEditing(null)
+    if (!answer?.note) return false
+    setEntries(es => (es ?? []).map(e => (e.id === id ? { ...e, ...answer.note } : e)))
+    return true
+  }
+  async function save(e: Entry, text: string) {
+    setEditError(null)
+    if (await change(e.id, e.kind === 'core' ? { path: text } : { text })) setEditing(null)
+    else {
+      setEditError(lastError.current)
+      setError(null)
+    }
   }
   async function remove(id: string) {
     setRemoving(null)
@@ -104,20 +122,44 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
     return (
       <li key={e.id} style={{ display: 'grid', gap: 4, padding: '8px 10px', borderRadius: 8, border: `1px solid ${theme.border}`, borderLeft: `3px solid ${e.enabled ? TONE[e.kind] : theme.skipped}`, background: '#0d1118', opacity: e.enabled ? 1 : 0.6 }}>
         {editing?.id === e.id ? (
-          <input
-            aria-label={strings.memory.edit}
-            autoFocus
-            value={editing.text}
-            onChange={ev => setEditing({ id: e.id, text: ev.target.value })}
-            onKeyDown={ev => {
-              if (ev.key === 'Enter') void change(e.id, isCore ? { path: editing.text } : { text: editing.text })
-              if (ev.key === 'Escape') {
-                ev.stopPropagation()
-                setEditing(null)
-              }
-            }}
-            style={field}
-          />
+          <>
+            <input
+              aria-label={strings.memory.edit}
+              autoFocus
+              value={editing.text}
+              onChange={ev => setEditing({ id: e.id, text: ev.target.value })}
+              onKeyDown={ev => {
+                if (ev.key === 'Enter') void save(e, editing.text)
+                if (ev.key === 'Escape') {
+                  ev.stopPropagation()
+                  setEditing(null)
+                  setEditError(null)
+                }
+              }}
+              style={field}
+            />
+            {editError && (
+              <div role="alert" style={{ fontSize: 12, color: theme.failed, lineHeight: 1.4 }}>
+                {editError}
+              </div>
+            )}
+            <span style={{ display: 'flex', gap: 10 }}>
+              <button type="button" className="factory-action" onClick={() => void save(e, editing.text)} style={{ ...small, fontSize: 12, fontWeight: 700, color: '#93c5fd' }}>
+                {strings.memory.saveEdit}
+              </button>
+              <button
+                type="button"
+                className="factory-action"
+                onClick={() => {
+                  setEditing(null)
+                  setEditError(null)
+                }}
+                style={{ ...small, fontSize: 12, color: theme.dim }}
+              >
+                {strings.memory.cancelEdit}
+              </button>
+            </span>
+          </>
         ) : (
           <span style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
             <span title={strings.memory.number(entryLabel(e.number))} style={{ flex: 'none', fontFamily: 'var(--font-mono), ui-monospace, Menlo, monospace', fontSize: 11, color: theme.dim }}>{entryLabel(e.number)}</span>
@@ -130,7 +172,7 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
         {asking ? (
           <span role="group" aria-label={strings.memory.removeAsk(e.text)} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, fontSize: 12, color: '#ffd9d9' }}>
             <span style={{ flex: '1 1 160px', overflowWrap: 'anywhere' }}>{strings.memory.removeAsk(e.text)}</span>
-            <button type="button" className="factory-action" onClick={() => void remove(e.id)} style={{ ...small, fontSize: 12, color: theme.failed, fontWeight: 700 }}>{strings.memory.removeYes}</button>
+            <button type="button" className="factory-action" autoFocus onClick={() => void remove(e.id)} style={{ ...small, fontSize: 12, color: theme.failed, fontWeight: 700 }}>{strings.memory.removeYes}</button>
             <button type="button" className="factory-action" onClick={() => setRemoving(null)} style={{ ...small, fontSize: 12, color: '#93c5fd' }}>{strings.memory.removeNo}</button>
           </span>
         ) : (
@@ -140,7 +182,10 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
               <input type="checkbox" checked={e.enabled} onChange={ev => void change(e.id, { enabled: ev.target.checked })} />
               {strings.memory.on}
             </label>
-            <button type="button" className="factory-action" onClick={() => setEditing({ id: e.id, text: isCore ? e.paths.join(', ') : e.text })} style={{ ...small, color: '#93c5fd' }}>
+            <button type="button" className="factory-action" onClick={() => {
+                setEditError(null)
+                setEditing({ id: e.id, text: isCore ? e.paths.join(', ') : e.text })
+              }} style={{ ...small, color: '#93c5fd' }}>
               {strings.memory.edit}
             </button>
             <button type="button" className="factory-action" aria-label={strings.memory.remove(e.text)} onClick={() => setRemoving(e.id)} style={{ ...small, color: theme.failed }}>

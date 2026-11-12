@@ -3,23 +3,16 @@
 import { useId, useRef, useState } from 'react'
 import type { Question } from '@/engine/questions'
 import { strings } from '@/ui/strings'
+import { explained, type Touched } from '@/ui/explain'
 import { theme } from '@/ui/theme'
+import { displayOrder } from './FindingsList'
 import { Bone } from './Skeleton'
 import type { ReviewRecord } from './useReviewRecord'
 
-/** What an earlier decision or core area the question mentions says, in its own words. */
-export type Touched = { number: number; label: string; kind: string; text: string }
+export type { Touched }
 
 const OTHER = 'other'
 const MONO = 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace'
-
-/** Puts the entry's own words next to its label; a number with nothing behind it is not shown at all. */
-function explained(sentence: string, touched: readonly Touched[]): string {
-  return sentence.replace(/\bD-(\d+)\b/g, (_m, n: string) => {
-    const entry = touched.find(t => t.number === Number(n))
-    return entry ? `${entry.label}: “${entry.text}”` : strings.question.earlierDecision
-  })
-}
 
 /**
  * A question the review cannot answer for the person: one plain sentence, why it asks, a few choices each saying what
@@ -110,7 +103,7 @@ export function QuestionPanel({
             aria-expanded={showDetail}
             aria-controls={detailId}
             onClick={() => setShowDetail(v => !v)}
-            style={{ justifySelf: 'start', background: 'none', border: 'none', padding: 0, color: theme.running, cursor: 'pointer', fontSize: 12.5 }}
+            style={{ justifySelf: 'start', background: 'none', border: 'none', padding: '6px 8px 6px 0', minHeight: 32, color: theme.running, cursor: 'pointer', fontSize: 12.5 }}
           >
             {strings.question.seeDetails}
           </button>
@@ -164,7 +157,9 @@ export function QuestionPanel({
             placeholder={strings.question.ownWordsPlaceholder}
             onChange={e => {
               setWords(e.target.value)
-              setChoice(e.target.value.trim() === '' ? null : OTHER)
+              // Words make the choice; only spaces neither make it nor take a chosen option away.
+              if (e.target.value.trim() !== '') setChoice(OTHER)
+              else if (choice === OTHER) setChoice(null)
             }}
             style={{ font: 'inherit', fontSize: 13, fontWeight: 400, padding: '8px 10px', boxSizing: 'border-box', width: '100%', resize: 'vertical', background: '#0b0e14', color: '#e6e9ef', border: `1px solid ${theme.border}`, borderRadius: 8 }}
           />
@@ -195,9 +190,33 @@ export function QuestionPanel({
 }
 
 /** The question card of a run: the panel, with the answer sent to the run and the record read again if it is refused. */
-export function QuestionSection({ runId, record, onChanged }: { runId: string; record: ReviewRecord | null; onChanged: () => void }) {
+export function QuestionSection({ runId, record, failed = false, onChanged }: { runId: string; record: ReviewRecord | null; failed?: boolean; onChanged: () => void }) {
   const question = record?.question ?? null
+  // The question last shown, and the sentence the server last refused with, stay until a read succeeds with something else.
+  const [shown, setShown] = useState<Question | null>(null)
+  const [refusal, setRefusal] = useState<string | null>(null)
+  if (question && shown?.id !== question.id) {
+    setShown(question)
+    setRefusal(null)
+  }
+  const retry = (
+    <div role="alert" style={{ display: 'grid', gap: 8, fontSize: 13, color: theme.failed, lineHeight: 1.4 }}>
+      {strings.question.loadFailed}
+      <button type="button" className="factory-action" onClick={onChanged} style={{ justifySelf: 'start', minHeight: 32, padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: '#e6e9ef', fontWeight: 700, cursor: 'pointer' }}>
+        {strings.question.tryAgain}
+      </button>
+    </div>
+  )
   if (!question) {
+    if (record) {
+      // Read, and nothing is waiting any more: say so, with the server's own sentence when there was one.
+      return (
+        <div role="status" style={{ fontSize: 13.5, fontWeight: 600, color: theme.dim, lineHeight: 1.45 }}>
+          {refusal ?? strings.question.closed}
+        </div>
+      )
+    }
+    if (failed) return retry
     return (
       <div aria-busy="true" aria-label={strings.question.title} style={{ display: 'grid', gap: 8 }}>
         <Bone height={20} width="60%" />
@@ -218,13 +237,19 @@ export function QuestionSection({ runId, record, onChanged }: { runId: string; r
     }
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null
+      const said = body?.error ?? strings.question.failed
+      setRefusal(said)
       onChanged() // already answered, or no longer waiting: show what is there now
-      throw new Error(body?.error ?? strings.question.failed)
+      throw new Error(said)
     }
     onChanged()
   }
-  // Which problem of the review this is, among the ones that are still problems.
-  const open = record!.findings.filter(f => f.ending !== 'set_aside')
-  const at = open.findIndex(f => f.id === question.findingId)
-  return <QuestionPanel key={question.id} question={question} touched={record!.touched} onAnswer={answer} position={at >= 0 ? { n: at + 1, of: open.length } : undefined} />
+  const order = displayOrder(record!.findings)
+  const at = order.findIndex(f => f.id === question.findingId)
+  return (
+    <>
+      {failed && retry}
+      <QuestionPanel key={question.id} question={question} touched={record!.touched} onAnswer={answer} position={at >= 0 ? { n: at + 1, of: order.length } : undefined} />
+    </>
+  )
 }

@@ -1,6 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { MAX_REVIEW_ROUNDS, defaultReviewerModel, type Focus, type Review } from '@/engine/review'
-import { distinctProblems, endingOf, findingsOf, needsPerson, problemGroups, type Ending } from '@/engine/findings'
+import { distinctProblems, endingOf, findingsOf, needsPerson, notReal, problemGroups, type Ending } from '@/engine/findings'
 import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
 import { giveStanding, type Standing } from '@/engine/register'
@@ -697,13 +697,16 @@ async function anyReviewRan(runId: string): Promise<boolean> {
 async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome> {
   // One problem is one, however many rounds a reviewer reported it in; endingOf is the one rule for how it stands, shared
   // with the list on the screen.
-  const endings = problemGroups(await findingsOf(runId)).map(endingOf)
+  const grouped = problemGroups(await findingsOf(runId))
+  const endings = grouped.map(endingOf)
   const count = (e: Ending) => endings.filter(x => x === e).length
   const summary = !(await anyReviewRan(runId))
     ? strings.review.approve.none
     : endings.length === 0
       ? strings.review.approve.clean
-      : strings.review.approve.summary({ found: endings.length, fixed: count('fixed'), discarded: count('set_aside'), needsYou: count('needs_you') })
+      : grouped.every(notReal)
+        ? strings.review.approve.noneWasReal(grouped.length)
+        : strings.review.approve.summary({ found: endings.length, fixed: count('fixed'), discarded: count('set_aside'), needsYou: count('needs_you') })
   return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }

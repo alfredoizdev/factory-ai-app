@@ -49,10 +49,10 @@ test('a number with no entry behind it is not shown bare', () => {
 test('the button is disabled until a choice or words are given; words need to be words', () => {
   render(<QuestionPanel question={question} onAnswer={async () => undefined} />)
   expect(confirm()).toBeDisabled()
-  fireEvent.click(screen.getByRole('radio', { name: /Leave it as it is/ }))
-  expect(confirm()).toBeEnabled()
   fireEvent.change(screen.getByLabelText(strings.question.ownWordsLabel), { target: { value: '   ' } })
   expect(confirm()).toBeDisabled()
+  fireEvent.click(screen.getByRole('radio', { name: /Leave it as it is/ }))
+  expect(confirm()).toBeEnabled()
 })
 
 test('a click answers with the chosen option once; a double click while sending still answers once', async () => {
@@ -110,4 +110,29 @@ test('the reviewer\'s words and the place are one click away, labelled as the AI
 test('no details button when the question has none', () => {
   render(<QuestionPanel question={{ ...question, detail: null }} onAnswer={async () => undefined} />)
   expect(screen.queryByRole('button', { name: strings.question.seeDetails })).toBeNull()
+})
+
+test('typing only spaces does not take a chosen option away', () => {
+  render(<QuestionPanel question={question} onAnswer={async () => undefined} />)
+  fireEvent.click(screen.getByRole('radio', { name: /Fix it/ }))
+  fireEvent.change(screen.getByLabelText(strings.question.ownWordsLabel), { target: { value: '   ' } })
+  expect(screen.getByRole('radio', { name: /Fix it/ })).toBeChecked()
+  expect(confirm()).toBeEnabled()
+})
+
+test('two clicks in the same tick, before anything re-renders, answer once', async () => {
+  const onAnswer = vi.fn(() => new Promise<void>(() => undefined))
+  render(<QuestionPanel question={question} onAnswer={onAnswer} />)
+  fireEvent.click(screen.getByRole('radio', { name: /Fix it/ }))
+  const button = confirm()
+  act(() => {
+    fireEvent.click(button)
+    fireEvent.click(button)
+  })
+  expect(onAnswer).toHaveBeenCalledTimes(1)
+})
+
+test('See details and the choices are big enough to tap', () => {
+  render(<QuestionPanel question={question} onAnswer={async () => undefined} />)
+  expect(screen.getByRole('button', { name: strings.question.seeDetails }).style.minHeight).toBe('32px')
 })

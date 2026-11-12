@@ -5,7 +5,7 @@ import { monotonicFactory } from 'ulid'
 import { db } from '@/db/client'
 import { findings, nodeRuns, runs } from '@/db/schema'
 import { appendEventSync, type DbHandle } from '@/engine/events'
-import type { Repro, ReproRun } from '@/engine/repro'
+import { reproduced, type Repro, type ReproRun } from '@/engine/repro'
 import { label, touchesCore } from '@/engine/register'
 import type { Finding, Focus, Severity } from '@/engine/review'
 import { SENSITIVE } from '@/engine/risk'
@@ -239,6 +239,13 @@ export function endingOf(group: FindingRow[]): Ending {
   if (needsPerson(latest)) return 'needs_you'
   if (latest.state === 'refuted' || latest.state === 'discarded') return 'set_aside'
   return 'in_progress'
+}
+
+/** A report that turned out not to be a real problem: the checker refuted it, or it was set aside with the app never having seen it happen. */
+export function notReal(group: FindingRow[]): boolean {
+  const latest = latestOf(group)
+  if (endingOf(group) !== 'set_aside') return false
+  return latest.state === 'refuted' || !(latest.repro && latest.evidence && reproduced(latest.evidence))
 }
 
 /** One row per problem, however many rounds reported it: the one from the latest round (the last recorded on a tie), in order of first appearance. */

@@ -20,6 +20,7 @@ const finding = (id: string, over: Partial<FindingView> = {}): FindingView => ({
 })
 const record: ReviewRecord = { findings: [finding('f1'), finding('f2'), finding('f3', { ending: 'set_aside', state: 'refuted' })], question, touched: [] }
 
+const expectedFailure = () => new Response('{}', { status: 500 })
 const card = (props: Partial<Parameters<typeof CommandCard>[0]> = {}) => (
   <CommandCard mode="question" runId="r1" text="" onText={() => undefined} images={[]} onImages={() => undefined} onRun={() => undefined} canRun={false} onFollowUp={() => undefined} onSent={() => undefined} record={record} {...props} />
 )
@@ -30,7 +31,7 @@ test('the question sits in the same card as the other checks, framed as waiting 
   expect(section).toHaveAttribute('data-mode', 'question')
   expect(section).toHaveAttribute('aria-label', strings.question.title)
   expect(screen.getByText(question.text)).toBeInTheDocument()
-  expect(screen.getByText(strings.question.position(2, 2))).toBeInTheDocument() // set-aside reports are not problems to count
+  expect(screen.getByText(strings.question.position(2, 3))).toBeInTheDocument() // the same numbering as the list: needs you first, set aside last
   expect(screen.queryByLabelText(strings.gate.reasonLabel)).toBeNull() // no second box to wonder about
 })
 
@@ -104,4 +105,60 @@ describe('reading the record', () => {
     renderHook(() => useReviewRecord(null, 0))
     expect(fetchMock).not.toHaveBeenCalled()
   })
+})
+
+describe('when the record cannot be read, or the question is gone', () => {
+  test('a record that could not be read says so, with Try again, never a skeleton for good', () => {
+    const again = vi.fn()
+    render(card({ record: null, recordFailed: true, onRecordChanged: again }))
+    expect(screen.getByText(strings.question.loadFailed)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: strings.question.tryAgain }))
+    expect(again).toHaveBeenCalledTimes(1)
+  })
+
+  test('the hook keeps the error until a read succeeds: first read fails, Try again works', async () => {
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async () => (n++ === 0 ? expectedFailure() : new Response(JSON.stringify({ findings: [], question, touched: [] })))))
+    const { result } = renderHook(() => useReviewRecord('r1', 1))
+    await waitFor(() => expect(result.current.failed).toBe(true))
+    expect(result.current.record).toBeNull()
+    act(() => result.current.reload())
+    await waitFor(() => expect(result.current.record?.question?.id).toBe('q1'))
+    expect(result.current.failed).toBe(false)
+  })
+
+  test('a read that fails after one succeeded keeps what was shown', async () => {
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async () => (n++ === 0 ? new Response(JSON.stringify({ findings: [], question, touched: [] })) : expectedFailure())))
+    const { result, rerender } = renderHook(({ m }) => useReviewRecord('r1', m), { initialProps: { m: 1 } })
+    await waitFor(() => expect(result.current.record).not.toBeNull())
+    rerender({ m: 2 })
+    await waitFor(() => expect(result.current.failed).toBe(true))
+    expect(result.current.record?.question?.id).toBe('q1')
+  })
+
+  test('after a refused answer and an empty record, the server\'s sentence stays readable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: strings.question.alreadyAnswered }), { status: 409 })))
+    const view = (r: ReviewRecord | null) => card({ record: r, onRecordChanged: () => undefined })
+    const { rerender } = render(view(record))
+    fireEvent.click(screen.getByRole('radio', { name: /Fix it/ }))
+    fireEvent.click(screen.getByRole('button', { name: strings.question.confirm }))
+    await screen.findByRole('alert')
+    rerender(view({ findings: [], question: null, touched: [] }))
+    expect(screen.getByText(strings.question.alreadyAnswered)).toBeInTheDocument()
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull()
+  })
+
+  test('an empty record with nothing shown before says the question is closed, not a skeleton', () => {
+    render(card({ record: { findings: [], question: null, touched: [] } }))
+    expect(screen.getByText(strings.question.closed)).toBeInTheDocument()
+  })
+})
+
+test('a register number in a risk reason on the human check shows the decision\'s own words', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('/review') ? { hash: 'h', files: [], diff: '', truncated: false } : { status: 'stopped' }))))
+  render(card({ mode: 'waiting', risk: { level: 'high', reasons: ['It touches a decision you made (D-07).'] }, record: { ...record, touched: [{ number: 7, label: 'D-07', kind: 'decision', text: 'We use Stripe' }] } }))
+  await screen.findByText(strings.gate.noFiles)
+  expect(document.body.textContent).toContain('We use Stripe')
+  expect(document.body.textContent).not.toMatch(/D-07\)/)
 })

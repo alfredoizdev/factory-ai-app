@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ulid } from 'ulid'
@@ -60,6 +60,24 @@ describe('normaliseCorePath', () => {
   })
   test('the folder is checked on the server: a name ending in a slash is a folder even where it cannot be read', () => {
     expect(normaliseCorePath('src/future/', null)).toEqual({ ok: true, path: 'src/future/' })
+  })
+})
+
+describe('normaliseCorePath: the path as the project really names it', () => {
+  const dir = repo()
+  symlinkSync(join(dir, 'src'), join(dir, 'inlink'))
+  symlinkSync(mkdtempSync(join(tmpdir(), 'factory-elsewhere-')), join(dir, 'outlink'))
+  const caseInsensitive = existsSync(join(dir, 'SRC'))
+  test.runIf(caseInsensitive)('a wrong-case name is stored in the case git sees', () => {
+    expect(normaliseCorePath('Src/App', dir)).toEqual({ ok: true, path: 'src/app/' })
+    expect(normaliseCorePath('SRC/app/PAGE.tsx', dir)).toEqual({ ok: true, path: 'src/app/page.tsx' })
+  })
+  test('a folder reached through a link inside the project is stored as its real place in the project', () => {
+    expect(normaliseCorePath('inlink/app', dir)).toEqual({ ok: true, path: 'src/app/' })
+    expect(normaliseCorePath('inlink/app/page.tsx', dir)).toEqual({ ok: true, path: 'src/app/page.tsx' })
+  })
+  test('a link that leaves the project is still refused', () => {
+    expect(normaliseCorePath('outlink', dir)).toEqual({ ok: false, reason: strings.memory.core.outside })
   })
 })
 

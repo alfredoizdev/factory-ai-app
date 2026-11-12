@@ -166,3 +166,9 @@ test('long unbroken text wraps inside the card, and a running card keeps room fo
   rerender(<BlockCard expanded block={buildBlock} view={{ ...view, state: 'passed' }} />)
   expect(card.style.paddingBottom).toBe('13px')
 })
+
+test('a register number in a risk reason is not shown bare on the card', () => {
+  render(<BlockCard block={buildBlock} view={{ state: 'waiting_approval', summary: 'x', summaryIsClaim: false, risk: { level: 'high', reasons: ['It touches a decision you made (D-07).'] } }} />)
+  expect(document.body.textContent).not.toMatch(/D-\d/)
+  expect(document.body.textContent).toContain(strings.question.earlierDecision)
+})

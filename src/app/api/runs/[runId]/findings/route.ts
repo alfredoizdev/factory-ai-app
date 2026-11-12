@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { runs } from '@/db/schema'
+import { events, runs } from '@/db/schema'
 import { viewOf } from '@/engine/finding-view'
 import { findingsOf, problemGroups } from '@/engine/findings'
 import { openQuestion } from '@/engine/questions'
@@ -19,7 +19,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
   const findings = problemGroups(await findingsOf(runId)).map(viewOf)
   // The numbers the question refers to: the ones it lists, and any "D-07" in its sentences.
   const cited = new Set<number>(question?.touches ?? [])
-  for (const m of `${question?.text ?? ''} ${question?.why ?? ''}`.matchAll(/\bD-(\d+)\b/g)) cited.add(Number(m[1]))
+  // And in the reasons measured for the human check.
+  const assessed = (await db.select({ payloadJson: events.payloadJson }).from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.assessed')))).map(e => e.payloadJson)
+  for (const m of `${question?.text ?? ''} ${question?.why ?? ''} ${assessed.join(' ')}`.matchAll(/\bD-(\d+)\b/g)) cited.add(Number(m[1]))
   const touched = cited.size === 0 ? [] : (await listRegister(run.projectId))
     .filter(e => cited.has(e.number) && e.kind !== 'finding')
     .map(e => ({ number: e.number, label: label(e.number), kind: e.kind, text: clip(redact(e.text), 600) }))

@@ -208,6 +208,8 @@ export const strings = {
     model: (model: string, buildModel: string) => `Reviewing with ${model}, a different model from Build's ${buildModel}.`,
     approve: {
       clean: 'The reviewer found no problems. The final yes is yours.',
+      // Every report was looked at and none was a real problem.
+      noneWasReal: (n: number) => `The reviewers sent ${n} ${n === 1 ? 'report' : 'reports'}. None was a real problem. The final yes is yours.`,
       none: 'No review ran, so there is nothing to sum up. The final yes is yours.',
       // "3 problems found. 2 fixed, 1 needs you." Parts that are zero are left out.
       summary: (n: { found: number; fixed: number; discarded: number; needsYou: number }) => {
@@ -257,13 +259,15 @@ export const strings = {
     unclearAnswer: 'The answer was not one the app can act on by itself, so this one still needs you.',
     // The list under what is being decided: every problem the reviewers reported and how each one ended.
     heading: 'What the reviewers found',
+    legendTitle: 'What the marks mean',
+    number: (n: number) => `Problem ${n}`,
     none: 'The reviewers found no problems.',
     group: { fixed: 'Fixed', needs_you: 'Needs you', set_aside: 'Set aside', in_progress: 'Being checked' },
     how: { checked: 'The app checked it', ai: 'AI says so', not_checked: 'Not checked' },
     howMeans: {
-      checked: 'The app ran its own check, or looked in your project, and saw this itself.',
-      ai: 'An AI said so. The app did not check it.',
-      not_checked: 'Nothing could be run to check this.',
+      checked: 'The app ran a check itself and saw the result.',
+      ai: 'An AI agent said so, and the app could not check it.',
+      not_checked: 'Nothing could be run to check it.',
     },
     detail: { aiSaid: 'What the AI reviewer said', where: 'Where', command: 'What the app ran', output: 'What it printed', why: 'Why it ended this way', none: 'Nothing more was recorded.' },
     // What kind of problem it is, in the app's own words: the list never opens with the reviewer's text.
@@ -309,6 +313,9 @@ export const strings = {
     sent: 'Answer sent. The task goes on.',
     failed: 'Your answer could not be sent. Try again.',
     touchesTitle: 'This is about',
+    loadFailed: 'The question could not be loaded. The task is waiting for your answer.',
+    tryAgain: 'Try again',
+    closed: 'This question has already been answered, or the task is not waiting for an answer any more.',
     earlierDecision: 'an earlier decision of yours',
     seeDetails: 'See details',
     aiSaid: 'What the AI reviewer said',

@@ -1,5 +1,6 @@
 import { theme, type VisualState } from '@/ui/theme'
 import { strings } from '@/ui/strings'
+import { explained } from '@/ui/explain'
 import type { Block } from '@/domain/graph'
 import type { NodeState } from '@/domain/states'
 import { TypeMark } from './TypeMark'
@@ -764,7 +765,7 @@ export function RiskStrip({ risk }: { risk: { level: 'low' | 'high'; reasons: st
       <div style={{ ...CAPS, fontSize: 9.5, letterSpacing: '0.14em', color: tone, marginBottom: 6 }}>{strings.risk.label[risk.level]}</div>
       <ul style={{ margin: 0, paddingLeft: 16, display: 'grid', gap: 3, fontSize: 12.5, color: '#d6dce6', lineHeight: 1.4 }}>
         {risk.reasons.slice(0, 4).map(r => (
-          <li key={r}>{r}</li>
+          <li key={r}>{explained(r)}</li>
         ))}
       </ul>
       {risk.reasons.length > 4 && <div style={{ fontSize: 12, color: theme.dim, marginTop: 4 }}>{strings.canvas.andMore(risk.reasons.length - 4)}</div>}

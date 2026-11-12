@@ -134,3 +134,36 @@ test('rules still work as before: added from the box, with Enter', async () => {
   fireEvent.click(screen.getByRole('button', { name: strings.memory.add }))
   await waitFor(() => expect(calls.find(c => c.method === 'POST')?.body).toEqual({ text: 'Write in Spanish' }))
 })
+
+test('an edit has visible Save and Cancel buttons; Cancel leaves the entry as it was', async () => {
+  await open()
+  const row = screen.getByText('Use Stripe for payments — Yes').closest('li')!
+  fireEvent.click(within(row).getByRole('button', { name: strings.memory.edit }))
+  fireEvent.change(within(row).getByRole('textbox'), { target: { value: 'Something else' } })
+  fireEvent.click(within(row).getByRole('button', { name: strings.memory.cancelEdit }))
+  expect(within(row).queryByRole('textbox')).toBeNull()
+  expect(screen.getByText('Use Stripe for payments — Yes')).toBeInTheDocument()
+  expect(calls.some(c => c.method === 'PATCH')).toBe(false)
+  fireEvent.click(within(row).getByRole('button', { name: strings.memory.edit }))
+  fireEvent.change(within(row).getByRole('textbox'), { target: { value: 'Use Stripe only' } })
+  fireEvent.click(within(row).getByRole('button', { name: strings.memory.saveEdit }))
+  expect(await screen.findByText('Use Stripe only')).toBeInTheDocument()
+})
+
+test('a refused edit stays open with what the person typed and the server\'s sentence beside it', async () => {
+  respond = (_u, m) => (m === 'PATCH' ? new Response(JSON.stringify({ error: strings.memory.core.outside }), { status: 400 }) : null)
+  await open()
+  const row = screen.getByText('src/billing/').closest('li')!
+  fireEvent.click(within(row).getByRole('button', { name: strings.memory.edit }))
+  fireEvent.change(within(row).getByRole('textbox'), { target: { value: '../x' } })
+  fireEvent.click(within(row).getByRole('button', { name: strings.memory.saveEdit }))
+  expect(await within(row).findByRole('alert')).toHaveTextContent(strings.memory.core.outside)
+  expect(within(row).getByRole('textbox')).toHaveValue('../x')
+})
+
+test('after Remove, focus moves to the confirmation', async () => {
+  await open()
+  const row = screen.getByText('Use Stripe for payments — Yes').closest('li')!
+  fireEvent.click(within(row).getByRole('button', { name: strings.memory.remove('Use Stripe for payments — Yes') }))
+  expect(within(row).getByRole('button', { name: strings.memory.removeYes })).toHaveFocus()
+})

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChangeUnderReview } from '@/engine/approvals'
 import { strings } from '@/ui/strings'
+import { explained, type Touched } from '@/ui/explain'
 import type { ComposerSend } from './Composer'
 import { WorkingSpinner } from './BlockCard'
 import { PreviewButton } from './PreviewButton'
@@ -27,6 +28,7 @@ type Review = Pick<ChangeUnderReview, 'hash' | 'files' | 'diff' | 'truncated'>
  */
 export function GateSection({
   findings,
+  touched = [],
   away = null,
   runId,
   risk,
@@ -42,6 +44,8 @@ export function GateSection({
   runId: string
   /** What the reviewers found and how each ended, listed under what is being decided. Absent: no review ran, nothing is listed. */
   findings?: readonly FindingView[]
+  /** What the decisions named in a reason say, in their own words. */
+  touched?: readonly Touched[]
   risk?: { level: 'low' | 'high'; reasons: string[] }
   /** The shared composer's text: the note recorded with a decision, and what a request for changes asks for. */
   note: string
@@ -139,7 +143,7 @@ export function GateSection({
 
       {risk && !onSeeChanges && (
         <div style={{ fontSize: 12.5, color: risk.level === 'low' ? theme.passed : theme.waiting, lineHeight: 1.4 }}>
-          <strong>{strings.risk.label[risk.level]}:</strong> {risk.reasons.join(' ')}
+          <strong>{strings.risk.label[risk.level]}:</strong> {explained(risk.reasons.join(' '), touched)}
         </div>
       )}
 
@@ -167,7 +171,7 @@ export function GateSection({
         </button>
       )}
 
-      {findings && <FindingsList findings={findings} />}
+      {findings && <FindingsList findings={findings} touched={touched} />}
 
       {/* Before and after pictures, taken as soon as the change reaches the person. */}
       {review && review.files.length > 0 && !decided && (onSeeChanges ? <TakePictures runId={runId} autoStart={!away} /> : <BeforeAfterCard runId={runId} autoStart={!away} canTake={!away} />)}
@@ -308,7 +312,7 @@ export function ChangeUnderCheck({ runId, risk, away = null }: { runId: string; 
     <div data-testid="change-under-check" style={{ display: 'grid', gap: 12 }}>
       {risk && (
         <div style={{ fontSize: 13.5, color: risk.level === 'low' ? theme.passed : theme.waiting, lineHeight: 1.5 }}>
-          <strong>{strings.risk.label[risk.level]}:</strong> {risk.reasons.join(' ')}
+          <strong>{strings.risk.label[risk.level]}:</strong> {explained(risk.reasons.join(' '))}
         </div>
       )}
       <ChangesBox review={review} roomy />

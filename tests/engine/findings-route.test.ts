@@ -5,6 +5,7 @@ import { nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { mergeDuplicates, recordFindings, setFinding } from '@/engine/findings'
 import { askPerson } from '@/engine/questions'
+import { appendEventSync } from '@/engine/events'
 import { addEntry, label } from '@/engine/register'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { Finding } from '@/engine/review'
@@ -67,4 +68,12 @@ test('a run that does not exist is a plain 404', async () => {
   const res = await get('nope')
   expect(res.status).toBe(404)
   expect(((await res.json()) as { error: string }).error).toBe(strings.errors.runNotFound)
+})
+
+test('a decision named in the reasons measured for the human check is explained too', async () => {
+  const { projectId, runId, nodeRunId } = await run()
+  const decision = (await addEntry(projectId, { kind: 'decision', text: 'We use Stripe', source: 'question' }))!
+  await appendEventSync({ runId, nodeRunId, type: 'node.assessed', payload: { blockId: 'human', level: 'high', reasons: [`It touches a decision you made (${label(decision.number)}).`] } }, db)
+  const body = (await (await get(runId)).json()) as Body
+  expect(body.touched.map(t => t.text)).toEqual(['We use Stripe'])
 })

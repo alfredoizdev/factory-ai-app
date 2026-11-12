@@ -182,7 +182,7 @@ export function CanvasScreen({
   // What was asked, each on the card of the step it was asked at. Read again when something new is asked or decided.
   const prompts = usePrompts(runIdNow, `${events.filter(e => e.type === 'node.reopened' || e.type === 'node.plan_decided').length}-${runStatus ?? ''}`)
   // The problems the reviewers reported and the question the run waits on: read again when the run's events say they changed.
-  const { record, reload: reloadRecord } = useReviewRecord(runIdNow, recordMark(events))
+  const { record, failed: recordFailed, reload: reloadRecord } = useReviewRecord(runIdNow, recordMark(events))
   const withAsked = (base: Record<string, NodeRunView>): Record<string, NodeRunView> => {
     if (!run || prompts.length === 0) return base
     const out = { ...base }
@@ -326,13 +326,17 @@ export function CanvasScreen({
   const live = runStatus !== null && LIVE.has(runStatus)
   // A finished run's state is about the run on screen, not about what the buttons beside it will do: say so.
   const finished = runStatus === 'completed' || runStatus === 'failed' || runStatus === 'cancelled'
+  // A question from the review is the person's to answer: the header says so in the card's own words.
+  const asking = !!run && run.blocks.some(b => views[b.id]?.asking === true && views[b.id]?.state === 'waiting_approval')
   const statusText =
     run === null
       ? null
       : runStatus !== null
         ? finished
           ? strings.run.lastRun(strings.run.status[runStatus])
-          : strings.run.status[runStatus]
+          : runStatus === 'waiting_approval' && asking
+            ? strings.question.stateLabel
+            : strings.run.status[runStatus]
         : connected
           ? null
           : strings.run.connecting
@@ -355,7 +359,6 @@ export function CanvasScreen({
   const humanBlock = run?.blocks.find(b => b.kind === 'human')
   const planWaiting = !!run && run.blocks.some(b => b.kind === 'plan' && views[b.id]?.state === 'waiting_approval')
   // A question from the review is the person's to answer, in the same place; it is not the human check.
-  const asking = !!run && run.blocks.some(b => views[b.id]?.asking === true && views[b.id]?.state === 'waiting_approval')
   const reviewRan = !!run && run.providerId !== DEMO_PROVIDER_ID && run.blocks.some(b => b.kind === 'review' && b.enabled && views[b.id]?.state === 'passed')
   const mode: CardMode =
     run && runStatus === 'waiting_approval' && planWaiting
@@ -674,6 +677,7 @@ export function CanvasScreen({
           onCanContinue={can => setRetryFor(can && run ? run.runId : null)}
           onSeeChanges={humanBlock ? () => setDetailsOf(humanBlock.id) : undefined}
           record={record}
+          recordFailed={recordFailed}
           onRecordChanged={reloadRecord}
           showFindings={reviewRan}
         />

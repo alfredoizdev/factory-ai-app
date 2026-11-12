@@ -557,7 +557,7 @@ describe('the reviewer', () => {
     expect(seen.find(s => s.kind === 'review')!.model).toBe('sonnet')
     expect(seen.some(s => s.kind === 'approve')).toBe(false) // summed up by the app, not run by the agent
     const approve = await payloadOf(runId, 'node.completed', 'approve')
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 1, needsYou: 0 }))
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.noneWasReal(1))
     expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
 

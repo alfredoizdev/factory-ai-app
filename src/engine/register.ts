@@ -1,4 +1,4 @@
-import { existsSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { join, relative, isAbsolute, sep } from 'node:path'
 import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
@@ -218,11 +218,23 @@ export function normaliseCorePath(raw: string, repoPath: string | null): CorePat
   const folderWritten = slashed.endsWith('/')
   if (!repoPath || !existsSync(repoPath)) return { ok: true, path: folderWritten ? `${path}/` : path }
   try {
-    const wanted = join(repoPath, path)
-    const real = realpathSync(wanted)
-    const inside = relative(realpathSync(repoPath), real)
+    const rootReal = realpathSync(repoPath)
+    const real = realpathSync(join(repoPath, path))
+    const inside = relative(rootReal, real)
     if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return outside
-    return { ok: true, path: statSync(real).isDirectory() ? `${path}/` : path }
+    if (inside === '') return { ok: false, reason: strings.memory.core.empty }
+    // The path as the project names it: a link is followed (realpath above), and each name takes the case it has on disk,
+    // because touchesCore compares with the paths git reports, letter for letter.
+    const named: string[] = []
+    let here = rootReal
+    for (const seg of inside.split(sep)) {
+      const names = readdirSync(here)
+      const hit = names.includes(seg) ? seg : names.find(n => n.toLowerCase() === seg.toLowerCase())
+      if (hit === undefined) return { ok: false, reason: strings.memory.core.notFound }
+      named.push(hit)
+      here = join(here, hit)
+    }
+    return { ok: true, path: `${named.join('/')}${statSync(real).isDirectory() ? '/' : ''}` }
   } catch {
     return { ok: false, reason: strings.memory.core.notFound }
   }
