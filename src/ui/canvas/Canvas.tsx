@@ -60,10 +60,9 @@ function BlockNode({ data }: NodeProps<CardNode>) {
         borderRadius: 10,
         outline: data.highlighted ? `3px solid ${theme.pointer}` : 'none',
         outlineOffset: 3,
-        // Hover lifts the card off the floor. Under reduced motion it stays put: lift is movement.
+        // Hover deepens the card's shadow. The card itself never moves: its buttons and text stay where they are.
         boxShadow: theme.elevation(lifted ? 2 : 0),
-        transform: lifted ? 'translateY(-3px)' : 'none',
-        transition: reduced ? 'none' : 'transform 120ms ease-out, box-shadow 120ms ease-out',
+        transition: reduced ? 'none' : 'box-shadow 120ms ease-out',
       }}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} />

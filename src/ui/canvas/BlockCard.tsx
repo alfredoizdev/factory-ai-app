@@ -365,29 +365,9 @@ export function BlockCard({
         </p>
       ))}
 
-      {expanded && steps.length > 0 && (
-        <div style={{ marginTop: 13 }}>
-          <div style={{ ...CAPS, color: '#7d8798', marginBottom: 7 }}>{strings.canvas.steps}</div>
-          {hiddenSteps > 0 && (
-            <div style={{ color: theme.skipped, fontSize: 11.5, marginBottom: 4 }}>
-              {strings.canvas.earlierStepsHidden(hiddenSteps)}
-            </div>
-          )}
-          {/* start keeps the numbers true to the real position when earlier steps are not shown. */}
-          <ol start={hiddenSteps + 1} style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 3, fontSize: 12.5 }}>
-            {steps.map((s, i) => (
-              // The newest step is the one happening now, so it is the only one at full strength.
-              <li key={i} style={{ color: i === steps.length - 1 ? '#dfe4ec' : '#6a7383' }}>
-                {s}
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
-
       {failedActions && view.state === 'failed' && (
         // Buttons inside a canvas node: nodrag/nopan keep a press from moving the card, and the click stays here.
-        <div className="nodrag nopan" data-testid="failed-actions" style={{ display: 'flex', gap: 8, marginTop: 14 }} onClick={e => e.stopPropagation()}>
+        <div className="nodrag nopan" data-testid="failed-actions" style={{ display: 'flex', gap: 8, marginTop: 14, marginBottom: 14 }} onClick={e => e.stopPropagation()}>
           <button
             type="button"
             onClick={failedActions.onSee}
@@ -412,6 +392,27 @@ export function BlockCard({
       )}
 
       <div style={{ marginTop: 'auto' }}>
+        {/* The steps live at the foot of the card, open or not: one line when closed, the list when open. Nothing
+            above them moves when the card is clicked. */}
+        {expanded && steps.length > 0 && (
+          <div style={{ paddingTop: 12, borderTop: `1px solid ${theme.lineSoft}` }}>
+            <div style={{ ...CAPS, color: '#7d8798', marginBottom: 7 }}>{strings.canvas.steps}</div>
+            {hiddenSteps > 0 && (
+              <div style={{ color: theme.skipped, fontSize: 11.5, marginBottom: 4 }}>
+                {strings.canvas.earlierStepsHidden(hiddenSteps)}
+              </div>
+            )}
+            {/* start keeps the numbers true to the real position when earlier steps are not shown. */}
+            <ol start={hiddenSteps + 1} style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 3, fontSize: 12.5 }}>
+              {steps.map((s, i) => (
+                // The newest step is the one happening now, so it is the only one at full strength.
+                <li key={i} style={{ color: i === steps.length - 1 ? '#dfe4ec' : '#6a7383' }}>
+                  {s}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
         {!expanded && latestStep !== undefined && (
           <div
             style={{
