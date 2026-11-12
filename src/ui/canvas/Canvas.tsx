@@ -350,6 +350,8 @@ export function Canvas({
   const selected = graph.blocks.find(b => b.id === selectedId) ?? null
   const addable = addableKinds(graph)
   const flow = useRef<ReactFlowInstance<CardNode> | null>(null)
+  // Each card's size as the flow last measured it.
+  const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({})
   const reducedMotion = useReducedMotion()
   const [sidebarOpen, setSidebarOpen] = usePersistentFlag(SIDEBAR_KEY, true)
   // While a run is on screen the camera is placed from the layout itself (laneViewport), the same on every load; while
@@ -475,7 +477,7 @@ export function Canvas({
 
   // Offered on a block that failed, while a run is on screen.
   const failedActions = hasRun && onFailedClick ? { onSee: () => onFailedClick('see'), onAgain: canRetry ? () => onFailedClick('again') : undefined } : undefined
-  const nodes: CardNode[] = [
+  const built: CardNode[] = [
     ...graph.blocks.map(block => {
       // No run: honestly queued. In a run: the stream's view, or queued when the run holds the block but has said nothing yet.
       // Not in the run: no view at all, drawn as such.
@@ -530,6 +532,10 @@ export function Canvas({
       },
     })),
   ]
+  // The nodes are built afresh on every render, and the flow hides a node whose size it does not know. Each card's
+  // measured size is therefore kept here and handed back with it; without that, any redraw (a status arriving, a
+  // window opening) could leave cards invisible until something happened to measure them again.
+  const nodes: CardNode[] = built.map(n => (sizes[n.id] ? { ...n, measured: sizes[n.id] } : n))
   const drawn = new Set(nodes.map(n => n.id))
   const outsideRun = new Set(nodes.filter(n => n.data.view === null).map(n => n.id))
   const toStored = (id: string, position: { x: number; y: number }) => {
@@ -789,6 +795,10 @@ export function Canvas({
           onNodesChange={changes => {
             // Follow the pointer while dragging; nothing is saved until the drag ends.
             for (const c of changes) {
+              if (c.type === 'dimensions' && c.dimensions) {
+                const { width, height } = c.dimensions
+                setSizes(prev => (prev[c.id]?.width === width && prev[c.id]?.height === height ? prev : { ...prev, [c.id]: { width, height } }))
+              }
               if (c.type === 'position' && c.position) {
                 // The pointer sees the pushed position; the stored one is without the transient offset.
                 const stored = toStored(c.id, c.position)
