@@ -106,8 +106,9 @@ function BlockNode({ data }: NodeProps<CardNode>) {
       </div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
       {/* Bottom handles carry the return cable so it loops beneath the lane. */}
-      <Handle id={RETURN_OUT} type="source" position={Position.Bottom} isConnectable={false} />
-      <Handle id={RETURN_IN} type="target" position={Position.Bottom} isConnectable={false} />
+      {/* On top: the way back runs above the lane, clear of the check blocks stacked below it. */}
+      <Handle id={RETURN_OUT} type="source" position={Position.Top} isConnectable={false} />
+      <Handle id={RETURN_IN} type="target" position={Position.Top} isConnectable={false} />
     </div>
   )
 }
@@ -521,7 +522,7 @@ export function Canvas({
           id: `${e.from}->${e.to}:return`,
           source: e.from,
           target: e.to,
-          // Both ends use bottom handles, so the path drops below the lane and back up.
+          // Both ends use top handles, so the path rises above the lane and comes back down: nothing is ever drawn there.
           sourceHandle: RETURN_OUT,
           targetHandle: RETURN_IN,
           type: 'smoothstep',
