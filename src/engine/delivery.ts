@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { approvals, events, projects, runs } from '@/db/schema'
+import { events, projects, runs } from '@/db/schema'
 import { appendEventSync } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 import { branchFromWords, fallbackWords, type CommitMessage } from '@/engine/branch-name'
@@ -13,6 +13,7 @@ import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
 import { elsewhere, runPlace } from '@/engine/machine'
 import { serialized } from '@/engine/serial'
+import { humanCheckPassedBy } from '@/engine/passed-check'
 
 // Bringing an approved change into the person's own project. Two things, both local, nothing pushed anywhere:
 // the change is committed on the run's own branch (factory/<run>), so it is kept and can be merged or pushed later;
@@ -22,6 +23,8 @@ import { serialized } from '@/engine/serial'
 export type Delivery = {
   /** True once a person approved this run and it finished: only then can it be brought over. */
   eligible: boolean
+  /** Who opened the human check: the person, or the app on its own. Null while nobody has. */
+  passedBy: 'person' | 'app' | null
   /** Committed on its own branch in the person's repository. */
   kept: boolean
   /** Also applied to the person's checkout, uncommitted. */
@@ -59,8 +62,8 @@ const git = (cwd: string, args: string[], input?: string) =>
 async function approvedAndFinished(runId: string) {
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) return null
-  const approved = (await db.select().from(approvals).where(and(eq(approvals.runId, runId), eq(approvals.decision, 'approved'))))[0]
-  return { run, eligible: run.status === 'completed' && !!approved && !!run.worktreePath && !!run.baseCommit }
+  const passedBy = await humanCheckPassedBy(runId)
+  return { run, passedBy, eligible: run.status === 'completed' && passedBy !== null && !!run.worktreePath && !!run.baseCommit }
 }
 
 type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string; pullRequestUrl?: string | null }
@@ -108,6 +111,7 @@ export async function deliveryState(runId: string): Promise<Delivery> {
     here: place.here,
     machine: place.machine,
     eligible: found.eligible,
+    passedBy: found.passedBy,
     kept: !!kept,
     delivered: !!done,
     branch: kept?.branch ?? found.run.branch,

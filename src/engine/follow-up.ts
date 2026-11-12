@@ -1,11 +1,12 @@
 import { eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { approvals, nodeRuns, runs, workflowVersions } from '@/db/schema'
+import { nodeRuns, runs, workflowVersions } from '@/db/schema'
 import type { Graph } from '@/domain/graph'
 import { and } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
 import { DeliveryError, keepCommit, unfinishedCommit, wasDelivered } from '@/engine/delivery'
 import { appendEvent } from '@/engine/events'
+import { humanCheckPassedBy } from '@/engine/passed-check'
 import { runPlace } from '@/engine/machine'
 import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { createRun, type RunProviderId } from '@/engine/run'
@@ -30,8 +31,7 @@ export async function startFollowUp(parentRunId: string, note: string): Promise<
   if (!parent) throw new FollowUpError(strings.errors.runNotFound, 404)
   // A run that failed is picked up where it stopped instead: see continueFailed.
   if (parent.status === 'failed') return continueFailed(parent, text)
-  const approved = (await db.select().from(approvals).where(and(eq(approvals.runId, parentRunId), eq(approvals.decision, 'approved'))))[0]
-  if (parent.status !== 'completed' || !approved || !parent.worktreePath || !parent.baseCommit) {
+  if (parent.status !== 'completed' || (await humanCheckPassedBy(parentRunId)) === null || !parent.worktreePath || !parent.baseCommit) {
     throw new FollowUpError(strings.followUp.notEligible, 409)
   }
   let parentCommit: string

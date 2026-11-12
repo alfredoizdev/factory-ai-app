@@ -7,7 +7,7 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { approvals, events, nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { eventsSince } from '@/engine/events'
+import { appendEvent, eventsSince } from '@/engine/events'
 import { deliverToProject, DeliveryError, deliveryState, githubPullUrl, pushBranch, switchBack, switchToBranch } from '@/engine/delivery'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import { createRunWorktree } from '@/engine/worktree'
@@ -19,7 +19,7 @@ const now = () => new Date().toISOString()
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
 
 /** A person's project, and a finished run whose worktree (a real git worktree of it) holds a change. */
-async function finishedRun(options: { approved?: boolean } = {}) {
+async function finishedRun(options: { approved?: boolean; passedByApp?: boolean } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'factory-project-'))
   git(repo, 'init', '-q', '-b', 'main')
   git(repo, 'config', 'user.email', 'me@example.com')
@@ -40,7 +40,11 @@ async function finishedRun(options: { approved?: boolean } = {}) {
   writeFileSync(join(ws.path, 'page.tsx'), 'button: outline\nfooter: same\n')
   writeFileSync(join(ws.path, 'Button.tsx'), 'export const B = 1\n')
   const human = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === 'human')!
-  if (options.approved !== false) {
+  if (options.passedByApp) {
+    // As the executor records a gate it passed on its own (passLowRiskGate): node passed, node.completed with autoApproved.
+    await db.update(nodeRuns).set({ state: 'passed', summary: strings.risk.passedLow }).where(eq(nodeRuns.id, human.id))
+    await appendEvent({ runId, nodeRunId: human.id, type: 'node.completed', payload: { blockId: 'human', summary: strings.risk.passedLow, summarySource: 'system', autoApproved: true } })
+  } else if (options.approved !== false) {
     await db.insert(approvals).values({ id: ulid(), projectId, runId, nodeRunId: human.id, decision: 'approved', actor: 'me', diffHash: 'h', createdAt: now(), consumedAt: now() })
   }
   return { runId, repo, workflowId, wt: ws.path, branch: ws.branch, base: ws.baseCommit }
@@ -644,4 +648,19 @@ test('a failed run whose working copy is gone cannot be picked up, and says so',
   await db.update(runs).set({ worktreePath: '/nowhere/at/all' }).where(eq(runs.id, runId))
   expect((await runFailure(runId))!.canContinue).toBe(false)
   await expect(startFollowUp(runId, 'again')).rejects.toThrow(strings.failure.cannotContinue)
+})
+
+test('a run the app passed is eligible to keep, send and continue, like one a person approved', async () => {
+  const { runId, branch } = await finishedRun({ passedByApp: true })
+  const state = await deliveryState(runId)
+  expect(state).toMatchObject({ eligible: true, passedBy: 'app' })
+  expect((await keepOnBranch(runId)).kept).toBe(true)
+  const followUp = await startFollowUp(runId, 'uppercase')
+  expect((await db.select().from(runs).where(eq(runs.id, followUp.runId)))[0]!.parentRunId).toBe(runId)
+  expect(branch).toBeTruthy()
+})
+
+test('a run a person approved says so, and a run nobody passed is not eligible', async () => {
+  expect(await deliveryState((await finishedRun()).runId)).toMatchObject({ eligible: true, passedBy: 'person' })
+  expect(await deliveryState((await finishedRun({ approved: false })).runId)).toMatchObject({ eligible: false, passedBy: null })
 })
