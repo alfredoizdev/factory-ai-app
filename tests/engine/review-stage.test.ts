@@ -618,8 +618,9 @@ describe('a step that runs again writes nothing twice', () => {
       await drive(runId, s.provider, dir, base, step, s.deps)
       expect(await counts(runId)).toEqual(before)
       expect(s.calls.filter(c => c.role === 'verifier').length).toBe(verifiers)
-      // A second fixer call on re-execution of fix- is accepted in this task (Task 8 closes it); only the records are held to account there.
-      if (prefix !== 'fix-') expect(s.calls.filter(c => c.role === 'fixer').length).toBe(fixers)
+      // The fix- guard sees the committed state and makes no second call. Only a crash before that state is written can still
+      // call the fixer twice (Task 8 closes it); the records are never doubled either way.
+      expect(s.calls.filter(c => c.role === 'fixer').length).toBe(fixers)
       expect((await findingsOf(runId))[0]).toMatchObject({ state: 'fixed_unchecked', entryNumber: row!.entryNumber })
     })
   }
@@ -691,7 +692,13 @@ describe('cancelling and failing', () => {
     await drive(runId, s.provider, dir, base, step, s.deps)
     await cancelRun(runId)
     step.onWait = async () => ({ data: {} })
+    const [row] = await findingsOf(runId)
+    step.ids.length = 0
     await drive(runId, s.provider, dir, base, step, s.deps)
+    // The stage stopped at the first wake-up: one wait, one read, no second round of waiting.
+    expect(step.ids.filter(id => id.startsWith('question-'))).toEqual([`question-${row!.id}-0`])
+    expect(step.ids.filter(id => id.startsWith('read-answer-'))).toEqual([`read-answer-${row!.id}-0`])
+    expect(step.ids.some(id => id.startsWith('resolve-') || id.startsWith('review-close-'))).toBe(false)
     expect(await counts(runId)).toEqual({ register: 0, resolved: 0, questions: 1 })
     expect(s.calls.some(c => c.role === 'fixer')).toBe(false)
     expect((await findingsOf(runId))[0]!.entryNumber).toBeNull()
