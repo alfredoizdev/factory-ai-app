@@ -19,6 +19,8 @@ export type RunEventType =
   | 'run.pushed'
   | 'run.installed'
   | 'run.pr_opened'
+  // After the change passed, the app kept, sent and opened it on its own: started, opened, or stopped at a step and why.
+  | 'run.auto_ship'
   | 'run.merged'
   // The person put a ready pull request on hold (held: true), or took it off hold (held: false).
   | 'run.on_hold'

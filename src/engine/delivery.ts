@@ -47,10 +47,16 @@ export type Delivery = {
   here: boolean
   /** The name of the computer it is on, when known. */
   machine: string | null
+  /** Kept, sent and opened as a pull request on its own after it passed: how far that went. Null when it was not tried. */
+  autoShip: AutoShip | null
 }
 
+/** The latest word of the steps that keep, send and open a change on their own. The values are stored: never reword them. */
+export type AutoShip = { state: 'started' | 'opened' | 'stopped'; step: 'keep' | 'send' | 'open' | null; reason: 'no_connection' | 'failed' | null; message: string | null }
+
 export class DeliveryError extends Error {
-  constructor(message: string, readonly status: 400 | 404 | 409) {
+  /** `no_connection`: the project is not connected to GitHub (no origin), so there is nowhere to send it. */
+  constructor(message: string, readonly status: 400 | 404 | 409, readonly kind?: 'no_connection') {
     super(message)
     this.name = 'DeliveryError'
   }
@@ -69,7 +75,7 @@ async function approvedAndFinished(runId: string) {
 type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string; pullRequestUrl?: string | null }
 
 /** The latest record of this kind for this run, if there was one. A keep or a delivery happens once; a switch may repeat. */
-async function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed'): Promise<Record_ | null> {
+async function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed' | 'run.auto_ship'): Promise<Record_ | null> {
   const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)))[0]
   return row ? (JSON.parse(row.payloadJson) as Record_) : null
 }
@@ -122,7 +128,13 @@ export async function deliveryState(runId: string): Promise<Delivery> {
     returnTo: (await recordOf(runId, 'run.switched'))?.from ?? null,
     pushed: pushedRecord !== null && pushedRecord.branch === (kept?.branch ?? found.run.branch),
     pullRequestUrl: pushedRecord?.pullRequestUrl ?? null,
+    autoShip: autoShipOf((await recordOf(runId, 'run.auto_ship')) as unknown as Partial<AutoShip> | null),
   }
+}
+
+function autoShipOf(p: Partial<AutoShip> | null): AutoShip | null {
+  if (!p) return null
+  return { state: p.state ?? 'started', step: p.step ?? null, reason: p.reason ?? null, message: p.message ?? null }
 }
 
 /**
@@ -421,7 +433,7 @@ export async function pushBranch(runId: string): Promise<Delivery> {
     try {
       remote = git(repo, ['remote', 'get-url', 'origin'])
     } catch {
-      throw new DeliveryError(strings.delivery.noRemote, 409)
+      throw new DeliveryError(strings.delivery.noRemote, 409, 'no_connection')
     }
     try {
       await gitAsync(repo, ['push', '--porcelain', 'origin', `refs/heads/${branch}:refs/heads/${branch}`])
@@ -436,7 +448,11 @@ export async function pushBranch(runId: string): Promise<Delivery> {
       // Upstream tracking is a convenience; the push itself succeeded.
     }
     const pullRequestUrl = githubPullUrl(remote, branch)
-    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx)))
+    // Sending the same branch again (opening its pull request pushes first) is said once.
+    const before = await recordOf(runId, 'run.pushed')
+    if (before?.branch !== branch || (before.pullRequestUrl ?? null) !== pullRequestUrl) {
+      await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx)))
+    }
     return deliveryState(runId)
   })
 }

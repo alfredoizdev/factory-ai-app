@@ -17,6 +17,7 @@ import { recordDecision } from '@/engine/approvals'
 import { addEntry } from '@/engine/register'
 import { depthOf } from '@/engine/inngest/review-stage'
 import { createProject } from '@/engine/projects'
+import { createRunWorktree } from '@/engine/worktree'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { TestRun } from '@/engine/test-runner'
 import type { AgentEvent, AgentProvider, BlockRoute } from '@/providers/types'
@@ -941,5 +942,132 @@ describe('the plan follows the project\'s ask mode', () => {
       expect(s.waits).toEqual(['approval-human'])
       expect(s.ids).toEqual(expect.arrayContaining(['assess-human', 'node-human']))
     })
+  })
+})
+
+// ---- after the change passes: kept, sent and opened on its own -----------------------------------------------------
+
+describe('after a change passes in "only what matters"', () => {
+  const g = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
+  /** A project made the way the app makes one, with an origin that is a bare repository in a temporary folder. */
+  async function shippingRun(askMode: AskMode, origin = true) {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-ship-'))
+    g(dir, 'init', '-q', '-b', 'main')
+    g(dir, 'config', 'user.email', 'me@example.com')
+    g(dir, 'config', 'user.name', 'me')
+    writeFileSync(join(dir, 'README.md'), 'shop\n')
+    g(dir, 'add', '.')
+    g(dir, 'commit', '-q', '-m', 'mine')
+    const bare = mkdtempSync(join(tmpdir(), 'factory-ship-origin-'))
+    g(bare, 'init', '-q', '--bare', '-b', 'main')
+    if (origin) g(dir, 'remote', 'add', 'origin', bare)
+    const { workflowId } = await createProject({ path: dir, name: 'Shop', testCommand: 'npm test', checks: [], askMode })
+    const { runId } = await createRun({ workflowId, request: 'add a footer' })
+    await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))
+    return { runId, bare }
+  }
+  /** Writes one file in the run's own copy; the tests pass and the reviewer finds nothing. */
+  function writes(file: string): AgentProvider {
+    return {
+      id: 'files', isDemo: false, needsWorkspace: true,
+      async *execute(input) {
+        if (input.blockKind === 'build') {
+          mkdirSync(dirname(join(input.workdir!, file)), { recursive: true })
+          writeFileSync(join(input.workdir!, file), 'x()\n')
+        }
+        if (input.blockKind === 'tests') yield { type: 'evidence', kind: 'test_run', data: passingTests }
+        if (input.blockKind === 'review') {
+          yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+          return
+        }
+        yield { type: 'done', summary: 'ok', source: 'system' }
+      },
+    }
+  }
+  function fakeGh(): ((args: string[]) => Promise<string>) & { calls: string[][] } {
+    const calls: string[][] = []
+    let opened = false
+    const gh = async (args: string[]) => {
+      calls.push(args)
+      if (args[1] === 'create') return ((opened = true), '')
+      if (args[1] === 'view') {
+        if (!opened) throw new Error('no pull requests found')
+        return JSON.stringify({ number: 9, url: 'https://github.com/me/shop/pull/9', state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [], mergeCommit: null, mergedAt: null })
+      }
+      return ''
+    }
+    return Object.assign(gh, { calls })
+  }
+  /** Steps that remember their ids; the person approves when the run waits for them, if `yes`. */
+  function steps(runId: string, yes: boolean): StepApi & { ids: string[]; seen: { human: string; kept: number }[] } {
+    const ids: string[] = []
+    const seen: { human: string; kept: number }[] = []
+    return {
+      ids, seen,
+      run: async (id, fn) => (ids.push(id), JSON.parse(JSON.stringify((await fn()) ?? null))),
+      waitForEvent: async () => {
+        seen.push({ human: (await node(runId, 'human')).state, kept: (await payloadOf(runId, 'run.kept')).length })
+        if (!yes) throw new Parked()
+        await recordDecision(runId, 'approved', { actor: 'me', diffHash: null })
+        return { data: { decision: 'approved' } }
+      },
+    }
+  }
+  async function go(runId: string, file: string, yes: boolean, connections = true) {
+    const gh = fakeGh()
+    const more: Partial<ExecutorDeps> = connections ? { autoShip: { gh, ask: async () => 'footer' } } : {}
+    const root = mkdtempSync(join(tmpdir(), 'factory-ship-wts-'))
+    const s = steps(runId, yes)
+    try {
+      await orchestrateRun(runId, s, { resolveProvider: () => writes(file), createWorktree: (repo, id, sp, req) => createRunWorktree(repo, id, root, sp, req), ...more })
+    } catch (e) {
+      if (!(e instanceof Parked)) throw e
+    }
+    return { ids: s.ids, seen: s.seen, gh }
+  }
+  const once = (ids: string[], id: string) => ids.filter(i => i === id).length
+  const statusOf = async (runId: string) => (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status
+
+  test('a simple change reaches an open pull request without the person', async () => {
+    const { runId, bare } = await shippingRun('what_matters')
+    const { ids, gh } = await go(runId, 'src/ui/footer/Footer.tsx', false)
+    expect(await statusOf(runId)).toBe('completed')
+    expect((await node(runId, 'human')).state).toBe('passed')
+    expect(await payloadOf(runId, 'run.pr_opened')).toMatchObject([{ number: 9, base: 'main' }])
+    for (const id of ['auto-ship-check', 'auto-ship-keep', 'auto-ship-send', 'auto-ship-open']) expect(once(ids, id)).toBe(1)
+    const branch = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.branch!
+    expect(g(bare, 'branch', '--list', branch)).not.toBe('')
+    expect(g(bare, 'branch', '--list', 'main')).toBe('')
+    expect(gh.calls.some(c => c.includes('merge'))).toBe(false)
+  })
+
+  test('the person\'s yes also sends it', async () => {
+    const { runId } = await shippingRun('what_matters')
+    const { gh, seen } = await go(runId, 'src/lib/stripe.ts', true)
+    // A sensitive change stopped for the person, with nothing kept, until their yes.
+    expect(seen).toEqual([{ human: 'waiting_approval', kept: 0 }])
+    expect(await statusOf(runId)).toBe('completed')
+    expect(await payloadOf(runId, 'run.pr_opened')).toHaveLength(1)
+    expect(gh.calls.some(c => c.includes('merge'))).toBe(false)
+  })
+
+  test('in "small changes" it passes on its own and nothing is kept or sent', async () => {
+    const { runId } = await shippingRun('small_changes')
+    const { ids, gh } = await go(runId, 'src/ui/footer/Footer.tsx', false)
+    expect(await statusOf(runId)).toBe('completed')
+    expect(await payloadOf(runId, 'node.completed', 'human')).toMatchObject([{ autoApproved: true }])
+    expect(await payloadOf(runId, 'run.kept')).toEqual([])
+    expect(ids).not.toContain('auto-ship-keep')
+    expect(gh.calls).toEqual([])
+  })
+
+  test('without the app\'s connections and with no origin, it is kept, nothing is sent, and the run still completes', async () => {
+    const { runId } = await shippingRun('what_matters', false)
+    const { ids } = await go(runId, 'src/ui/footer/Footer.tsx', false, false)
+    expect(await statusOf(runId)).toBe('completed')
+    expect(await payloadOf(runId, 'run.kept')).toHaveLength(1)
+    expect(await payloadOf(runId, 'run.pushed')).toEqual([])
+    expect((await payloadOf(runId, 'run.auto_ship')).at(-1)).toMatchObject({ state: 'stopped', step: 'send', reason: 'no_connection' })
+    expect(ids).not.toContain('auto-ship-open')
   })
 })

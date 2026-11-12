@@ -781,6 +781,23 @@ export const strings = {
     dirty: 'Your project has changes that are not committed. Commit or stash them first, so your work and the agent\'s are not mixed.',
     nothing: 'This run changed no files, so there is nothing to bring.',
     conflict: (branch: string) => `Your project changed in the same places since this run began, so the change does not fit cleanly. Nothing was changed. It is kept on the local branch ${branch} to merge by hand.`,
+    /** After it passed in "only what matters": kept, sent to GitHub and opened as a pull request on its own. */
+    auto: {
+      working: 'Sending it to GitHub and opening a pull request for you…',
+      openedByApp: 'It passed on its own, so it was sent to GitHub and a pull request is open. Publish it when you are ready.',
+      openedAfterYes: 'You approved it, so it was sent to GitHub and a pull request is open. Publish it when you are ready.',
+      passedReady: 'It passed on its own. It is ready, but not in your project yet.',
+      stopped: {
+        keep: 'It passed, but it could not be saved on its own branch. Nothing was sent.',
+        send: 'It is saved on its own branch on this computer, but it could not be sent to GitHub.',
+        open: 'It was sent to GitHub, but the pull request could not be opened.',
+        noConnection: 'It is saved on its own branch on this computer. It was not sent, because this project is not connected to GitHub.',
+      },
+      whatHappened: 'What happened',
+      tryAgain: 'You can try again with the button below.',
+      /** Never sent on its own: the kept branch is the project's main branch. */
+      mainBranch: 'Its branch has the same name as your main branch, so it was not sent on its own.',
+    },
   },
   followUp: {
     title: 'Another change',

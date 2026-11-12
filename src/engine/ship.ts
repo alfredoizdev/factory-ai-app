@@ -44,7 +44,8 @@ export type ShipState = {
 }
 
 export class ShipError extends Error {
-  constructor(message: string, readonly status: 404 | 409 = 409) {
+  /** `no_connection`: no gh, gh not signed in, or no GitHub origin: the project is not connected to GitHub here. */
+  constructor(message: string, readonly status: 404 | 409 = 409, readonly kind?: 'no_connection') {
     super(message)
     this.name = 'ShipError'
   }
@@ -90,10 +91,10 @@ async function repoOf(runId: string): Promise<{ repo: string; branch: string }> 
 /** gh's own failure, said in a person's words: missing, not logged in, not a GitHub repository, or what it said. */
 function ghFailure(e: unknown): ShipError {
   const err = e as { code?: string; message?: string }
-  if (err.code === 'ENOENT') return new ShipError(strings.ship.noGh)
+  if (err.code === 'ENOENT') return new ShipError(strings.ship.noGh, 409, 'no_connection')
   const said = redact(String(err.message ?? '')).replace(/[a-z]+:\/\/[^\s]*@/gi, '')
-  if (/auth login|not logged|authentication/i.test(said)) return new ShipError(strings.ship.notLoggedIn)
-  if (/no git remotes|not a github|none of the git remotes/i.test(said)) return new ShipError(strings.ship.notGitHub)
+  if (/auth login|not logged|authentication/i.test(said)) return new ShipError(strings.ship.notLoggedIn, 409, 'no_connection')
+  if (/no git remotes|not a github|none of the git remotes/i.test(said)) return new ShipError(strings.ship.notGitHub, 409, 'no_connection')
   return new ShipError(strings.ship.ghSaid(clip(said.trim().split('\n').filter(Boolean).slice(-2).join(' '), 300)))
 }
 
@@ -109,7 +110,7 @@ export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promis
     try {
       await pushBranch(runId)
     } catch (e) {
-      throw e instanceof DeliveryError ? new ShipError(e.message) : e
+      throw e instanceof DeliveryError ? new ShipError(e.message, 409, e.kind) : e
     }
     const base = defaultBranch(repo) ?? 'main'
     let pr: { number: number; url: string }

@@ -689,3 +689,60 @@ test('a run a person approved says so, and a run nobody passed is not eligible',
   expect(await deliveryState((await finishedRun()).runId)).toMatchObject({ eligible: true, passedBy: 'person' })
   expect(await deliveryState((await finishedRun({ approved: false })).runId)).toMatchObject({ eligible: false, passedBy: null })
 })
+
+// ---- what keeping and sending on its own reuses ---------------------------------------------------------------------
+
+describe('the pieces the automatic pull request reuses', () => {
+  test('the Save button\'s naming: a model names the branch and describes the change before the first keep only', async () => {
+    const { keepOptionsFor } = await import('@/engine/delivery-options')
+    const { runId } = await finishedRun()
+    const asked: string[] = []
+    const ask = async (prompt: string) => (asked.push(prompt), prompt.startsWith('Name a git branch') ? 'outline-buttons' : 'Outline the buttons\n\n- border only')
+    const options = await keepOptionsFor(runId, '', ask)
+    expect(options).toEqual({ name: null, fallbackName: `ai/outline-buttons-${runId.slice(-6).toLowerCase()}`, message: { subject: 'Outline the buttons', body: '- border only' } })
+    // A name the person typed is not asked for.
+    expect((await keepOptionsFor(runId, 'mine/x', ask)).fallbackName).toBeNull()
+    await keepOnBranch(runId, options)
+    asked.length = 0
+    expect(await keepOptionsFor(runId, '', ask)).toEqual({ name: null, fallbackName: null, message: null })
+    expect(asked).toEqual([])
+  })
+
+  test('no origin is a missing connection, and nothing was tried on its own yet', async () => {
+    const { runId } = await finishedRun()
+    await keepOnBranch(runId)
+    const err = await pushBranch(runId).catch(e => e as DeliveryError)
+    expect(err).toBeInstanceOf(DeliveryError)
+    expect((err as DeliveryError).kind).toBe('no_connection')
+    expect((await deliveryState(runId)).autoShip).toBeNull()
+  })
+
+  test('sending the same branch twice is recorded once', async () => {
+    const { runId, repo } = await finishedRun()
+    git(repo, 'remote', 'add', 'origin', (() => {
+      const o = mkdtempSync(join(tmpdir(), 'factory-twice-'))
+      git(o, 'init', '-q', '--bare')
+      return o
+    })())
+    await keepOnBranch(runId)
+    await pushBranch(runId)
+    await pushBranch(runId)
+    expect((await eventsSince(runId, 0)).filter(e => e.type === 'run.pushed')).toHaveLength(1)
+  })
+
+  test('gh\'s missing pieces are a missing connection; anything else it says is not', async () => {
+    const { openPullRequest, ShipError } = await import('@/engine/ship')
+    const { runId, repo } = await finishedRun()
+    const o = mkdtempSync(join(tmpdir(), 'factory-gh-'))
+    git(o, 'init', '-q', '--bare')
+    git(repo, 'remote', 'add', 'origin', o)
+    await keepOnBranch(runId)
+    for (const [said, kind] of [['To get started with GitHub CLI, please run:  gh auth login', 'no_connection'], ['none of the git remotes configured for this repository point to a known GitHub host', 'no_connection'], ['HTTP 502', undefined]] as const) {
+      const err = await openPullRequest(runId, async () => {
+        throw new Error(said)
+      }).catch(e => e as InstanceType<typeof ShipError>)
+      expect(err).toBeInstanceOf(ShipError)
+      expect((err as InstanceType<typeof ShipError>).kind).toBe(kind)
+    }
+  })
+})

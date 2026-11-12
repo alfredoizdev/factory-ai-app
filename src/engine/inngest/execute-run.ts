@@ -33,6 +33,8 @@ import { demoProvider } from '@/providers/demo'
 import type { AgentExecutionInput, AgentProvider, ReviewMiss, VerifierMiss } from '@/providers/types'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
+import { autoKeep, autoOpen, autoSend, endAutoShipAfterError, shouldShipOnItsOwn, type AutoShipDeps } from '@/engine/auto-ship'
+import { askClaude } from '@/engine/branch-name'
 
 // The durable run. Every state change is written as an event in the same transaction as the row it changes;
 // nothing here keeps state the canvas could see that the event log does not hold. Each node is one step, so
@@ -69,6 +71,8 @@ export type ExecutorDeps = {
   makeCopy?: typeof realMakeCopy
   /** Where the snapshots taken before a fix are kept. Default: the app's own data folder. */
   snapshotStore?: string
+  /** What keeping, sending and opening a passed change on its own uses. Absent: the real gh, and no model to name it. */
+  autoShip?: AutoShipDeps
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -83,6 +87,7 @@ const defaultDeps: ExecutorDeps = {
     const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
     return projectId ? (await copyBaseInto(projectId, dir)) : { copied: false, reason: 'no-base' }
   },
+  autoShip: { ask: askClaude },
 }
 
 const MAX_LISTED_FILES = 20
@@ -1310,6 +1315,17 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     else if (status === 'waiting_approval') (await setRunStatus(runId, 'waiting_approval', { type: 'run.waiting_approval' }))
     return status
   })
+
+  // In "only what matters", a change that passed (on its own or by the person's yes) is kept, sent and opened as a pull
+  // request, each its own step, after the run is completed. A refusal ends softly and leaves the run as it is. Never merged.
+  const { mode: askMode, stopForMe: stopsForMe } = modeOf(plan)
+  const ship = await step.run('auto-ship-check', () => shouldShipOnItsOwn(runId, askMode, stopsForMe))
+  if (ship) {
+    const auto = deps.autoShip ?? {}
+    if ((await step.run('auto-ship-keep', () => autoKeep(runId, auto))).ok && (await step.run('auto-ship-send', () => autoSend(runId))).ok) {
+      await step.run('auto-ship-open', () => autoOpen(runId, auto))
+    }
+  }
 }
 
 // Last resort when a step throws for good (missing run, exhausted retries): nothing may be left running with no
@@ -1340,7 +1356,10 @@ export const executeRun = inngest.createFunction(
     triggers: [{ event: RUN_REQUESTED }],
     onFailure: async ({ event }) => {
       const runId = (event.data.event.data as { runId?: unknown }).runId
-      if (typeof runId === 'string') (await failRunAfterError(runId))
+      if (typeof runId === 'string') {
+        (await failRunAfterError(runId))
+        await endAutoShipAfterError(runId).catch(() => undefined)
+      }
     },
   },
   async ({ event, step }) => {
