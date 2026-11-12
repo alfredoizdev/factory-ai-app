@@ -914,6 +914,18 @@ export const strings = {
     jobStep: (n: number, title: string) => `${n}. ${title}`,
     model: (model: string) => `Planned with ${model}.`,
     notPickedUp: 'The run has not picked this up yet. If it stays like this, check that the Inngest dev server is running.',
+    reasons: {
+      asks: 'The planner needs you to decide something.',
+      questionUnreadable: 'The planner wanted to ask you something, but its question could not be read.',
+      noPaths: 'The planner did not say which files it expects to change.',
+      unmeasurable: (p: string) => `The planner named “${p}” in a way the app cannot measure.`,
+      tooWide: (p: string) => `“${p}” is too large a part of the project to call simple.`,
+      sensitive: (area: string) => `It expects to change files that deal with ${area}.`,
+      core: 'It expects to change a part of the project you marked as a core area.',
+      decision: (text: string) => `It expects to change files that one of your decisions covers: “${text}”.`,
+      tooMany: (n: number, max: number) => `It expects to change ${n} files or folders; a simple change is at most ${max}.`,
+      simple: (n: number) => `It expects to change ${n} ${n === 1 ? 'file or folder' : 'files or folders'}, none of them sensitive, in a core area or covered by a decision of yours.`,
+    },
   },
   snapshots: {
     title: 'Final results',
