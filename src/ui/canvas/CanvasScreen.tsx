@@ -240,6 +240,9 @@ export function CanvasScreen({
   // How many tasks the project has, once known: with none, the screen invites the first one instead of pointing
   // at past tasks that do not exist.
   const [taskCount, setTaskCount] = useState<number | null>(noTasksYet ? 0 : null)
+  // Nothing open and nothing being started (the open task was deleted, or the project was just opened): the screen
+  // says so in its middle, without the flow. A project with no tasks at all keeps its flow and invites the first one.
+  const nothingOpen = run === null && taskCount !== 0 && emptyBecause !== 'new'
 
   // Reads the project's settings again: its branch may have changed, and its main branch may now have tests.
   const projectId = settings?.projectId
@@ -533,14 +536,16 @@ export function CanvasScreen({
             aria-label={taskCount === 0 ? strings.history.firstTaskTitle : strings.history.noTaskTitle}
             style={{
               position: 'absolute',
-              top: 64,
+              // With nothing open and nothing being started, the card is the whole screen's message: in the middle,
+              // with the flow not drawn behind it. Otherwise it sits above the flow it talks about.
+              top: nothingOpen ? '50%' : 64,
               left: '50%',
-              transform: 'translateX(-50%)',
+              transform: nothingOpen ? 'translate(-50%, -60%)' : 'translateX(-50%)',
               zIndex: 4,
-              width: 'min(440px, calc(100% - 32px))',
+              width: nothingOpen ? 'min(520px, calc(100% - 32px))' : 'min(440px, calc(100% - 32px))',
               display: 'grid',
-              gap: 8,
-              padding: '16px 18px',
+              gap: nothingOpen ? 12 : 8,
+              padding: nothingOpen ? '28px 28px 26px' : '16px 18px',
               background: theme.card,
               border: `1px solid ${theme.border}`,
               borderRadius: 12,
@@ -582,11 +587,30 @@ export function CanvasScreen({
               </>
             ) : (
               <>
-                <strong style={{ fontSize: 15 }}>{strings.history.noTaskTitle}</strong>
-                <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.history.noTaskText}</span>
-                <button type="button" onClick={() => setTasksOpen(true)} style={{ ...headerButton, justifySelf: 'center', fontWeight: 600 }}>
-                  ☰ {strings.history.openPast}
-                </button>
+                <strong className="factory-display" style={{ fontSize: 24 }}>{strings.history.noTaskTitle}</strong>
+                <span style={{ fontSize: 14.5, color: theme.dim, lineHeight: 1.5 }}>{strings.history.noTaskText}</span>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap', marginTop: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // A new task: the flow comes back, and the cursor lands in the box where it is written.
+                      setEmptyBecause('new')
+                      requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('[data-testid="command-card"] textarea')?.focus())
+                    }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 8, border: 'none', background: theme.running, color: '#fff', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    {strings.history.createOne}
+                  </button>
+                  <button type="button" onClick={() => setTasksOpen(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: '#e6e9ef', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}>
+                    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                      <path d="M5 7h14M5 12h14M5 17h14" />
+                    </svg>
+                    {strings.history.openPast}
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -648,6 +672,7 @@ export function CanvasScreen({
           onFailedClick={mode === 'failed' ? what => (what === 'see' ? failureActions.current?.see() : failureActions.current?.again()) : undefined}
           canRetry={mode === 'failed' && retryFor === run?.runId}
           onDetails={run ? setDetailsOf : undefined}
+          blank={nothingOpen}
           flushRef={flushRef}
           loading={loading}
           overlay={

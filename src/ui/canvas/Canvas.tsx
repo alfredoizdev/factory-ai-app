@@ -225,6 +225,7 @@ export function Canvas({
   sidebarTop,
   sidebarLog,
   loading = false,
+  blank = false,
   overlay,
   onFailedClick,
   onDetails,
@@ -240,6 +241,8 @@ export function Canvas({
   overlay?: ReactNode
   /** A task is still loading: placeholders stand where its cards will be, and the cards appear once it is whole. */
   loading?: boolean
+  /** Nothing is open and nothing is being started: the flow is not drawn, so the screen can say what to do. */
+  blank?: boolean
   graph: Graph
   nodeRuns?: NodeRunView[]
   /** Persists the draft and returns what is wrong with it. Absent: edits stay on screen only. */
@@ -777,7 +780,7 @@ export function Canvas({
           nodeTypes={nodeTypes}
           // While the lane lays itself out around the work, cards glide to their new places instead of jumping.
           className={hasRun && !reducedMotion ? 'factory-glide' : undefined}
-          style={{ background: 'transparent', zIndex: 1, opacity: loading ? 0 : 1, transition: reducedMotion ? 'none' : 'opacity 220ms ease-out' }}
+          style={{ background: 'transparent', zIndex: 1, opacity: loading || blank ? 0 : 1, pointerEvents: blank ? 'none' : undefined, transition: reducedMotion ? 'none' : 'opacity 220ms ease-out' }}
           onMove={(_, vp) => parallax(vp)}
           onPaneClick={close}
           onInit={instance => {
