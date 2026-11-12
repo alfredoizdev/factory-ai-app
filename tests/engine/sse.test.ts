@@ -130,3 +130,15 @@ test('the response is an event stream that is not cached', async () => {
   expect(res.headers.get('cache-control')).toContain('no-cache')
   await res.body!.cancel()
 })
+
+test('a run that has ended sends everything, says caught up and ended, and closes the stream', async () => {
+  const { runId } = await startRun()
+  const { runs } = await import('@/db/schema')
+  const { eq } = await import('drizzle-orm')
+  await db.update(runs).set({ status: 'completed' }).where(eq(runs.id, runId))
+  const res = await GET(new Request(`http://x/api/runs/${runId}/events?after=0`), ctx(runId))
+  const text = await new Response(res.body).text() // resolves only because the stream closes on its own
+  expect(text.match(/^id: /gm)).toHaveLength(12)
+  expect(text).toContain('event: caughtup')
+  expect(text).toContain('event: end')
+})

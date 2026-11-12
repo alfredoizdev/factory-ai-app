@@ -163,3 +163,21 @@ test('New task in the top bar appears once the run is over, and clears it for a 
   expect(screen.getByTestId('no-task')).toHaveTextContent(strings.history.newTaskTitle)
   expect(screen.queryByRole('button', { name: new RegExp(strings.history.openPast) })).toBeNull()
 })
+
+test('a hidden tab closes its stream and reopens it from where it was when shown again', async () => {
+  const closed: string[] = []
+  FakeEventSource.prototype.close = function (this: FakeEventSource) {
+    closed.push(this.url)
+  }
+  page()
+  await emit('run.started')
+  const visibility = vi.spyOn(document, 'visibilityState', 'get')
+  visibility.mockReturnValue('hidden')
+  act(() => void document.dispatchEvent(new Event('visibilitychange')))
+  expect(closed.at(-1)).toContain('after=0')
+  visibility.mockReturnValue('visible')
+  act(() => void document.dispatchEvent(new Event('visibilitychange')))
+  expect(FakeEventSource.all.at(-1)!.url).toContain(`after=${seq}`)
+  visibility.mockRestore()
+  FakeEventSource.prototype.close = () => {}
+})

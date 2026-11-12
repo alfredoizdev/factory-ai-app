@@ -280,11 +280,20 @@ export function useRunStream(
     let timer: ReturnType<typeof setTimeout> | undefined
     let failures = 0
     let disposed = false
+    // The run ended (the server said so): the stream stays closed.
+    let ended = false
 
     const connect = () => {
       const es = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events?after=${cursor.current}`)
       source = es
-      if (typeof es.addEventListener === 'function') es.addEventListener('caughtup', () => setLoadedFor(runId))
+      if (typeof es.addEventListener === 'function') {
+        es.addEventListener('caughtup', () => setLoadedFor(runId))
+        // The run has ended: nothing more will come on its own, so the stream is not reopened.
+        es.addEventListener('end', () => {
+          ended = true
+          es.close()
+        })
+      }
       else setLoadedFor(runId)
       es.onopen = () => {
         failures = 0
@@ -304,18 +313,32 @@ export function useRunStream(
       es.onerror = () => {
         es.close() // the browser would retry on its own with no ceiling; the schedule here is the only one
         setConnected(false)
-        if (disposed) return
+        if (disposed || ended || hidden()) return
         const delay = RECONNECT_DELAYS_MS[Math.min(failures, RECONNECT_DELAYS_MS.length - 1)]!
         failures++
         timer = setTimeout(connect, delay)
       }
     }
+    // A hidden tab asks for nothing: its stream closes, and reopens from where it was when the tab is shown again.
+    const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
+    const onVisibility = () => {
+      if (hidden()) {
+        clearTimeout(timer)
+        source?.close()
+        setConnected(false)
+      } else if (!disposed && !ended) {
+        source?.close()
+        connect()
+      }
+    }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
     connect()
     // Never stuck on placeholders: if the end of the replay is not heard of, the run is shown anyway.
     const fallback = setTimeout(() => setLoadedFor(runId), 2500)
 
     return () => {
       disposed = true
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
       clearTimeout(fallback)
       clearTimeout(timer)
       source?.close()
