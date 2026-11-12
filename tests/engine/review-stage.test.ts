@@ -1285,6 +1285,93 @@ describe('round 2', () => {
   })
 })
 
+describe('round 3: every try is measured against its own start', () => {
+  /** Keep on the held question of attempt 1; the person works during the park. Attempt 1 never solves it. */
+  async function parked(over: Partial<Script>, personWorks: (dir: string) => void) {
+    const runId = await newRun()
+    await money(runId)
+    const { dir, base } = workdir(true)
+    writeFileSync(join(dir, 'b.txt'), 'b original\n')
+    const s = scripted({
+      found: [finding()],
+      fix: (d, n) => {
+        if (n === 1) { edit(d, 'fix 1'); stray(d); writeFileSync(join(d, 'f1new.txt'), 'added by fix 1\n') }
+      },
+      after: n => (n === 1 ? seenRun() : seenRun({ exitCode: 0, markerSeen: false, outputTail: '' })),
+      ...over,
+    })
+    const step = recordingStep()
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect((await openQuestion(runId))!.kind).toBe('fix_held')
+    personWorks(dir)
+    await answerQuestion((await openQuestion(runId))!.id, { option: 'keep' }, { send })
+    step.onWait = async () => ({ data: {} })
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    return { runId, dir, s }
+  }
+  const personWorks = (dir: string) => {
+    writeFileSync(join(dir, 'b.txt'), 'b edited by the person\n')
+    writeFileSync(join(dir, 'notes.md'), 'notes\n')
+    appendFileSync(join(dir, 'f1new.txt'), 'person added a line\n')
+  }
+  const survives = (dir: string) => {
+    expect(text(dir, 'b.txt')).toBe('b edited by the person\n')
+    expect(text(dir, 'notes.md')).toBe('notes\n')
+    expect(text(dir, 'f1new.txt')).toBe('added by fix 1\nperson added a line\n')
+    expect(text(dir, 'a.tsx')).toBe(original)
+  }
+
+  test('attempt 2 fails its check: its own edits are taken back, and what the person did during the park stays', async () => {
+    const { runId, dir, s } = await parked({ fix: (d, n) => { if (n === 1) { edit(d, 'fix 1'); stray(d); writeFileSync(join(d, 'f1new.txt'), 'added by fix 1\n') } else { edit(d, 'fix 2'); writeFileSync(join(d, 'added2.txt'), 'x') } }, after: () => seenRun() }, personWorks)
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(2)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open' })
+    survives(dir)
+    expect(existsSync(join(dir, 'added2.txt'))).toBe(false)
+  })
+
+  test('attempt 2 strays into other important parts: taken back the same way, the person\'s files stay', async () => {
+    const { runId, dir } = await parked({ fix: (d, n) => { if (n === 1) { edit(d, 'fix 1'); stray(d); writeFileSync(join(d, 'f1new.txt'), 'added by fix 1\n') } else { edit(d, 'fix 2'); mkdirSync(join(d, 'src/auth'), { recursive: true }); writeFileSync(join(d, 'src/auth/login.ts'), 'x') } }, after: () => seenRun() }, personWorks)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.strayedAgain })
+    survives(dir)
+    expect(existsSync(join(dir, 'src/auth/login.ts'))).toBe(false)
+  })
+
+  test('what the person did to an important file during the park is not counted as the second try straying', async () => {
+    const { runId, dir } = await parked({ fix: (d, n) => { if (n === 1) { edit(d, 'fix 1'); stray(d) } else edit(d, 'fix 2') } }, d => {
+      writeFileSync(join(d, 'src/billing/person.ts'), 'mine\n')
+    })
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'corrected' })
+    expect(text(dir, 'src/billing/person.ts')).toBe('mine\n')
+  })
+
+  test('an empty marker on a crash re-run is a failed attempt: the finding is open and the folder is left alone', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()], fix: d => edit(d, 'FIX') })
+    const inner = recordingStep()
+    class Crash extends Error {}
+    let crashed = false
+    const step: StepApi = {
+      ...inner,
+      run: async <T,>(id: string, fn: () => Promise<T> | T): Promise<T> => {
+        if (!crashed && id.startsWith('fix-') && id.endsWith('-1')) {
+          crashed = true
+          await fn()
+          throw new Crash()
+        }
+        return inner.run(id, fn)
+      },
+    }
+    await expect(drive(runId, s.provider, dir, base, step, s.deps)).rejects.toThrow(Crash)
+    const attempts = join(s.deps.snapshotStore!, 'attempts')
+    for (const name of readdirSync(attempts)) writeFileSync(join(attempts, name), '')
+    await drive(runId, s.provider, dir, base, step, s.deps)
+    expect(s.calls.filter(c => c.role === 'fixer')).toHaveLength(1)
+    expect(text(dir, 'a.tsx')).toBe(`${original}FIX\n`)
+    expect((await findingsOf(runId))[0]).toMatchObject({ state: 'open', reason: strings.findings.fixFailed })
+  })
+})
+
 describe('the demo provider', () => {
   test('goes through Review exactly as before', async () => {
     const runId = await newRun()

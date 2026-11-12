@@ -358,15 +358,30 @@ describe('round 2', () => {
   test('an attempt remembers the tree from just before it started, and its marker can be released', () => {
     const dir = repo()
     const first = startAttempt(dir, 'f1-1', opts())
-    expect(first).toEqual({ again: false })
+    expect(first).toMatchObject({ again: false, start: { ignored: [{ path: '.env' }] } })
     put(dir, 'a.txt', 'later\n')
     const again = startAttempt(dir, 'f1-1', opts())
     expect(again.again).toBe(true)
-    restoreTree(dir, (again as { tree: string }).tree, opts())
+    restoreTree(dir, (again as { start: { tree: string } }).start.tree, opts())
     expect(read(dir, 'a.txt')).toBe('a1\n')
     expect(() => startAttempt(dir, '../x', opts())).toThrow()
     releaseAttempts(dir, 'f1', opts())
-    expect(startAttempt(dir, 'f1-1', opts())).toEqual({ again: false })
+    expect(startAttempt(dir, 'f1-1', opts())).toMatchObject({ again: false })
+    // a marker that is empty or malformed gives no start
+    writeFileSync(join(store, 'attempts', 'f2-1'), '')
+    expect(startAttempt(dir, 'f2-1', opts())).toEqual({ again: true, start: null })
+    writeFileSync(join(store, 'attempts', 'f2-2'), '{"tree":"nope"}')
+    expect(startAttempt(dir, 'f2-2', opts())).toEqual({ again: true, start: null })
+  })
+
+  test('looseChanges does not rewrite the real index file', async () => {
+    const dir = repo()
+    const snap = takeSnap(dir, opts())
+    await new Promise(r => setTimeout(r, 1100))
+    writeFileSync(join(dir, 'a.txt'), 'a1\n') // same content, newer time: a plain git status would refresh the index
+    const before = readFileSync(join(dir, '.git/index'))
+    looseChanges(dir, snap, opts())
+    expect(readFileSync(join(dir, '.git/index')).equals(before)).toBe(true)
   })
 
   test('looseChanges names what differs from a snapshot, path by path, without taking a new snapshot', () => {

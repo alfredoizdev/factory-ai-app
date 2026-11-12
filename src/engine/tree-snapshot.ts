@@ -18,6 +18,7 @@ import { SECRET_FILES } from '@/engine/risk'
 // never deleted or overwritten, judged by the rules the snapshot had, not the ones a fixer may have rewritten. The few
 // ignored files whose names look sensitive (secrets, sign-in) are recorded and compared too, because a fix there matters.
 //
+// Not watched: private files inside generated-output folders (dist, build, out, .next, ...), and beyond the 50-file / 1 MB limits.
 // Not covered: nested repositories and submodules. A fix inside one is neither detected nor undone. Empty folders are
 // never removed. Every git call uses an argument list, never a shell.
 
@@ -62,7 +63,7 @@ function gitEnv(workdir: string, options: Options, indexFile?: string): NodeJS.P
 }
 
 function git(workdir: string, options: Options, args: string[], extra: { index?: string; input?: string | Buffer } = {}): string {
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
+  return execFileSync('git', ['--no-optional-locks', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
     cwd: workdir,
     env: gitEnv(workdir, options, extra.index),
     encoding: 'utf8',
@@ -74,7 +75,7 @@ function git(workdir: string, options: Options, args: string[], extra: { index?:
 }
 
 function gitBuffer(workdir: string, options: Options, args: string[]): Buffer {
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd: workdir, env: gitEnv(workdir, options), stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024, timeout: 120_000 })
+  return execFileSync('git', ['--no-optional-locks', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: workdir, env: gitEnv(workdir, options), stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024, timeout: 120_000 })
 }
 
 /** Refuses a folder that is not itself the top of a working copy: a plain folder inside some other repository must not snapshot that one. */
@@ -354,27 +355,34 @@ export function restoreTree(workdir: string, tree: string, options: Options = {}
 const attemptsDir = (workdir: string, options: Options) => join(storeOf(workdir, options), 'attempts')
 
 /**
- * Called as a fixer attempt starts. The first time it takes a snapshot of the folder as it is right then and remembers it
- * under the name. Called again with the same name (the step ran before and its result was lost) it says so and hands back
- * that tree: what a half-finished fixer left is taken back to it, and nothing from before the attempt began.
+ * Called as a fixer attempt starts. The first time it takes a full snapshot of the folder as it is right then (the tree and
+ * the private files) and remembers it under the name; every undo and every measure of that attempt is against it. Called
+ * again with the same name (the step ran before and its result was lost) it says so and hands back that start: what a
+ * half-finished fixer left is taken back to it, and nothing from before the attempt began. A marker that cannot be read gives
+ * `start: null`: the caller treats the attempt as failed and restores nothing.
  */
-export function startAttempt(workdir: string, name: string, options: Options = {}): { again: false } | { again: true; tree: string | null } {
+export function startAttempt(workdir: string, name: string, options: Options = {}): { again: false; start: Snap } | { again: true; start: Snap | null } {
   if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error('Not a name to claim')
   const dir = attemptsDir(workdir, options)
   mkdirSync(dir, { recursive: true })
   const file = join(dir, name)
-  const seen = (): { again: true; tree: string | null } => {
-    const tree = readFileSync(file, 'utf8').trim()
-    return { again: true, tree: OBJECT_ID.test(tree) ? tree : null }
+  const seen = (): { again: true; start: Snap | null } => {
+    try {
+      const v = JSON.parse(readFileSync(file, 'utf8')) as Partial<Snap>
+      const ok = typeof v.tree === 'string' && OBJECT_ID.test(v.tree) && Array.isArray(v.ignored) && v.ignored.every(f => f && typeof f.path === 'string' && typeof f.mode === 'string' && typeof f.blob === 'string' && OBJECT_ID.test(f.blob))
+      return { again: true, start: ok ? { tree: v.tree!, ignored: v.ignored!, skipped: typeof v.skipped === 'number' ? v.skipped : 0 } : null }
+    } catch {
+      return { again: true, start: null }
+    }
   }
   if (existsSync(file)) return seen()
-  const tree = snapshotTree(workdir, options)
+  const start = takeSnap(workdir, options)
   try {
-    writeFileSync(file, tree, { flag: 'wx' })
+    writeFileSync(file, JSON.stringify(start), { flag: 'wx' })
   } catch {
     return seen()
   }
-  return { again: false }
+  return { again: false, start }
 }
 
 /** Forgets the attempts of one finding (their names start with its id) once it has an ending. */
