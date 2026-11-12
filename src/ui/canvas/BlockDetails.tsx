@@ -17,6 +17,8 @@ const thin = { scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transpa
 const KINDS: readonly string[] = ['input', 'plan', 'build', 'tests', 'review', 'approve', 'human', 'ship']
 /** Steps shown before "Show all": enough to follow the work without a wall of lines. */
 const FEW_STEPS = 8
+/** The frame a before or after picture sits in: one height for computer and phone. */
+const PICTURE_HEIGHT = 'min(48vh, 440px)'
 
 /** "2m 5s", "41s", "under a second": a length of work, said the way a person would. */
 export function howLong(ms: number): string {
@@ -196,15 +198,16 @@ function Pictures({ runId }: { runId: string }) {
           const shot = `${side}-${screen}` as Shot
           const label = `${strings.snapshots[side]} · ${strings.snapshots[screen]}`
           return (
-            <figure key={side} style={{ margin: 0, display: 'grid', gap: 6, justifyItems: screen === 'mobile' ? 'center' : 'stretch' }}>
+            <figure key={side} style={{ margin: 0, display: 'grid', gap: 6 }}>
               <figcaption style={{ justifySelf: 'start', fontSize: 13, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? theme.dim : theme.passed }}>{strings.snapshots[side]}</figcaption>
               {state.shots.includes(shot) ? (
-                <a href={src(shot)} target="_blank" rel="noreferrer" aria-label={label} style={{ display: 'block', width: screen === 'mobile' ? 'min(100%, 300px)' : '100%' }}>
+                // The frame is the same size on either tab, so the window does not jump: a picture fits inside it.
+                <a href={src(shot)} target="_blank" rel="noreferrer" aria-label={label} style={{ height: PICTURE_HEIGHT, boxSizing: 'border-box', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflow: 'hidden', borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, padding: 8 }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src(shot)} alt={label} style={{ display: 'block', width: '100%', borderRadius: 8, border: `1px solid ${side === 'before' ? theme.border : theme.tint('passed', 0.5)}` }} />
+                  <img src={src(shot)} alt={label} style={{ display: 'block', maxWidth: '100%', maxHeight: '100%', borderRadius: 6, border: `1px solid ${side === 'before' ? theme.border : theme.tint('passed', 0.5)}` }} />
                 </a>
               ) : (
-                <div style={{ width: '100%', aspectRatio: '16 / 10', display: 'grid', placeItems: 'center', padding: 16, textAlign: 'center', borderRadius: 8, border: `1px dashed ${theme.border}`, color: theme.dim, fontSize: 13.5, lineHeight: 1.45 }}>
+                <div style={{ height: PICTURE_HEIGHT, display: 'grid', placeItems: 'center', padding: 16, textAlign: 'center', borderRadius: 8, border: `1px dashed ${theme.border}`, color: theme.dim, fontSize: 13.5, lineHeight: 1.45 }}>
                   {side === 'before' ? d.noBefore : d.noAfter}
                 </div>
               )}
