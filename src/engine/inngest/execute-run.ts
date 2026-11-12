@@ -1,6 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { MAX_REVIEW_ROUNDS, defaultReviewerModel, type Focus, type Review } from '@/engine/review'
-import { distinctProblems, findingsOf, needsPerson } from '@/engine/findings'
+import { distinctProblems, findingsOf, latestOf, needsPerson, problemGroups } from '@/engine/findings'
 import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
 import { giveStanding, type Standing } from '@/engine/register'
@@ -127,7 +127,7 @@ export type Workspace = {
   /** Rules, decisions and core areas this task was given when it started. */
   standing?: Standing[]
   /** A review block: which reader this call is, and what it is told besides the request. */
-  review?: { focus: Focus; builderSummary?: string; since?: { paths: string[]; diff: string } }
+  review?: { focus: Focus; builderSummary?: string; since?: { paths: string[]; diff: string; more?: number } }
 }
 export type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
 
@@ -695,14 +695,17 @@ async function anyReviewRan(runId: string): Promise<boolean> {
 // Approve, for the real agent: a plain summary, from the record, of what the reviewers found and what became of it.
 // It always passes: the final yes is the person's, at the human check.
 async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome> {
-  // One problem is one, however many rounds a reviewer reported it in.
-  const rows = distinctProblems(await findingsOf(runId))
-  const count = (...states: string[]) => rows.filter(f => states.includes(f.state)).length
+  // One problem is one, however many rounds a reviewer reported it in. It counts as fixed when a fix of it was kept and
+  // its latest word is not a problem for the person: a re-report the checker refuted is the fix having worked. When the
+  // latest word still needs the person, the fix did not hold and it counts under "needs you" only.
+  const groups = problemGroups(await findingsOf(runId)).map(g => ({ latest: latestOf(g), fixedOnce: g.some(r => r.state === 'corrected') }))
+  const fixed = groups.filter(g => g.fixedOnce && ['corrected', 'refuted', 'discarded'].includes(g.latest.state)).length
+  const dropped = groups.filter(g => !g.fixedOnce && ['refuted', 'discarded'].includes(g.latest.state)).length
   const summary = !(await anyReviewRan(runId))
     ? strings.review.approve.none
-    : rows.length === 0
+    : groups.length === 0
       ? strings.review.approve.clean
-      : strings.review.approve.summary({ found: rows.length, fixed: count('corrected'), discarded: count('refuted', 'discarded'), needsYou: rows.filter(needsPerson).length })
+      : strings.review.approve.summary({ found: groups.length, fixed, discarded: dropped, needsYou: groups.filter(g => needsPerson(g.latest)).length })
   return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
@@ -749,9 +752,12 @@ async function reopenBlocks(
   round: number,
   note: string | null,
   by: 'person' | 'fixes',
+  asked?: number,
 ): Promise<boolean> {
   return withTx(runId, async tx => {
     if (by === 'fixes') {
+      // Checked before the status on purpose: this step may run a second time (its stored result lost) after the run moved
+      // on, to the human check or even to its end. Then the answer is "this was already done", not "the run is not running".
       const earlier = (await tx.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.reopened')))).some(e => {
         const p = JSON.parse(e.payloadJson) as { by?: unknown; round?: unknown }
         return p.by === 'fixes' && p.round === round
@@ -767,7 +773,7 @@ async function reopenBlocks(
       await tx.update(nodeRuns)
         .set({ state: 'queued', attempt: 1, summary: null, failureCause: null, startedAt: null, finishedAt: null })
         .where(eq(nodeRuns.id, node.id))
-      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by } }, tx)
+      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by, ...(asked !== undefined ? { asked } : {}) } }, tx)
     }
     if (by === 'person') {
       await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
@@ -777,8 +783,17 @@ async function reopenBlocks(
   })
 }
 
+/** One line on a block's card, whatever state it is in (a failed block can still be explained). */
+async function sayOnNode(runId: string, block: PlannedBlock, text: string): Promise<void> {
+  await withTx(runId, async tx => {
+    const node = (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
+    if (node) await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, text } }, tx)
+  })
+}
+
 // The person asked for changes: every block from the builder to the human check goes back to queued for the next round.
-const reopenForRevision = (runId: string, blocks: readonly PlannedBlock[], round: number, note: string | null) => reopenBlocks(runId, blocks, round, note, 'person')
+// `asked` is the person's own count of their requests (what the cards show); `round` only names steps and events.
+const reopenForRevision = (runId: string, blocks: readonly PlannedBlock[], round: number, note: string | null, asked?: number) => reopenBlocks(runId, blocks, round, note, 'person', asked)
 
 /** How many unrecorded decisions a gate tolerates before it stops listening (the run stays waiting). */
 export const MAX_IGNORED_DECISIONS = 20
@@ -1029,6 +1044,8 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   let reviews = 0
   let rerunsOfTests = 0
   let reviewSince: string | null = null
+  // Whether the blocks now running were sent back because fixes were made (so a failing check may be the fixes' doing).
+  let afterFixesPass = false
   // Blocks that already passed and are not run again in this pass.
   let notAgain: ReadonlySet<string> = new Set()
   let revisionNote: string | null = null
@@ -1119,13 +1136,14 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           const start = builder === -1 ? index : builder
           const next = round + 1
           const note = decided.note
-          const reopened = await step.run(id(`reopen-${block.id}`), () => reopenForRevision(runId, plan.blocks.slice(start, index + 1), next, note))
+          const reopened = await step.run(id(`reopen-${block.id}`), () => reopenForRevision(runId, plan.blocks.slice(start, index + 1), next, note, personRound + 1))
           if (!reopened) return // cancelled meanwhile
           round = next
           personRound += 1
           reviews = 0
           rerunsOfTests = 0
           reviewSince = null
+          afterFixesPass = false
           notAgain = new Set()
           revisionNote = note
           revisionImages = await step.run(id(`images-${block.id}`), () => imagePathsFor(runId, decided!.approvalId))
@@ -1147,12 +1165,13 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         const again = afterFixes(plan.blocks, index, reviews, rerunsOfTests)
         if (again) {
           const next = round + 1
-          const note = again.reading ? strings.run.reopenedAfterFixes(next) : strings.run.reopenedChecksAfterFixes(next)
+          const note = again.reading ? strings.run.reopenedAfterFixes : strings.run.reopenedChecksAfterFixes
           const reopened = await step.run(id(`reopen-fixes-${block.id}`), () => reopenBlocks(runId, again.reopen, next, note, 'fixes'))
           if (!reopened) return // cancelled meanwhile
           round = next
           reviewSince = again.reading ? stage.fixesSince : null
           if (again.reruns) rerunsOfTests += 1
+          afterFixesPass = true
           notAgain = new Set(plan.blocks.slice(again.start, index + 1).filter(b => !again.reopen.includes(b)).map(b => b.id))
           from = again.start
           continue rounds
@@ -1165,6 +1184,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     }
     if (result.outcome === 'cancelled') return // run.cancelled and node.cancelled were written by cancelRun
     if (result.outcome === 'failed') {
+      if (afterFixesPass && block.kind === 'tests') await step.run(id(`fixes-may-be-cause-${block.id}`), () => sayOnNode(runId, block, strings.run.testsFailedAfterFixes))
       await step.run(id('fail'), () => finishRun(runId, 'failed', { blockId: block.id }))
       return
     }

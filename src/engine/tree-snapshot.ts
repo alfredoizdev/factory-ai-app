@@ -167,7 +167,7 @@ export function changedSince(workdir: string, tree: string, options: Options = {
   return changedBetween(workdir, tree, snapshotTree(workdir, options), options)
 }
 
-/** A change since a snapshot: the paths, the unified diff, and the lines added plus removed per path (a binary file counts as one). */
+/** A change since a snapshot: the paths, the unified diff, and the lines added plus removed per path (a binary file counts as two: one added, one removed). */
 export type Measured = { paths: string[]; diff: string; files: { path: string; lines: number }[] }
 
 /**

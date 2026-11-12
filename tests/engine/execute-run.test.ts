@@ -486,4 +486,31 @@ describe('what goes back after a review that fixed something', () => {
     expect(ids(afterFixes(none, 2, 1, 0)!.reopen)).toEqual(['review'])
     expect(afterFixes(none, 2, MAX_REVIEW_ROUNDS, 0)).toBeNull()
   })
+
+  test('two Tests blocks: both go back, with Review; when no review is left, both Tests and nothing else', () => {
+    const two = [block('build', 'build'), block('t1', 'tests'), block('t2', 'tests'), block('review', 'review')]
+    expect(ids(afterFixes(two, 3, 1, 0)!.reopen)).toEqual(['t1', 't2', 'review'])
+    expect(afterFixes(two, 3, 1, 0)!.start).toBe(1)
+    expect(ids(afterFixes(two, 3, MAX_REVIEW_ROUNDS, 0)!.reopen)).toEqual(['t1', 't2'])
+  })
+
+  test('a disabled block between Tests and Review goes back with them (it only skips again) but not in the tests-only pass', () => {
+    const gap = [block('build', 'build'), block('tests', 'tests'), block('lint', 'approve', false), block('review', 'review')]
+    expect(ids(afterFixes(gap, 3, 1, 0)!.reopen)).toEqual(['tests', 'lint', 'review'])
+    expect(ids(afterFixes(gap, 3, MAX_REVIEW_ROUNDS, 0)!.reopen)).toEqual(['tests'])
+  })
+
+  test('a Build block between Tests and Review never goes back', () => {
+    const odd = [block('tests', 'tests'), block('build', 'build'), block('review', 'review')]
+    expect(ids(afterFixes(odd, 2, 1, 0)!.reopen)).toEqual(['tests', 'review'])
+    expect(ids(afterFixes(odd, 2, MAX_REVIEW_ROUNDS, 0)!.reopen)).toEqual(['tests'])
+  })
+
+  test('Tests placed only after Review are not "the checks before the review": only Review goes back, and after the last review nothing', () => {
+    const after = [block('build', 'build'), block('review', 'review'), block('tests', 'tests')]
+    const again = afterFixes(after, 1, 1, 0)!
+    expect(ids(again.reopen)).toEqual(['review'])
+    expect(again).toMatchObject({ start: 1, reruns: false })
+    expect(afterFixes(after, 1, MAX_REVIEW_ROUNDS, 0)).toBeNull()
+  })
 })

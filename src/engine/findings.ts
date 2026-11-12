@@ -205,8 +205,8 @@ export const needsPerson = (row: Pick<FindingRow, 'state'>): boolean => row.stat
 
 const placed = (r: Finding) => r.file !== undefined && r.line !== undefined
 
-/** One row per problem, however many rounds reported it: the one from the latest round (the last recorded on a tie), in order of first appearance. */
-export function distinctProblems(rows: FindingRow[]): FindingRow[] {
+/** Every row of each problem, however many rounds reported it, in order of first appearance. */
+export function problemGroups(rows: FindingRow[]): FindingRow[][] {
   const same = (a: FindingRow, b: FindingRow) =>
     a.type === b.type && (placed(a) && placed(b) ? a.file === b.file && Math.abs(a.line! - b.line!) <= DUPLICATE_WINDOW : a.problem === b.problem)
   const groups: FindingRow[][] = []
@@ -215,7 +215,15 @@ export function distinctProblems(rows: FindingRow[]): FindingRow[] {
     if (group) group.push(r)
     else groups.push([r])
   }
-  return groups.map(g => g.reduce((latest, r) => (r.round >= latest.round ? r : latest)))
+  return groups
+}
+
+/** The row of a problem from the latest round (the last recorded on a tie). */
+export const latestOf = (group: FindingRow[]): FindingRow => group.reduce((latest, r) => (r.round >= latest.round ? r : latest))
+
+/** One row per problem, however many rounds reported it: the one from the latest round (the last recorded on a tie), in order of first appearance. */
+export function distinctProblems(rows: FindingRow[]): FindingRow[] {
+  return problemGroups(rows).map(latestOf)
 }
 
 export async function setFinding(id: string, change: Partial<Pick<FindingRow, 'state' | 'reason' | 'repro' | 'evidence' | 'entryNumber'>>, h: DbHandle = db): Promise<void> {

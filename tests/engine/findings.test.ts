@@ -7,7 +7,7 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { events, nodeRuns, projects, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { bySeverity, citeCheck, distinctProblems, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, DUPLICATE_WINDOW } from '@/engine/findings'
+import { bySeverity, citeCheck, distinctProblems, problemGroups, latestOf, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, DUPLICATE_WINDOW } from '@/engine/findings'
 import type { Finding } from '@/engine/review'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { FindingRow } from '@/engine/findings'
@@ -168,6 +168,14 @@ describe('distinctProblems', () => {
     const out = distinctProblems(rows)
     expect(out).toHaveLength(1)
     expect(out[0]).toBe(rows[2])
+  })
+
+  test('problemGroups keeps every row of a problem; distinctProblems is the latest row of each', () => {
+    const rows = [row({ file: 'a.ts', line: 3, round: 1, state: 'corrected' }), row({ file: 'b.ts', line: 1, round: 1 }), row({ file: 'a.ts', line: 3, round: 2, state: 'refuted' })]
+    const groups = problemGroups(rows)
+    expect(groups.map(g => g.length)).toEqual([2, 1])
+    expect(groups.map(latestOf)).toEqual(distinctProblems(rows))
+    expect(latestOf(groups[0]!)).toBe(rows[2])
   })
 
   test('a different line far away, another file or another type is another problem', () => {

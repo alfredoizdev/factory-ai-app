@@ -83,15 +83,17 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
 
   // After fixes: what they changed, found once for the round (null when it cannot be read: the whole change is read then).
   const since = ctx.reviewSince ? await step.run(id(`review-since-${block.id}`), () => sinceOf(ctx.reviewSince!, workspace, ctx.deps)) : null
-  const sinceForReaders = since ? { paths: since.paths, diff: since.diff } : null
+  const sinceForReaders = since ? { paths: since.paths, diff: since.diff, ...(since.more > 0 ? { more: since.more } : {}) } : null
   // How deep to read is measured once for the round, from the change as it stands: after fixes, from what the fixes changed.
-  const risk = await step.run(id(`review-depth-${block.id}`), () => depthOf(runId, workspace, since?.files))
+  const risk = await step.run(id(`review-depth-${block.id}`), () => depthOf(runId, workspace, since ?? undefined))
   const focuses = focusesFor(risk)
   const opened = await step.run(id(`review-open-${block.id}`), async () => {
     const node = await openProviderNode(runId, block, [focuses.length === 1 ? strings.review.depth.one : strings.review.depth.three])
     return 'outcome' in node ? node : { nodeId: node.id }
   })
   if ('outcome' in opened) return none(opened.outcome)
+  // A second look that could not be narrowed says so once.
+  if (ctx.reviewSince && !since) await step.run(id(`review-since-said-${block.id}`), () => sayOnCard(ctx, opened.nodeId, strings.review.sinceUnreadable))
 
   const found: { focus: Focus; finding: Finding }[] = []
   for (const focus of focuses) {
@@ -502,28 +504,35 @@ async function resolveFinding(ctx: Context, nodeId: string, row: FindingRow, end
   })
 }
 
-/** The most of the fixes' change carried through a step (it is cut again in the prompt). */
+/** The most of the change since the first review carried through a step: its diff in characters, and its paths and files in entries. */
 const MAX_SINCE_DIFF_CARRIED = 100_000
+const MAX_SINCE_PATHS_CARRIED = 200
 
-type Since = { paths: string[]; diff: string; files: ChangedFile[] }
+/** `more`: how many changed files are beyond the carried list. */
+type Since = { paths: string[]; diff: string; files: ChangedFile[]; more: number }
 
-/** What the fixes changed since the tree before the first one. Null when it cannot be read. */
+/** What changed since the tree before the first fix. Null when it cannot be read. */
 async function sinceOf(tree: string, workspace: Workspace, deps: ExecutorDeps): Promise<Since | null> {
   if (!workspace.workdir) return null
   try {
     const m = measureSince(workspace.workdir, tree, deps.snapshotStore ? { store: deps.snapshotStore } : {})
-    return { paths: m.paths, diff: clip(redact(m.diff), MAX_SINCE_DIFF_CARRIED), files: m.files }
+    return {
+      paths: m.paths.slice(0, MAX_SINCE_PATHS_CARRIED),
+      diff: clip(redact(m.diff), MAX_SINCE_DIFF_CARRIED),
+      files: m.files.slice(0, MAX_SINCE_PATHS_CARRIED),
+      more: Math.max(0, m.paths.length - MAX_SINCE_PATHS_CARRIED),
+    }
   } catch {
     return null
   }
 }
 
-async function depthOf(runId: string, workspace: Workspace, changed?: readonly ChangedFile[]): Promise<'low' | 'high'> {
+async function depthOf(runId: string, workspace: Workspace, since?: Since): Promise<'low' | 'high'> {
   // A change that cannot be measured is read as carefully as a risky one.
   if (!workspace.workdir || !workspace.baseCommit) return 'high'
   const tests = await testFactsOf(runId)
-  // The same rules, on the files the fixes changed.
-  if (changed) return classifyChange(changed, tests).level
+  // The same rules, on the files changed since the first review. More files than were carried is far past the limit already.
+  if (since) return since.more > 0 ? 'high' : classifyChange(since.files, tests).level
   return assessRisk(workspace.workdir, workspace.baseCommit, tests).level
 }
 
@@ -536,7 +545,7 @@ async function builderSummaryOf(ctx: Context): Promise<string | undefined> {
 }
 
 /** One reader: up to MAX_ATTEMPTS tries, its steps on the shared node, its verdict recorded with its focus. */
-async function readFor(ctx: Context, nodeId: string, focus: Focus, since: { paths: string[]; diff: string } | null): Promise<Reading> {
+async function readFor(ctx: Context, nodeId: string, focus: Focus, since: { paths: string[]; diff: string; more?: number } | null): Promise<Reading> {
   const { runId, plan, block, deps } = ctx
   const provider = deps.resolveProvider(plan.providerId)
   const builderSummary = await builderSummaryOf(ctx)

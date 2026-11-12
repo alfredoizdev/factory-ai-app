@@ -92,7 +92,9 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   // into its view — not its steps, its sentence, its measurement — because none of it describes the work now.
   if (event.type === 'node.reopened') {
     if (!node) return moved
-    const round = typeof payload.round === 'number' && payload.round > 1 ? payload.round : undefined
+    // The person's own count of requests. A reopen after fixes is not one: no round on the card. Events recorded before this was kept say `round`.
+    const shown = typeof payload.asked === 'number' ? payload.asked : payload.by === 'fixes' ? undefined : payload.round
+    const round = typeof shown === 'number' && shown > 1 ? shown : undefined
     return { ...prev, nodes: { ...prev.nodes, [blockId]: { state: 'queued', steps: [], round } }, lastSequence: event.sequence }
   }
 

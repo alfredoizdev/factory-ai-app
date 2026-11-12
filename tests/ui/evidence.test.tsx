@@ -213,3 +213,30 @@ test('a round the reviewer sent back says so, not that the person did', async ()
   const verdict = describeEvent({ sequence: 2, type: 'node.reviewed', payload: { blockId: 'review', verdict: 'changes', findings: [{ problem: 'x' }] } }, review)
   expect(verdict).toEqual({ text: strings.review.problems(1), isClaim: true })
 })
+
+test('the round a card shows is the person\'s own count: a reopen after fixes shows none, and an old event still shows its round', () => {
+  const asked = fold([
+    { type: 'node.completed', payload: { blockId: 'tests', summary: 'x', summarySource: 'system' } },
+    { type: 'node.reopened', payload: { blockId: 'tests', round: 2, note: 'Problems were fixed.', by: 'fixes' } },
+  ]).tests!
+  expect(asked.round).toBeUndefined()
+  const person = fold([
+    { type: 'node.completed', payload: { blockId: 'build', summary: 'x', summarySource: 'system' } },
+    { type: 'node.reopened', payload: { blockId: 'build', round: 4, asked: 2, note: 'make it red', by: 'person' } },
+  ]).build!
+  expect(person.round).toBe(2)
+  const old = fold([
+    { type: 'node.completed', payload: { blockId: 'build', summary: 'x', summarySource: 'system' } },
+    { type: 'node.reopened', payload: { blockId: 'build', round: 3, note: 'older run', by: 'person' } },
+  ]).build!
+  expect(old.round).toBe(3)
+})
+
+test('the event bar says the person\'s round, and for a reopen after fixes only that problems were fixed', async () => {
+  const { describeEvent } = await import('@/ui/EventBar')
+  expect(describeEvent({ sequence: 1, type: 'node.reopened', payload: { blockId: 'build', round: 4, asked: 2, note: 'make it red', by: 'person' } }, build).text).toBe('Sent back for round 2: make it red')
+  const fixes = describeEvent({ sequence: 2, type: 'node.reopened', payload: { blockId: 'tests', round: 2, note: strings.run.reopenedAfterFixes, by: 'fixes' } }, tests)
+  expect(fixes.text).toBe(strings.run.reopenedAfterFixes)
+  expect(fixes.text).not.toMatch(/round/i)
+  expect(strings.run.reopenedChecksAfterFixes).not.toMatch(/round|\d/i)
+})

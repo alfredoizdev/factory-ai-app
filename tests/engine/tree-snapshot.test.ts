@@ -431,6 +431,16 @@ describe('diffSince and measureSince: what changed since a snapshot, read only',
     expect(m.paths).toEqual(changedSince(dir, tree, opts()))
   })
 
+  test('a binary file counts as two lines (one added, one removed) so it is not invisible', () => {
+    const dir = repo()
+    writeFileSync(join(dir, 'img.bin'), Buffer.from([0, 1, 2, 3]))
+    git(dir, 'add', 'img.bin')
+    commit(dir, 'bin')
+    const tree = snapshotTree(dir, opts())
+    writeFileSync(join(dir, 'img.bin'), Buffer.from([0, 9, 9, 9]))
+    expect(measureSince(dir, tree, opts()).files).toEqual([{ path: 'img.bin', lines: 2 }])
+  })
+
   test('something that is not a tree id is refused', () => {
     const dir = repo()
     expect(() => diffSince(dir, '--output=/tmp/x', opts())).toThrow()
