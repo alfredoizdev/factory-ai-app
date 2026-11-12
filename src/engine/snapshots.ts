@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
@@ -13,6 +13,7 @@ import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
 import { elsewhere } from '@/engine/machine'
+import { snapshotKey, storage } from '@/engine/storage'
 
 // Before and after: pictures of the person's site as it was and with the change, taken by a real browser on this
 // computer. Both versions are started with the project's own dev server — the change from the run's working copy, the
@@ -78,6 +79,14 @@ export function routeFor(files: readonly string[]): string {
 }
 
 const fileOf = (runId: string, shot: Shot, root = SNAP_ROOT) => join(root, runId, `${shot}.png`)
+/** A picture's bytes, by its fixed name only: from this computer when it took it, otherwise from R2. */
+export async function readSnapshot(runId: string, shot: string, root = SNAP_ROOT): Promise<Uint8Array | null> {
+  if (!(SHOTS as readonly string[]).includes(shot)) return null
+  const local = snapshotFile(runId, shot, root)
+  if (local) return new Uint8Array(readFileSync(local))
+  return (await storage()?.get(snapshotKey(runId, shot)))?.body ?? null
+}
+
 export const snapshotFile = (runId: string, shot: string, root = SNAP_ROOT): string | null =>
   (SHOTS as readonly string[]).includes(shot) && existsSync(fileOf(runId, shot as Shot, root)) ? fileOf(runId, shot as Shot, root) : null
 
@@ -94,7 +103,8 @@ export async function snapshotState(runId: string): Promise<SnapshotState> {
   if (!row) return { status: 'none', route: null, shots: [], message: null }
   const p = JSON.parse(row.payloadJson) as { route: string | null; shots: Shot[]; message: string | null; change: string }
   if (p.change !== (await changeHash(runId))) return { status: 'none', route: null, shots: [], message: null }
-  const shots = p.shots.filter(s => snapshotFile(runId, s) !== null)
+  // Pictures live in R2 when it is set up (any computer can show them), otherwise on the computer that took them.
+  const shots = p.shots.filter(s => storage() !== null || snapshotFile(runId, s) !== null)
   return shots.length > 0 ? { status: 'ready', route: p.route, shots, message: null } : { status: 'failed', route: p.route, shots: [], message: p.message }
 }
 
@@ -145,6 +155,9 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
         await shoot(page(afterUrl), { desktop: fileOf(runId, 'after-desktop', root), mobile: fileOf(runId, 'after-mobile', root) })
         shots.push('after-desktop', 'after-mobile')
       }
+      // Kept in R2 too, so another computer can show them.
+      const store = storage()
+      if (store) for (const shot of shots) await store.put(snapshotKey(runId, shot), readFileSync(fileOf(runId, shot, root)), 'image/png')
       if (!beforeUrl || !afterUrl) message = strings.snapshots.didNotStart(!afterUrl ? strings.snapshots.afterVersion : strings.snapshots.beforeVersion)
     } catch (e) {
       message = strings.snapshots.failed(clip(redact(String((e as Error)?.message ?? e)).split('\n')[0] ?? '', 200))

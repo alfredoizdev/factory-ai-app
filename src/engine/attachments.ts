@@ -1,9 +1,10 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { extname, join } from 'node:path'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { attachments } from '@/db/schema'
+import { attachmentKey, storage } from '@/engine/storage'
 import { strings } from '@/ui/strings'
 
 // Images for the agent to look at. Checked by their bytes, not their name or the browser's word for their type, kept
@@ -38,6 +39,8 @@ export async function saveAttachment(name: string, bytes: Buffer, dir: string = 
   // The stored name is ours; the person's file name is kept only as a label.
   const path = join(dir, `${id}.${kind.ext}`)
   writeFileSync(path, bytes)
+  // Kept in R2 too, so the computer the task runs on can hand it to the agent even when it was attached elsewhere.
+  await storage()?.put(attachmentKey(id, kind.ext), bytes, kind.mime)
   const clean = name.replace(/[^\w.\- ]+/g, '_').slice(0, 120) || `image.${kind.ext}`
   await db.insert(attachments).values({ id, path, name: clean, mime: kind.mime, size: bytes.length, createdAt: new Date().toISOString() })
   return { id, name: clean, mime: kind.mime, size: bytes.length }
@@ -53,11 +56,23 @@ export async function claimAttachments(ids: readonly string[], runId: string, ap
 }
 
 /** The image paths for a run's first round (none attached to a decision), or for one request for changes. */
-export async function imagePathsFor(runId: string, approvalId: string | null = null): Promise<string[]> {
-  return (await db
+export async function imagePathsFor(runId: string, approvalId: string | null = null, dir: string = ATTACHMENT_DIR): Promise<string[]> {
+  const rows = await db
     .select()
     .from(attachments)
     .where(and(eq(attachments.runId, runId), approvalId ? eq(attachments.approvalId, approvalId) : isNull(attachments.approvalId)))
-    )
-    .map(a => a.path)
+  const paths: string[] = []
+  for (const a of rows) {
+    // This computer's copy, fetched from R2 when the image was attached on another computer.
+    const ext = extname(a.path).slice(1) || 'png'
+    const local = existsSync(a.path) ? a.path : join(dir, `${a.id}.${ext}`)
+    if (!existsSync(local)) {
+      const got = await storage()?.get(attachmentKey(a.id, ext))
+      if (!got) continue
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(local, got.body)
+    }
+    paths.push(local)
+  }
+  return paths
 }

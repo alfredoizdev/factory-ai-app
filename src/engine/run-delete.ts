@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, rmSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { extname, join, relative, resolve, sep } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { attachments, projects, runs } from '@/db/schema'
@@ -10,6 +10,7 @@ import { SNAP_ROOT } from '@/engine/snapshots'
 import { DEFAULT_WORKTREE_ROOT } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
+import { attachmentKey, storage } from '@/engine/storage'
 
 // Deleting a task removes what the app keeps about it: its record (every event, step, measurement and decision goes
 // with it) and the agent's working copy. What it produced in the person's project, its saved branch, is theirs and
@@ -35,7 +36,8 @@ export async function deleteRun(runId: string, options: { worktreeRoot?: string;
   if (!run) throw new RunDeleteError(strings.errors.runNotFound, 404)
   if (LIVE.has(run.status)) throw new RunDeleteError(strings.history.stillLive, 409)
   const repo = (await projectHere(run.projectId))?.repoPath ?? null
-  const files = (await db.select({ path: attachments.path }).from(attachments).where(eq(attachments.runId, runId))).map(a => a.path)
+  const attached = await db.select({ id: attachments.id, path: attachments.path }).from(attachments).where(eq(attachments.runId, runId))
+  const files = attached.map(a => a.path)
 
   stopPreview(runId)
   await db.delete(runs).where(eq(runs.id, runId)) // its events, nodes, evidence, decisions and attachment rows go with it
@@ -61,4 +63,10 @@ export async function deleteRun(runId: string, options: { worktreeRoot?: string;
   for (const file of files) if (inside(dir, file)) rmSync(file, { force: true })
   // Its before and after pictures go too. The run id is a ULID, so the folder is always inside the pictures folder.
   if (/^[0-9A-Z]{26}$/i.test(runId)) rmSync(join(options.snapshotDir ?? SNAP_ROOT, runId), { recursive: true, force: true })
+  // And their copies in R2.
+  const store = storage()
+  if (store && /^[0-9A-Z]{26}$/i.test(runId)) {
+    await store.deletePrefix(`snapshots/${runId}/`)
+    for (const a of attached) await store.deletePrefix(attachmentKey(a.id, extname(a.path).slice(1) || 'png'))
+  }
 }
