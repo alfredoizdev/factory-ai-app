@@ -133,7 +133,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
             <button type="button" disabled={busy !== null} onClick={() => void pick()} style={button(false)}>
               {busy === 'pick' ? <WorkingSpinner blockId="pick" size={14} /> : null} {s.choose}
             </button>
-            <button type="button" disabled={busy !== null || path.trim() === ''} onClick={() => void read(path)} style={button(!analysis)}>
+            <button type="button" disabled={busy !== null || path.trim() === ''} title={s.readHint} onClick={() => void read(path)} style={button(!analysis)}>
               {busy === 'read' ? <WorkingSpinner blockId="read" size={14} /> : null} {s.read}
             </button>
           </div>
@@ -192,10 +192,20 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
               </span>
             </label>
             <span style={{ fontSize: 12, color: theme.dim, lineHeight: 1.45 }}>{s.installNote(analysis.packageManager)}</span>
-            <button type="button" disabled={busy !== null || name.trim() === ''} onClick={() => void create()} style={{ ...button(true), justifySelf: 'start' }}>
-              {busy === 'create' ? <WorkingSpinner blockId="create" size={14} /> : null} {s.create}
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" disabled={busy !== null || name.trim() === ''} onClick={() => void create()} style={button(true)}>
+                {busy === 'create' ? <WorkingSpinner blockId="create" size={14} /> : null} {s.create}
+              </button>
+              <button type="button" disabled={busy === 'create'} onClick={onClose} style={button(false)}>
+                {s.cancel}
+              </button>
+            </div>
           </>
+        )}
+        {!analysis && (
+          <button type="button" onClick={onClose} style={{ ...button(false), justifySelf: 'start' }}>
+            {s.cancel}
+          </button>
         )}
         {error && (
           <div role="alert" style={{ fontSize: 12.5, color: theme.failed }}>
