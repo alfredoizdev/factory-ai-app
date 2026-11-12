@@ -55,12 +55,28 @@ function coreReasons(files: readonly ChangedFile[], core: readonly string[]): st
   return hits.length > MAX_CORE_REASONS ? [...hits.slice(0, MAX_CORE_REASONS), strings.risk.moreCore(hits.length - MAX_CORE_REASONS)] : hits
 }
 
-/** `core`: the project's core areas that are switched on; a change inside one always needs the person. */
-export function classifyChange(files: readonly ChangedFile[], tests: TestFacts, core: readonly string[] = []): RiskAssessment {
+/** A decision of the person's, with the files or folders it names (a folder ends in "/"). */
+export type DecisionPaths = { text: string; paths: readonly string[] }
+
+/** One reason per decision that names a changed file, saying which file and which decision. */
+function decisionReasons(files: readonly ChangedFile[], decisions: readonly DecisionPaths[]): string[] {
+  const hits = decisions.flatMap(d => {
+    const first = files.find(f => d.paths.some(p => insideCoreArea(f.path, p)))
+    return first ? [strings.risk.onDecision(first.path, d.text)] : []
+  })
+  return hits.length > MAX_CORE_REASONS ? [...hits.slice(0, MAX_CORE_REASONS), strings.risk.moreDecisions(hits.length - MAX_CORE_REASONS)] : hits
+}
+
+/**
+ * `core`: the project's core areas that are switched on; a change inside one always needs the person.
+ * `decisions`: the person's decisions that name files; a change on one of those files needs them too.
+ */
+export function classifyChange(files: readonly ChangedFile[], tests: TestFacts, core: readonly string[] = [], decisions: readonly DecisionPaths[] = []): RiskAssessment {
   const reasons: string[] = []
   const linesChanged = files.reduce((n, f) => n + f.lines, 0)
   if (files.length === 0) reasons.push(strings.risk.nothingChanged)
   reasons.push(...coreReasons(files, core))
+  reasons.push(...decisionReasons(files, decisions))
   for (const f of files) {
     const hit = SENSITIVE.find(([re]) => re.test(f.path))
     if (hit) reasons.push(strings.risk.touches(f.path, hit[1]))
@@ -104,9 +120,9 @@ function changedFiles(workdir: string, baseCommit: string): ChangedFile[] {
   return [...counted, ...added]
 }
 
-export function assessRisk(workdir: string, baseCommit: string, tests: TestFacts, core: readonly string[] = []): RiskAssessment {
+export function assessRisk(workdir: string, baseCommit: string, tests: TestFacts, core: readonly string[] = [], decisions: readonly DecisionPaths[] = []): RiskAssessment {
   try {
-    return classifyChange(changedFiles(workdir, baseCommit), tests, core)
+    return classifyChange(changedFiles(workdir, baseCommit), tests, core, decisions)
   } catch {
     return { level: 'high', reasons: [strings.risk.unreadable], files: [], linesChanged: 0 }
   }

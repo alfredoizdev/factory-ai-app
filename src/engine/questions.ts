@@ -248,7 +248,9 @@ export async function answerQuestion(questionId: string, a: { option: string; te
     const done = toQuestion({ ...row, ...fields })
     const about = row.findingId ? (await tx.select({ type: findings.type, file: findings.file }).from(findings).where(eq(findings.id, row.findingId)))[0] : undefined
     const text = decisionText(done, about ? { type: about.type as 'logic' | 'security' | 'effect', ...(about.file ? { file: about.file } : {}) } : undefined)
-    if (text) await addEntry(run.projectId, { kind: 'decision', text, source: 'question', runId: run.id }, tx)
+    // The decision stays on the file it was about, so a later change to that file stops for the person.
+    const paths = about?.file ? [about.file] : []
+    if (text) await addEntry(run.projectId, { kind: 'decision', text, paths, source: 'question', runId: run.id }, tx)
     return done
   })
   await tell(answered, deps.send)

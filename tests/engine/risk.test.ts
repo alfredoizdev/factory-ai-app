@@ -133,3 +133,50 @@ describe('what is still open after the review', () => {
     for (const r of [strings.risk.reviewStillOpen, strings.risk.fixUnchecked, strings.risk.reviewUnreadable]) expect(r).toMatch(/^[A-Z].*\.$/)
   })
 })
+
+describe('decisions that name files', () => {
+  const change = [{ path: 'src/rounding/round.ts', lines: 3 }]
+  const decision = { text: 'Prices round down', paths: ['src/rounding/'] }
+
+  test('a change on a file a decision names is high risk, and says which decision', () => {
+    expect(classifyChange(change, ok).level).toBe('low')
+    const r = classifyChange(change, ok, [], [decision])
+    expect(r.level).toBe('high')
+    expect(r.reasons).toContain(strings.risk.onDecision('src/rounding/round.ts', 'Prices round down'))
+  })
+
+  test('a decision that names no files changes nothing', () => {
+    expect(classifyChange(change, ok, [], [{ text: 'x', paths: [] }]).level).toBe('low')
+  })
+
+  test('a decision names a file exactly, and a folder with everything inside', () => {
+    expect(classifyChange(change, ok, [], [{ text: 'a', paths: ['src/rounding/round.ts'] }]).level).toBe('high')
+    expect(classifyChange(change, ok, [], [{ text: 'a', paths: ['src/rounding/other.ts', 'src/round'] }]).level).toBe('low')
+  })
+
+  test('six decisions hit give five reasons and one line for the rest, after the core reasons', () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({ text: `d${i}`, paths: ['src/rounding/'] }))
+    const r = classifyChange(change, ok, ['src/rounding/'], six)
+    expect(r.reasons).toEqual([
+      strings.risk.insideCore('src/rounding/round.ts', 'src/rounding/', 0),
+      ...[0, 1, 2, 3, 4].map(i => strings.risk.onDecision('src/rounding/round.ts', `d${i}`)),
+      strings.risk.moreDecisions(1),
+    ])
+  })
+
+  test('assessRisk passes the decisions on', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-dec-'))
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim()
+    git('init', '-q')
+    git('config', 'user.email', 't@e.com')
+    git('config', 'user.name', 't')
+    writeFileSync(join(dir, 'a.txt'), 'a\n')
+    git('add', '.')
+    git('commit', '-q', '-m', 'base')
+    const base = git('rev-parse', 'HEAD')
+    mkdirSync(join(dir, 'src/rounding'), { recursive: true })
+    writeFileSync(join(dir, 'src/rounding/round.ts'), 'x\n')
+    expect(assessRisk(dir, base, ok).level).toBe('low')
+    expect(assessRisk(dir, base, ok, [], [decision]).level).toBe('high')
+  })
+})

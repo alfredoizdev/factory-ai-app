@@ -1,9 +1,13 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { events, nodeRuns, projectNotes, projects, questions, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { askPerson, answerQuestion, consumeAnswer, decisionText, LEAVE, openQuestion, OTHER, QuestionError, takeAnswer, type Question } from '@/engine/questions'
+import { recordFindings } from '@/engine/findings'
 import { deliverPending, relayTick, markWaiting, seedWaiting, RESEND_AFTER_MS } from '@/engine/relay'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import { POST } from '@/app/api/runs/[runId]/questions/[questionId]/route'
@@ -389,5 +393,38 @@ describe('the route', () => {
     const again = await post(runId, q.id, { option: 'a' })
     expect(again.status).toBe(409)
     expect((await again.json()).error).toBe(strings.question.alreadyAnswered)
+  })
+})
+
+describe('an answer about a file', () => {
+  /** A real finding, recorded the way the review records it, about `file` (or about no file). */
+  async function aboutFile(file: string | null) {
+    const { projectId, runId, nodeRunId } = await runningRun()
+    const dir = mkdtempSync(join(tmpdir(), 'factory-q-'))
+    mkdirSync(join(dir, 'src/rounding'), { recursive: true })
+    writeFileSync(join(dir, 'src/rounding/round.ts'), 'a\nb\n')
+    const [row] = await recordFindings(runId, nodeRunId, 1, [{ finding: { type: 'logic', ...(file ? { file, line: 1 } : {}), problem: 'It rounds down.', severity: 'medium', affects: [], decisions: [] }, reporters: ['logic'], count: 1 }], dir)
+    const q = await askPerson(runId, nodeRunId, ask({ findingId: row!.id }))
+    return { projectId, q }
+  }
+
+  test('the decision keeps the file it was about', async () => {
+    const { projectId, q } = await aboutFile('src/rounding/round.ts')
+    await answerQuestion(q.id, { option: LEAVE, text: 'on purpose' }, deps)
+    const [decision] = await entries(projectId)
+    expect(JSON.parse(decision!.paths!)).toEqual(['src/rounding/round.ts'])
+  })
+
+  test('a problem with no file gives a decision with no paths', async () => {
+    const { projectId, q } = await aboutFile(null)
+    await answerQuestion(q.id, { option: LEAVE, text: 'on purpose' }, deps)
+    const [decision] = await entries(projectId)
+    expect(decision!.paths).toBeNull()
+  })
+
+  test('without the person\'s own words there is no decision, so no paths either', async () => {
+    const { projectId, q } = await aboutFile('src/rounding/round.ts')
+    await answerQuestion(q.id, { option: LEAVE }, deps)
+    expect(await entries(projectId)).toHaveLength(0)
   })
 })

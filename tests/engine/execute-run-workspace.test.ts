@@ -11,6 +11,7 @@ import { eventsSince } from '@/engine/events'
 import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
 import { recordDecision } from '@/engine/approvals'
 import { addEntry } from '@/engine/register'
+import { createProject } from '@/engine/projects'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { TestRun } from '@/engine/test-runner'
 import type { AgentEvent, AgentProvider, BlockRoute } from '@/providers/types'
@@ -265,6 +266,23 @@ test('a change inside a core area the person marked stops for them even with the
   const [assessed] = await payloadOf(runId, 'node.assessed', 'human')
   expect(assessed!.level).toBe('high')
   expect(assessed!.reasons).toEqual(['src/app/page.tsx is inside src/app/, which you marked as a core area.'])
+})
+
+test('a change on files one of the person\'s decisions names stops for them in the default mode, and says which decision', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'factory-proj-'))
+  execFileSync('git', ['init', '-q'], { cwd: dir })
+  execFileSync('git', ['-c', 'user.email=t@e.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'base'], { cwd: dir })
+  const { projectId, workflowId } = await createProject({ path: dir, name: 'Shop', testCommand: 'npm test', checks: [] })
+  expect((await db.select().from(projects).where(eq(projects.id, projectId)))[0]!.askMode).toBe('what_matters')
+  await addEntry(projectId, { kind: 'decision', text: 'Prices round down', paths: ['src/rounding/'], source: 'question' })
+  const { runId } = await createRun({ workflowId, request: 'do it' })
+  await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))
+  await drive(runId, withTests(), realWorktree({ 'src/rounding/round.ts': 'floor()\n' }))
+  expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  const [assessed] = await payloadOf(runId, 'node.assessed', 'human')
+  expect(assessed!.level).toBe('high')
+  expect(assessed!.reasons).toEqual([strings.risk.onDecision('src/rounding/round.ts', 'Prices round down')])
+  expect(await payloadOf(runId, 'node.completed', 'human')).toEqual([])
 })
 
 test('a reviewer whose answer could not be read holds the human check for the person, and says so', async () => {

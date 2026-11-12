@@ -3,7 +3,7 @@ import { MAX_REVIEW_ROUNDS, defaultReviewerModel, type Focus, type Review } from
 import { distinctProblems, endingOf, findingsOf, needsPerson, notReal, problemGroups, type Ending } from '@/engine/findings'
 import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
-import { corePaths, giveStanding, type Standing } from '@/engine/register'
+import { giveStanding, standingFor, type Standing } from '@/engine/register'
 import { markWaiting } from '@/engine/relay'
 import { currentPlan, planDecision, type Job, type PlanDecision, type PlanQuestion } from '@/engine/plan'
 import { and, eq } from 'drizzle-orm'
@@ -685,8 +685,11 @@ async function assessGate(runId: string, block: PlannedBlock, workspace: Workspa
   await changeUnderReview(runId).catch(() => null) // unreadable now: the gate reads it again when shown
   // The core areas the person marked, as they are now: a change inside one is never waved through.
   const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
-  const core = projectId ? await corePaths(projectId) : []
-  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)), core)
+  const standing = projectId ? await standingFor(projectId) : []
+  const core = standing.filter(s => s.kind === 'core').flatMap(s => s.paths)
+  // The person's decisions that name files: a change on one of those files needs them too.
+  const decisions = standing.filter(s => s.kind === 'decision' && s.paths.length > 0).map(s => ({ text: s.text, paths: s.paths }))
+  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)), core, decisions)
   await withTx(runId, async tx => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node || outcomeOf(node.state)) return

@@ -609,6 +609,8 @@ export const strings = {
       area.endsWith('/')
         ? `${path}${others > 0 ? ` and ${others} other ${others === 1 ? 'file' : 'files'} are` : ' is'} inside ${area}, which you marked as a core area.`
         : `${path} is a file you marked as a core area.`,
+    onDecision: (path: string, text: string) => `${path} is covered by your decision “${text}”.`,
+    moreDecisions: (n: number) => `It also changes files that ${n} more ${n === 1 ? 'decision' : 'decisions'} of yours cover.`,
     moreCore: (n: number) => `It also changes ${n} more ${n === 1 ? 'core area' : 'core areas'} you marked.`,
     tooManyFiles: (n: number, max: number) => `It changes ${n} files; low risk is at most ${max}.`,
     tooManyLines: (n: number, max: number) => `It changes ${n} lines; low risk is at most ${max}.`,
