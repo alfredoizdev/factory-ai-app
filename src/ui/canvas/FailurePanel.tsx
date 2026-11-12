@@ -19,17 +19,11 @@ export function errorExcerpt(output: string | null, lines = 25, chars = 1500): s
   return output.trim().split('\n').slice(-lines).join('\n').slice(-chars)
 }
 
-/** The ready-made requests for a failure. Each is only words for the box: the person reads and sends them. */
-export function fixOptions(block: FailedBlock | undefined): { key: string; label: string; text: string }[] {
-  const label = block?.label ?? ''
+/** The request "Fix it for me" sends: what failed, with the end of what it printed, for the agents to read. */
+export function fixRequest(block: FailedBlock | undefined): string {
+  const text = f.fixText(block?.label ?? '', block?.command ?? null)
   const excerpt = errorExcerpt(block?.output ?? null)
-  const withError = (text: string) => (excerpt ? `${text}\n\n${f.errorIntro}\n${excerpt}` : text)
-  return [
-    { key: 'fix', label: f.options.fix.label, text: withError(f.options.fix.text(label, block?.command ?? null)) },
-    { key: 'simpler', label: f.options.simpler.label, text: withError(f.options.simpler.text(label)) },
-    { key: 'explain', label: f.options.explain.label, text: withError(f.options.explain.text(label)) },
-    { key: 'again', label: f.options.again.label, text: f.options.again.text() },
-  ]
+  return excerpt ? `${text}\n\n${f.errorIntro}\n${excerpt}` : text
 }
 
 /**
@@ -42,7 +36,6 @@ export function FailedSection({
   imageIds,
   imagesBusy,
   composer,
-  onText,
   onFollowUp,
   actionsRef,
   onCanContinue,
@@ -62,8 +55,10 @@ export function FailedSection({
   const [failure, setFailure] = useState<RunFailure | null>(null)
   const [asked, setAsked] = useState(false)
   const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState<'send' | 'again' | null>(null)
+  const [busy, setBusy] = useState<'send' | 'again' | 'fix' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The failure in plain words: undefined until asked, null when there is no answer.
+  const [explanation, setExplanation] = useState<string | null | undefined>(undefined)
 
   useEffect(() => {
     let live = true
@@ -82,7 +77,21 @@ export function FailedSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- asked once per run
   }, [runId])
 
-  async function send(text: string, as: 'send' | 'again') {
+  // Asked the first time the window opens, and kept: opening it again does not ask again.
+  useEffect(() => {
+    if (!open || explanation !== undefined) return
+    let live = true
+    fetch(`/api/runs/${runId}/failure/explain`, { method: 'POST' })
+      .then(r => (r.ok ? (r.json() as Promise<{ explanation?: string | null }>) : null))
+      .then(d => live && setExplanation(d?.explanation ?? null))
+      .catch(() => live && setExplanation(null))
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- asked once, when the window first opens
+  }, [open, runId])
+
+  async function send(text: string, as: 'send' | 'again' | 'fix') {
     setBusy(as)
     setError(null)
     try {
@@ -100,7 +109,7 @@ export function FailedSection({
   // The failed block's own buttons reach this card through the ref.
   useEffect(() => {
     if (!actionsRef) return
-    actionsRef.current = { see: () => setOpen(true), again: () => void send(f.options.again.text(), 'again') }
+    actionsRef.current = { see: () => setOpen(true), again: () => void send(f.againText, 'again') }
     return () => {
       actionsRef.current = null
     }
@@ -125,9 +134,9 @@ export function FailedSection({
       <div data-testid="failure-summary" style={{ fontSize: 13.5, color: '#d6dce6', lineHeight: 1.45 }}>
         {first ? f.cardText(first.label) : f.cardTextUnknown}
       </div>
-      {busy === 'again' ? (
+      {busy === 'again' || busy === 'fix' ? (
         <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#cfe0ff' }}>
-          <WorkingSpinner blockId="again" size={15} /> {f.retrying}
+          <WorkingSpinner blockId="again" size={15} /> {busy === 'fix' ? f.fixing : f.retrying}
         </div>
       ) : (
         <div style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{f.cardHint}</div>
@@ -148,16 +157,35 @@ export function FailedSection({
         <FailureDialog
           failure={failure}
           canContinue={can}
+          explanation={explanation ?? null}
+          explaining={explanation === undefined}
           onClose={() => setOpen(false)}
-          onPick={text => {
-            onText(text)
+          onFix={() => (setOpen(false), void send(fixRequest(first), 'fix'))}
+          onAgain={() => (setOpen(false), void send(f.againText, 'again'))}
+          onOwn={() => {
             setOpen(false)
             requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('[data-testid="command-card"] textarea')?.focus())
           }}
-          onAgain={can ? () => (setOpen(false), void send(f.options.again.text(), 'again')) : undefined}
         />
       )}
     </>
+  )
+}
+
+function WrenchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={17} height={17} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.7 6.3a4 4 0 0 0-5.2 5.2L3.6 17.4a1.5 1.5 0 0 0 0 2.1l.9.9a1.5 1.5 0 0 0 2.1 0l5.9-5.9a4 4 0 0 0 5.2-5.2l-2.6 2.6-2.4-.6-.6-2.4z" />
+    </svg>
+  )
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 20h4L19 9l-4-4L4 16v4z" />
+      <path d="M13.5 6.5l4 4" />
+    </svg>
   )
 }
 
@@ -170,8 +198,63 @@ function RetryIcon() {
   )
 }
 
-/** The window that says what failed and why, with ready-made requests that go into the box for the agents. */
-export function FailureDialog({ failure, canContinue, onClose, onPick, onAgain }: { failure: RunFailure | null; canContinue: boolean; onClose: () => void; onPick: (text: string) => void; onAgain?: () => void }) {
+/** One thing the person can do about a failure: a button that says what it does, and a line that says what happens. */
+function Choice({ icon, label, help, badge, primary, onClick }: { icon: ReactNode; label: string; help: string; badge?: string; primary?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'auto minmax(0, 1fr)',
+        columnGap: 12,
+        rowGap: 3,
+        alignItems: 'center',
+        padding: primary ? '14px 16px' : '11px 16px',
+        borderRadius: 10,
+        border: `1px solid ${primary ? theme.running : theme.border}`,
+        background: primary ? theme.running : '#0f141c',
+        color: primary ? '#fff' : '#e6e9ef',
+        cursor: 'pointer',
+        textAlign: 'left',
+      }}
+    >
+      <span style={{ gridRow: '1 / span 2', display: 'grid', placeItems: 'center' }}>{icon}</span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: primary ? 16 : 14.5, fontWeight: 700 }}>
+        {label}
+        {badge && <span style={{ padding: '1px 8px', borderRadius: 999, background: 'rgba(255,255,255,0.22)', fontSize: 11.5, fontWeight: 700 }}>{badge}</span>}
+      </span>
+      <span style={{ fontSize: 13, lineHeight: 1.4, color: primary ? 'rgba(255,255,255,0.88)' : theme.dim }}>{help}</span>
+    </button>
+  )
+}
+
+/**
+ * The window for a task that stopped, in three parts: what happened, in plain words; what the person can do, each
+ * choice saying what it will do; and the command's own output, folded away for whoever wants it.
+ */
+export function FailureDialog({
+  failure,
+  canContinue,
+  explanation,
+  explaining,
+  onClose,
+  onFix,
+  onAgain,
+  onOwn,
+}: {
+  failure: RunFailure | null
+  canContinue: boolean
+  /** The failure in plain words, when a model wrote one. Without it the window's own sentence stands. */
+  explanation: string | null
+  explaining: boolean
+  onClose: () => void
+  onFix: () => void
+  onAgain: () => void
+  onOwn: () => void
+}) {
+  const [details, setDetails] = useState(false)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -181,6 +264,7 @@ export function FailureDialog({ failure, canContinue, onClose, onPick, onAgain }
   }, [onClose])
 
   const first = failure?.failed[0]
+  const technical = failure?.failed.filter(b => b.command || b.message) ?? []
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center', background: 'rgba(5, 7, 11, 0.65)' }}>
       <div
@@ -189,7 +273,7 @@ export function FailureDialog({ failure, canContinue, onClose, onPick, onAgain }
         aria-label={f.title}
         data-testid="failure-dialog"
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(860px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.tint('failed', 0.5)}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14 }}
+        style={{ width: 'min(680px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.tint('failed', 0.5)}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14 }}
       >
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '16px 22px', borderBottom: `1px solid ${theme.border}` }}>
           <h2 className="factory-display" style={{ margin: 0, fontSize: 22 }}>
@@ -199,80 +283,79 @@ export function FailureDialog({ failure, canContinue, onClose, onPick, onAgain }
             ✕
           </button>
         </header>
-        <div style={{ overflowY: 'auto', padding: '18px 22px 22px', display: 'grid', gap: 18, scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
-          {!failure && <div style={{ color: theme.dim }}>{f.unreadable}</div>}
-          {failure?.failed.length === 0 && <div style={{ color: theme.dim }}>{f.cardTextUnknown}</div>}
-          {failure?.failed.map(b => (
-            <section key={b.blockId} data-testid="failed-block" style={{ display: 'grid', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: 16, color: theme.failed }}>{b.label}</strong>
-                {b.message && <span style={{ color: '#d6dce6' }}>{b.message}</span>}
-              </div>
-              {b.command && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13, color: theme.dim }}>
-                  {f.command}
-                  <code style={{ padding: '3px 8px', borderRadius: 6, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, color: '#d6dce6' }}>{b.command}</code>
-                  <span style={{ color: theme.failed }}>{f.ended(b.exitCode, b.signal)}</span>
-                </div>
-              )}
-              {b.command && (
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <span style={{ fontSize: 13, color: theme.dim }}>{f.output}</span>
-                  <pre
-                    data-testid="failure-output"
-                    // Opened at its end: that is where a command says what broke.
-                    ref={el => {
-                      if (el) el.scrollTop = el.scrollHeight
-                    }}
-                    style={{ margin: 0, maxHeight: 300, overflow: 'auto', padding: 12, borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
-                    {b.output ?? f.noOutput}
-                  </pre>
-                </div>
-              )}
-            </section>
-          ))}
-          {failure && (
-            <section style={{ display: 'grid', gap: 10, paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
-              <strong style={{ fontSize: 15 }}>{f.whatNow}</strong>
-              {canContinue ? (
-                <>
-                  <span style={{ fontSize: 13, color: theme.dim }}>{f.pick}</span>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-                    {fixOptions(first).map(o =>
-                      o.key === 'again' ? (
-                        <button key={o.key} type="button" onClick={onAgain} style={optionButton}>
-                          <RetryIcon /> {f.tryAgainNow}
-                        </button>
-                      ) : (
-                        <button key={o.key} type="button" onClick={() => onPick(o.text)} style={optionButton}>
-                          {o.label}
-                        </button>
-                      ),
-                    )}
+        <div style={{ overflowY: 'auto', padding: '18px 22px 22px', display: 'grid', gap: 20, scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
+          {!failure ? (
+            <div style={{ color: theme.dim }}>{f.unreadable}</div>
+          ) : (
+            <>
+              <section style={{ display: 'grid', gap: 8 }}>
+                <strong style={{ fontSize: 15 }}>{f.happened}</strong>
+                <p data-testid="failure-plain" style={{ margin: 0, fontSize: 15.5, lineHeight: 1.55, color: '#e6e9ef' }}>
+                  {explanation ?? (first ? f.plain(first.label) : f.plainUnknown)}
+                </p>
+                {explaining && (
+                  <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: theme.dim }}>
+                    <WorkingSpinner blockId="explain" size={14} /> {f.explaining}
                   </div>
-                </>
-              ) : (
-                <span style={{ fontSize: 13.5, color: theme.waiting }}>{f.cannotContinue}</span>
+                )}
+                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.5, color: theme.passed }}>{f.safe}</p>
+              </section>
+
+              <section style={{ display: 'grid', gap: 10 }}>
+                <strong style={{ fontSize: 15 }}>{f.whatNow}</strong>
+                {canContinue ? (
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <Choice primary icon={<WrenchIcon />} label={f.actions.fix.label} help={f.actions.fix.help} badge={f.actions.fix.badge} onClick={onFix} />
+                    <Choice icon={<RetryIcon />} label={f.actions.again.label} help={f.actions.again.help} onClick={onAgain} />
+                    <Choice icon={<PencilIcon />} label={f.actions.own.label} help={f.actions.own.help} onClick={onOwn} />
+                  </div>
+                ) : (
+                  <span style={{ fontSize: 13.5, color: theme.waiting, lineHeight: 1.5 }}>{f.cannotContinue}</span>
+                )}
+              </section>
+
+              {technical.length > 0 && (
+                <section style={{ display: 'grid', gap: 12, paddingTop: 14, borderTop: `1px solid ${theme.border}` }}>
+                  <button type="button" aria-expanded={details} onClick={() => setDetails(d => !d)} style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, background: 'none', border: 'none', color: theme.dim, fontSize: 13, cursor: 'pointer' }}>
+                    <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: details ? 'rotate(90deg)' : 'none' }}>
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
+                    {details ? f.hideDetails : f.details}
+                  </button>
+                  {details &&
+                    technical.map(b => (
+                      <div key={b.blockId} data-testid="failed-block" style={{ display: 'grid', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
+                          <strong style={{ color: theme.failed }}>{b.label}</strong>
+                          {b.message && <span style={{ color: theme.dim }}>{b.message}</span>}
+                        </div>
+                        {b.command && (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13, color: theme.dim }}>
+                              {f.command}
+                              <code style={{ padding: '3px 8px', borderRadius: 6, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, color: '#d6dce6' }}>{b.command}</code>
+                              <span style={{ color: theme.failed }}>{f.ended(b.exitCode, b.signal)}</span>
+                            </div>
+                            <span style={{ fontSize: 13, color: theme.dim }}>{f.output}</span>
+                            <pre
+                              data-testid="failure-output"
+                              // Opened at its end: that is where a command says what broke.
+                              ref={el => {
+                                if (el) el.scrollTop = el.scrollHeight
+                              }}
+                              style={{ margin: 0, maxHeight: 260, overflow: 'auto', padding: 12, borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
+                              {b.output ?? f.noOutput}
+                            </pre>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                </section>
               )}
-            </section>
+            </>
           )}
         </div>
       </div>
     </div>
   )
-}
-
-const optionButton = {
-  padding: '11px 14px',
-  borderRadius: 8,
-  border: `1px solid ${theme.border}`,
-  background: '#0f141c',
-  color: '#e6e9ef',
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: 'pointer',
-  textAlign: 'left' as const,
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
 }

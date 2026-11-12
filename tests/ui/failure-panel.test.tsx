@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { BlockCard } from '@/ui/canvas/BlockCard'
 import { CommandCard } from '@/ui/canvas/CommandCard'
 import type { ComposerImage } from '@/ui/canvas/Composer'
-import { errorExcerpt, fixOptions, type FailureActions } from '@/ui/canvas/FailurePanel'
+import { errorExcerpt, fixRequest, type FailureActions } from '@/ui/canvas/FailurePanel'
 import { strings } from '@/ui/strings'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -21,39 +21,64 @@ function Card({ actions, onFollowUp = () => {} }: { actions: { current: FailureA
   return <CommandCard mode="failed" runId="r1" text={text} onText={setText} images={images} onImages={setImages} onRun={() => {}} canRun={false} onFollowUp={onFollowUp} onSent={() => setText('')} failureActions={actions} />
 }
 
-test('a failed task says which block stopped it; the window shows the command and what it printed; an option fills the box', async () => {
-  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+function mockFetch(explanation: string | null, newRun = 'r2') {
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/failure/explain')) return new Response(JSON.stringify({ explanation }))
     if (url.endsWith('/failure')) return new Response(JSON.stringify(failure))
-    if (url.endsWith('/follow-up') && init?.method === 'POST') return new Response(JSON.stringify({ runId: 'r2' }), { status: 201 })
+    if (url.endsWith('/follow-up') && init?.method === 'POST') return new Response(JSON.stringify({ runId: newRun }), { status: 201 })
     return new Response('{}')
   })
+}
+
+async function openWindow(fetchMock: ReturnType<typeof mockFetch>, onFollowUp = vi.fn()) {
   vi.stubGlobal('fetch', fetchMock)
   const actions: { current: FailureActions | null } = { current: null }
-  const onFollowUp = vi.fn()
   render(<Card actions={actions} onFollowUp={onFollowUp} />)
   expect(await screen.findByTestId('failure-summary')).toHaveTextContent(strings.failure.cardText('Build'))
-
   // The failed block's "See what went wrong" opens the window.
   await waitFor(() => expect(actions.current).not.toBeNull())
   actions.current!.see()
-  const dialog = await screen.findByTestId('failure-dialog')
+  return { dialog: await screen.findByTestId('failure-dialog'), onFollowUp }
+}
+
+test('the window says what happened in plain words first, and keeps the command output folded away', async () => {
+  const { dialog } = await openWindow(mockFetch('The page could not be put together because one piece is missing its title.'))
+  // Its own sentence stands until the model's arrives.
+  expect(screen.getByTestId('failure-plain').textContent).toBeTruthy()
+  await waitFor(() => expect(screen.getByTestId('failure-plain')).toHaveTextContent('one piece is missing its title'))
+  expect(dialog).toHaveTextContent(strings.failure.safe)
+  expect(screen.queryByTestId('failure-output')).toBeNull()
+
+  fireEvent.click(screen.getByRole('button', { name: strings.failure.details }))
   expect(dialog).toHaveTextContent('npm run build')
   expect(dialog).toHaveTextContent(strings.failure.ended(1, null))
   expect(screen.getByTestId('failure-output')).toHaveTextContent('Type error: missing prop "title"')
+})
 
-  // Picking an option writes the request, with the error, into the box; nothing is sent yet.
-  fireEvent.click(screen.getByRole('button', { name: strings.failure.options.fix.label }))
-  expect(screen.queryByTestId('failure-dialog')).toBeNull()
-  const box = screen.getByRole('textbox') as HTMLTextAreaElement
-  expect(box.value).toContain('npm run build')
-  expect(box.value).toContain('Type error: missing prop "title"')
-  expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/follow-up'))).toBe(false)
+test('with no explanation from a model the window keeps its own sentence', async () => {
+  await openWindow(mockFetch(null))
+  await waitFor(() => expect(screen.queryByText(strings.failure.explaining)).toBeNull())
+  expect(screen.getByTestId('failure-plain')).toHaveTextContent(strings.failure.plain('Build'))
+})
 
-  // Sending it picks the work up in a new run.
-  fireEvent.click(screen.getByRole('button', { name: strings.failure.send }))
+test('Fix it for me sends the error to the agents straight away', async () => {
+  const fetchMock = mockFetch(null)
+  const { onFollowUp } = await openWindow(fetchMock)
+  fireEvent.click(screen.getByRole('button', { name: strings.failure.actions.fix.label }))
   await waitFor(() => expect(onFollowUp).toHaveBeenCalledWith('r2'))
+  expect(screen.queryByTestId('failure-dialog')).toBeNull()
   const sent = JSON.parse(String(fetchMock.mock.calls.find(([u, i]) => String(u).endsWith('/follow-up') && i?.method === 'POST')![1]!.body)) as { note: string }
-  expect(sent.note).toContain('Type error')
+  expect(sent.note).toContain('npm run build')
+  expect(sent.note).toContain('Type error: missing prop "title"')
+})
+
+test('choosing to say what to do closes the window and sends nothing', async () => {
+  const fetchMock = mockFetch(null)
+  const { onFollowUp } = await openWindow(fetchMock)
+  fireEvent.click(screen.getByRole('button', { name: strings.failure.actions.own.label }))
+  expect(screen.queryByTestId('failure-dialog')).toBeNull()
+  expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/follow-up'))).toBe(false)
+  expect(screen.getByRole('textbox')).toBeInTheDocument()
 })
 
 test('Try again on the failed block picks the work up without writing anything', async () => {
@@ -97,5 +122,5 @@ test('the error handed to the agents is the end of the output, kept short', () =
   expect(errorExcerpt(long).split('\n')).toHaveLength(25)
   expect(errorExcerpt(long)).toContain('line 99')
   expect(errorExcerpt(null)).toBe('')
-  expect(fixOptions(undefined).map(o => o.key)).toEqual(['fix', 'simpler', 'explain', 'again'])
+  expect(fixRequest(undefined)).not.toContain(strings.failure.errorIntro)
 })
