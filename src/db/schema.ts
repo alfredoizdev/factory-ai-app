@@ -25,6 +25,8 @@ export const projects = pgTable('projects', {
   baseLockHash: text('base_lock_hash'),
   baseMessage: text('base_message'),
   baseUpdatedAt: text('base_updated_at'),
+  // The last number given to an entry of the project's register. Numbers are never reused, so this only goes up.
+  registerSeq: integer('register_seq').notNull().default(0),
   createdAt: text('created_at').notNull(),
 })
 
@@ -248,8 +250,17 @@ export const projectNotes = pgTable(
     runId: text('run_id'),
     enabled: boolean('enabled').notNull().default(true),
     createdAt: text('created_at').notNull(),
+    /** The entry's number in the project's register (R-03). Null only until the migration or numberUnnumbered gives one. */
+    number: integer('number'),
+    /** 'rule' | 'decision' | 'core' | 'finding'. */
+    kind: text('kind').notNull().default('rule'),
+    /** JSON array of path patterns the entry is about (core areas). */
+    paths: text('paths'),
+    /** How a finding line ended; null for the standing kinds. */
+    outcome: text('outcome'),
+    reason: text('reason'),
   },
-  t => [index('project_notes_project_idx').on(t.projectId)],
+  t => [index('project_notes_project_idx').on(t.projectId), uniqueIndex('project_notes_number_idx').on(t.projectId, t.number)],
 )
 
 /** The computers that have opened this data: a name a person can read, for "its working copy is on …". */

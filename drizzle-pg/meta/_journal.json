@@ -22,6 +22,13 @@
       "when": 1794448662139,
       "tag": "0002_bouncy_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794494376169,
+      "tag": "0003_equal_misty_knight",
+      "breakpoints": true
     }
   ]
 }

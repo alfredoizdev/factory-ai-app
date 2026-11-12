@@ -5,7 +5,8 @@ import { projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
 import { orchestrateRun, type StepApi } from '@/engine/inngest/execute-run'
-import { addNote, deleteNote, distill, giveRules, learnFrom, listNotes, updateNote } from '@/engine/memory'
+import { addNote, deleteNote, distill, learnFrom, listNotes, updateNote } from '@/engine/memory'
+import { giveStanding } from '@/engine/register'
 import { promptsOf } from '@/engine/prompts'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { AgentExecutionInput, AgentProvider } from '@/providers/types'
@@ -51,9 +52,9 @@ test('a task is given the rules switched on when it starts, once, and the Input 
   await addNote(projectId, 'Keep the team pink')
   const off = (await addNote(projectId, 'Use serif fonts'))!
   await updateNote(projectId, off.id, { enabled: false })
-  expect((await giveRules(runId))).toEqual(['Keep the team pink'])
+  expect((await giveStanding(runId)).map(s => s.text)).toEqual(['Keep the team pink'])
   await addNote(projectId, 'Added later')
-  expect((await giveRules(runId))).toEqual(['Keep the team pink']) // fixed for this task
+  expect((await giveStanding(runId)).map(s => s.text)).toEqual(['Keep the team pink']) // fixed for this task
   expect((await eventsSince(runId, 0)).filter(e => e.type === 'run.memory')).toHaveLength(1)
   expect((await promptsOf(runId)).find(p => p.kind === 'memory')!.text).toBe('• Keep the team pink')
 })

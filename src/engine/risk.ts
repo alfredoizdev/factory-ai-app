@@ -21,7 +21,7 @@ export type TestFacts = {
 export type RiskAssessment = { level: 'low' | 'high'; reasons: string[]; files: string[]; linesChanged: number }
 
 // Areas where a wrong change is expensive. Matched on the path, case-insensitively.
-const SENSITIVE: readonly [RegExp, string][] = [
+export const SENSITIVE: readonly [RegExp, string][] = [
   [/(^|\/)\.env(\.|$)|secret|credential/i, strings.risk.areas.secrets],
   [/auth|login|logout|sign-?in|sign-?up|session|password|oauth|jwt|token/i, strings.risk.areas.auth],
   [/payment|billing|stripe|checkout|invoice|subscription|paypal|price|pricing/i, strings.risk.areas.payments],

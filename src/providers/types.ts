@@ -2,6 +2,7 @@ import type { BlockKind } from '@/domain/graph'
 import type { Job } from '@/engine/plan'
 import type { Review } from '@/engine/review'
 import type { TestRun } from '@/engine/test-runner'
+import type { Standing } from '@/engine/register'
 
 // The contract every agent provider implements. Nothing here may depend on a specific provider, the
 // database or the event log: a provider yields activity and the executor decides what to record.
@@ -45,6 +46,8 @@ export type AgentExecutionInput = {
   jobs?: Job[]
   /** The project's rules from earlier tasks, to follow unless this request says otherwise. */
   notes?: string[]
+  /** Everything the project's register stands on for this task: rules, decisions and core areas, numbered. */
+  standing?: Standing[]
 }
 
 /** How a provider takes part in a block: it runs it, or the block is skipped with a reason the canvas shows. */

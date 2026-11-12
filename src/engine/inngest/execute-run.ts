@@ -1,6 +1,6 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { defaultReviewerModel, reviewRevisionNote, type Review } from '@/engine/review'
-import { giveRules } from '@/engine/memory'
+import { giveStanding, type Standing } from '@/engine/register'
 import { markWaiting } from '@/engine/relay'
 import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
 import { and, desc, eq } from 'drizzle-orm'
@@ -115,6 +115,8 @@ type Workspace = {
   jobs?: Job[]
   /** The project's rules this task was given when it started. */
   notes?: string[]
+  /** Rules, decisions and core areas this task was given when it started. */
+  standing?: Standing[]
 }
 type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
 
@@ -285,6 +287,7 @@ async function runAttempt(
         model: block.model,
         ...(block.kind === 'build' && workspace.jobs ? { jobs: workspace.jobs } : {}),
         ...((block.kind === 'build' || block.kind === 'plan') && workspace.notes && workspace.notes.length > 0 ? { notes: workspace.notes } : {}),
+        ...((block.kind === 'build' || block.kind === 'plan') && workspace.standing && workspace.standing.length > 0 ? { standing: workspace.standing } : {}),
       }
       for await (const ev of provider.execute(input, { signal: controller.signal })) {
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
@@ -946,8 +949,9 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     return
   }
   // The project's rules, fixed for this task when it starts: what the person taught on earlier tasks.
-  const notes = provider_needsRules(plan) ? await step.run('memory', () => giveRules(runId)) : []
-  let prepared: Workspace = { ...workspace, previousRequest: plan.previousRequest, notes }
+  const standing = provider_needsRules(plan) ? await step.run('memory', () => giveStanding(runId)) : []
+  const notes = standing.filter(s => s.kind === 'rule').map(s => s.text)
+  let prepared: Workspace = { ...workspace, previousRequest: plan.previousRequest, notes, standing }
   const provider = deps.resolveProvider(plan.providerId)
 
   // Rounds: the first walks every block; when the person asks for changes, the next round walks again from the
