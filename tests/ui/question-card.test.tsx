@@ -35,6 +35,13 @@ test('the question sits in the same card as the other checks, framed as waiting 
   expect(screen.queryByLabelText(strings.gate.reasonLabel)).toBeNull() // no second box to wonder about
 })
 
+test('the card says what the problem is: the reviewer\'s sentence for the problem asked about, on the first level', () => {
+  const withWords: ReviewRecord = { ...record, findings: [finding('f1', { detail: { where: 'a.ts', problem: 'Not this one.', command: '', outputTail: '', reason: '' } }), finding('f2', { detail: { where: 'b.ts, line 3', problem: 'The total skips the last item.', command: '', outputTail: '', reason: '' } })] }
+  render(card({ record: withWords }))
+  expect(screen.getByText('The total skips the last item.')).toBeInTheDocument()
+  expect(screen.queryByText('Not this one.')).toBeNull()
+})
+
 test('the answer goes to the question\'s own route and the record is read again', async () => {
   const fetchMock = vi.fn(async () => new Response('{}'))
   vi.stubGlobal('fetch', fetchMock)

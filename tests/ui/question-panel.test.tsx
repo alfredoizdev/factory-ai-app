@@ -136,3 +136,40 @@ test('See details and the choices are big enough to tap', () => {
   render(<QuestionPanel question={question} onAnswer={async () => undefined} />)
   expect(screen.getByRole('button', { name: strings.question.seeDetails }).style.minHeight).toBe('32px')
 })
+
+describe('what the problem is, on the first level', () => {
+  const said = { where: 'src/auth.ts, line 12', problem: 'The session token is written to the log on every request.', command: 'node repro/check.mjs', outputTail: 'TOKEN-SEEN', reason: '' }
+
+  test('the reviewer\'s own sentence is shown open, under its label, without the place; the place and the check are one click away', () => {
+    render(<QuestionPanel question={question} finding={said} onAnswer={async () => undefined} />)
+    expect(screen.getByText(strings.question.aiSaid)).toBeInTheDocument()
+    expect(screen.getByText(said.problem)).toBeInTheDocument()
+    expect(screen.queryByText(/src\/auth\.ts/)).toBeNull()
+    expect(screen.queryByText('node repro/check.mjs')).toBeNull()
+    const button = screen.getByRole('button', { name: strings.question.seeDetails })
+    fireEvent.click(button)
+    expect(screen.getByText(/src\/auth\.ts, line 12/)).toBeInTheDocument()
+    expect(screen.getByText('node repro/check.mjs')).toBeInTheDocument()
+    expect(screen.getByText('TOKEN-SEEN')).toBeInTheDocument()
+    // the sentence is not said twice
+    expect(screen.getAllByText(said.problem)).toHaveLength(1)
+  })
+
+  test('two problems of one kind no longer read the same', () => {
+    const { container: a } = render(<QuestionPanel question={question} finding={said} onAnswer={async () => undefined} />)
+    const { container: b } = render(<QuestionPanel question={question} finding={{ ...said, problem: 'The price is rounded the wrong way.' }} onAnswer={async () => undefined} />)
+    expect(a.textContent).not.toBe(b.textContent)
+  })
+
+  test('a long sentence is cut on the first level', () => {
+    render(<QuestionPanel question={question} finding={{ ...said, problem: 'x'.repeat(2000) }} onAnswer={async () => undefined} />)
+    expect(document.body.textContent).not.toContain('x'.repeat(500))
+    expect(document.body.textContent).toContain('x'.repeat(300))
+  })
+
+  test('wraps at phone width: nothing in it asks for more room than the card has', () => {
+    render(<QuestionPanel question={question} finding={{ ...said, problem: 'averyveryverylongwordwithoutanyspace'.repeat(20) }} onAnswer={async () => undefined} />)
+    const shown = screen.getByText(/averyvery/)
+    expect(shown.style.overflowWrap).toBe('anywhere')
+  })
+})

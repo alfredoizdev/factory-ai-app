@@ -356,6 +356,7 @@ export const strings = {
     },
     seeDetails: 'See details',
     aiSaid: 'What the AI reviewer said',
+    moreAbout: 'More about it',
     where: 'Where',
     leaveLabel: 'Leave it as it is',
     leaveMeans: 'Nothing is changed for this. The task goes on without it.',

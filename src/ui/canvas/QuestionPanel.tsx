@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState } from 'react'
 import type { Question } from '@/engine/questions'
+import type { FindingView } from '@/engine/finding-view'
 import { strings } from '@/ui/strings'
 import { explained, type Touched } from '@/ui/explain'
 import { theme } from '@/ui/theme'
@@ -13,6 +14,9 @@ export type { Touched }
 
 const OTHER = 'other'
 const MONO = 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace'
+/** How much of the reviewer's sentence the first level shows; the rest of what was recorded is one click away. */
+const SAID_MAX = 400
+const cut = (text: string) => (text.length > SAID_MAX ? `${text.slice(0, SAID_MAX - 1)}…` : text)
 
 /**
  * A question the review cannot answer for the person: one plain sentence, why it asks, a few choices each saying what
@@ -23,8 +27,11 @@ export function QuestionPanel({
   onAnswer,
   position,
   touched = [],
+  finding,
 }: {
   question: Question
+  /** The problem the question is about, as the list shows it (already redacted and clipped on the server). */
+  finding?: FindingView['detail']
   /** Sends the answer. A rejection's message is shown to the person as it is. */
   onAnswer: (option: string, text?: string) => Promise<void>
   /** Which problem of the review this is, when there is more than one. */
@@ -62,6 +69,12 @@ export function QuestionPanel({
   }
 
   const mentioned = touched.filter(t => question.touches.includes(t.number))
+  // What the problem is, in the AI reviewer's own words: on the first level, so two questions of a kind never read the same.
+  const said = finding?.problem.trim() ? finding.problem.trim() : null
+  // One click away: where it is and how the app checked it; without the reviewer's sentence, the question's own detail.
+  const place = said ? [finding!.where.trim() ? { label: strings.findings.detail.where, text: finding!.where.trim(), mono: false } : null, finding!.command.trim() ? { label: strings.findings.detail.command, text: finding!.command.trim(), mono: true } : null, finding!.outputTail.trim() ? { label: strings.findings.detail.output, text: finding!.outputTail.trim(), mono: true } : null].filter((x): x is { label: string; text: string; mono: boolean } => x !== null) : []
+  const more = question.detail && (!said || question.kind === 'fix_held') ? question.detail : null
+  const hasDetail = place.length > 0 || more !== null
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -95,7 +108,14 @@ export function QuestionPanel({
         </div>
       )}
 
-      {question.detail && (
+      {said && (
+        <div style={{ display: 'grid', gap: 4, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118', minWidth: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: theme.waiting }}>{strings.question.aiSaid}</span>
+          <span style={{ fontSize: 13, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{explained(cut(said), touched)}</span>
+        </div>
+      )}
+
+      {hasDetail && (
         <div style={{ display: 'grid', gap: 6 }}>
           <button
             type="button"
@@ -108,9 +128,19 @@ export function QuestionPanel({
             {strings.question.seeDetails}
           </button>
           {showDetail && (
-            <div id={detailId} style={{ display: 'grid', gap: 4, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118' }}>
-              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: theme.waiting }}>{strings.question.aiSaid}</span>
-              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{explained(question.detail, touched)}</span>
+            <div id={detailId} style={{ display: 'grid', gap: 8, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118', minWidth: 0 }}>
+              {place.map(p => (
+                <div key={p.label} style={{ display: 'grid', gap: 2, minWidth: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: theme.dim }}>{p.label}</span>
+                  <span style={{ fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', ...(p.mono ? { fontFamily: MONO, fontSize: 12 } : {}) }}>{p.text}</span>
+                </div>
+              ))}
+              {more && (
+                <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: theme.waiting }}>{said ? strings.question.moreAbout : strings.question.aiSaid}</span>
+                  <span style={{ fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{explained(more, touched)}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -270,7 +300,7 @@ export function QuestionSection({
   return (
     <>
       {failed && retry}
-      <QuestionPanel key={question.id} question={question} touched={record!.touched} onAnswer={answer} position={at >= 0 ? { n: at + 1, of: order.length } : undefined} />
+      <QuestionPanel key={question.id} question={question} touched={record!.touched} onAnswer={answer} position={at >= 0 ? { n: at + 1, of: order.length } : undefined} {...(at >= 0 ? { finding: order[at]!.detail } : {})} />
     </>
   )
 }
