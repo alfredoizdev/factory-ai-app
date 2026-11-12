@@ -202,6 +202,19 @@ export const strings = {
       unknown: 'It is not clear how risky this is.',
     },
   },
+  question: {
+    leaveLabel: 'Leave it as it is',
+    leaveMeans: 'Nothing is changed for this. The task goes on without it.',
+    needWords: 'Write a few words about what you want, then send it.',
+    unknownOption: 'That is not one of the choices.',
+    alreadyAnswered: 'This question has already been answered.',
+    notWaiting: 'This task is not waiting for an answer any more.',
+    notFound: 'That question does not exist.',
+    anotherOpen: 'Another question is still waiting for an answer on this task.',
+    // The line the project's list of decisions keeps: the question, then what the person chose, then their own words.
+    decided: (question: string, answer: string) => `${question} — ${answer}`,
+    decidedWithWords: (question: string, answer: string, words: string) => `${question} — ${answer} — ${words}`,
+  },
   history: {
     title: 'Past tasks',
     newTaskTitle: 'New task',

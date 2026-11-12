@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { approvals, events, runs } from '@/db/schema'
+import { approvals, events, questions, runs } from '@/db/schema'
 import { thisMachine } from '@/engine/machine'
 
 // The relay: a decision made on one computer about a run that executes on another. Every decision is recorded first
@@ -31,12 +31,15 @@ export async function seedWaiting(): Promise<void> {
 }
 
 /** One relay pass: nothing at all when no run of this computer waits; otherwise deliver, then forget runs that moved. */
-export async function relayTick(send: Send, approvalEvent: string, planEvent: string): Promise<number> {
+export async function relayTick(send: Send, approvalEvent: string, planEvent: string, questionEvent?: string): Promise<number> {
   if (waiting.size === 0) return 0
-  const told = await deliverPending(send, approvalEvent, planEvent)
+  const told = await deliverPending(send, approvalEvent, planEvent, questionEvent)
   const ids = [...waiting]
   const still = await db.select({ id: runs.id }).from(runs).where(and(inArray(runs.id, ids), eq(runs.status, 'waiting_approval')))
   const keep = new Set(still.map(r => r.id))
+  // An answer that could not be told yet keeps its run watched, though the run is no longer waiting.
+  const untold = await db.select({ id: questions.runId }).from(questions).where(and(inArray(questions.runId, ids), eq(questions.state, 'answered'), isNull(questions.deliveredAt)))
+  for (const q of untold) keep.add(q.id)
   for (const id of ids) if (!keep.has(id)) waiting.delete(id)
   return told
 }
@@ -54,7 +57,7 @@ export async function markPlanDecisionsUndelivered(runId: string): Promise<void>
 }
 
 /** Tells this computer's Inngest about decisions on its runs that were made elsewhere. Returns how many. */
-export async function deliverPending(send: Send, approvalEvent: string, planEvent: string): Promise<number> {
+export async function deliverPending(send: Send, approvalEvent: string, planEvent: string, questionEvent?: string): Promise<number> {
   const mine = db.select({ id: runs.id }).from(runs).where(eq(runs.machineId, thisMachine().id))
   let told = 0
   // Claimed and marked in one statement, so two passes (or two processes) never send one decision twice.
@@ -82,6 +85,21 @@ export async function deliverPending(send: Send, approvalEvent: string, planEven
       told++
     } catch {
       await db.update(events).set({ deliveredAt: null }).where(eq(events.id, w.id))
+    }
+  }
+  if (questionEvent) {
+    const answered = await db
+      .update(questions)
+      .set({ deliveredAt: now() })
+      .where(and(eq(questions.state, 'answered'), isNull(questions.deliveredAt), inArray(questions.runId, mine)))
+      .returning({ id: questions.id, runId: questions.runId })
+    for (const a of answered) {
+      try {
+        await send({ name: questionEvent, data: { runId: a.runId, questionId: a.id } })
+        told++
+      } catch {
+        await db.update(questions).set({ deliveredAt: null }).where(eq(questions.id, a.id))
+      }
     }
   }
   return told

@@ -291,6 +291,34 @@ export const findings = pgTable(
   t => [index('findings_run_idx').on(t.runId)],
 )
 
+/** A decision that is the person's, asked of them with options. The run waits until it is answered. */
+export const questions = pgTable(
+  'questions',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+    nodeRunId: text('node_run_id').notNull().references(() => nodeRuns.id, { onDelete: 'cascade' }),
+    /** The finding this question is about (no foreign key: a finding is kept or cleared on its own terms). */
+    findingId: text('finding_id'),
+    kind: text('kind').notNull(),
+    text: text('text').notNull(),
+    why: text('why').notNull(),
+    optionsJson: text('options_json').notNull(),
+    recommended: text('recommended'),
+    touchesJson: text('touches_json').notNull(),
+    state: text('state').notNull(),
+    answerOption: text('answer_option'),
+    answerText: text('answer_text'),
+    actor: text('actor'),
+    answeredAt: text('answered_at'),
+    /** When the run's own computer was told about the answer. Null: recorded elsewhere and not told yet (the relay does). */
+    deliveredAt: text('delivered_at'),
+    createdAt: text('created_at').notNull(),
+  },
+  t => [index('questions_run_idx').on(t.runId)],
+)
+
 /** The computers that have opened this data: a name a person can read, for "its working copy is on …". */
 export const machines = pgTable('machines', {
   id: text('id').primaryKey(),

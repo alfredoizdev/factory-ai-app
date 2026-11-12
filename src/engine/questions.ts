@@ -1,0 +1,233 @@
+import { and, eq, isNull } from 'drizzle-orm'
+import { ulid } from 'ulid'
+import { db } from '@/db/client'
+import { nodeRuns, questions, runs } from '@/db/schema'
+import { localActor } from '@/engine/approvals'
+import { appendEventSync, lockRun } from '@/engine/events'
+import { QUESTION_ANSWERED } from '@/engine/inngest/client'
+import { runPlace } from '@/engine/machine'
+import { addEntry } from '@/engine/register'
+import { markWaiting, type Send } from '@/engine/relay'
+import { strings } from '@/ui/strings'
+
+// A decision that is the person's reaches them as a question with options, and the run waits for the answer. The
+// question and its answer are rows first, then events; the executor reads the row, never the event alone.
+
+export type Option = { id: string; label: string; means: string }
+export type Question = {
+  id: string
+  runId: string
+  nodeRunId: string
+  findingId: string | null
+  kind: 'finding' | 'fix_held'
+  text: string
+  why: string
+  options: Option[]
+  recommended: string | null
+  /** Register numbers of the entries this question concerns. */
+  touches: number[]
+  state: 'open' | 'answered'
+  answerOption: string | null
+  answerText: string | null
+  actor: string | null
+  answeredAt: string | null
+}
+
+/** Always the last choice: do nothing about this. */
+export const LEAVE = 'leave'
+/** Never a listed choice; always accepted as an answer when it comes with the person's own words. */
+export const OTHER = 'other'
+
+// Strings come from agents and from a form; they are trimmed, then cut to these lengths.
+const MAX_TEXT = 500
+const MAX_WHY = 1000
+const MAX_LABEL = 80
+const MAX_MEANS = 300
+const MAX_ANSWER = 1000
+
+export class QuestionError extends Error {
+  constructor(message: string, readonly status: 404 | 409) {
+    super(message)
+    this.name = 'QuestionError'
+  }
+}
+
+const cap = (s: string, max: number) => s.trim().slice(0, max)
+const now = () => new Date().toISOString()
+
+type Row = typeof questions.$inferSelect
+
+function parse<T>(raw: string, fallback: T): T {
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
+
+function toQuestion(r: Row): Question {
+  return {
+    id: r.id,
+    runId: r.runId,
+    nodeRunId: r.nodeRunId,
+    findingId: r.findingId,
+    kind: r.kind as Question['kind'],
+    text: r.text,
+    why: r.why,
+    options: parse<Option[]>(r.optionsJson, []),
+    recommended: r.recommended,
+    touches: parse<number[]>(r.touchesJson, []),
+    state: r.state as Question['state'],
+    answerOption: r.answerOption,
+    answerText: r.answerText,
+    actor: r.actor,
+    answeredAt: r.answeredAt,
+  }
+}
+
+/** The options as they are kept: the caller's own in their order, then the choice to leave it. Throws on a list that cannot be answered. */
+function normaliseOptions(given: readonly Option[], recommended: string | null): { options: Option[]; recommended: string | null } {
+  if (given.length === 0) throw new Error('A question needs at least one option.')
+  const seen = new Set<string>()
+  const options: Option[] = given.map(o => {
+    const id = o.id.trim()
+    if (!id) throw new Error('An option needs an id.')
+    if (id === OTHER) throw new Error(`"${OTHER}" is always allowed and is not a listed option.`)
+    if (seen.has(id)) throw new Error(`Two options share the id "${id}".`)
+    seen.add(id)
+    const label = cap(o.label, MAX_LABEL)
+    if (!label) throw new Error(`Option "${id}" needs a label.`)
+    return { id, label, means: cap(o.means, MAX_MEANS) }
+  })
+  if (!seen.has(LEAVE)) options.push({ id: LEAVE, label: strings.question.leaveLabel, means: strings.question.leaveMeans })
+  if (recommended !== null && !options.some(o => o.id === recommended)) throw new Error(`The recommended option "${recommended}" is not one of the options.`)
+  return { options, recommended }
+}
+
+/**
+ * Asks the person, and parks the run (and the node) on the answer, as a human check does. Asking the same thing again
+ * (a retried step) returns the open question; asking something else while one is open throws.
+ */
+export async function askPerson(
+  runId: string,
+  nodeRunId: string,
+  q: Pick<Question, 'findingId' | 'kind' | 'text' | 'why' | 'options' | 'recommended' | 'touches'>,
+): Promise<Question> {
+  const text = cap(q.text, MAX_TEXT)
+  if (!text) throw new Error('A question needs its words.')
+  const { options, recommended } = normaliseOptions(q.options, q.recommended)
+  const touches = [...new Set(q.touches.filter(n => Number.isInteger(n) && n > 0))]
+  const asked = await db.transaction(async tx => {
+    await lockRun(tx, runId)
+    const run = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
+    if (!run) throw new QuestionError(strings.errors.runNotFound, 404)
+    const open = (await tx.select().from(questions).where(and(eq(questions.runId, runId), eq(questions.state, 'open'))))[0]
+    if (open) {
+      if (open.nodeRunId === nodeRunId && open.findingId === q.findingId && open.kind === q.kind) return toQuestion(open)
+      throw new QuestionError(strings.question.anotherOpen, 409)
+    }
+    const node = (await tx.select().from(nodeRuns).where(and(eq(nodeRuns.id, nodeRunId), eq(nodeRuns.runId, runId))))[0]
+    if (run.status !== 'running' || !node || node.state !== 'running') throw new QuestionError(strings.question.notWaiting, 409)
+    const row = {
+      id: ulid(),
+      projectId: run.projectId,
+      runId,
+      nodeRunId,
+      findingId: q.findingId,
+      kind: q.kind,
+      text,
+      why: cap(q.why, MAX_WHY),
+      optionsJson: JSON.stringify(options),
+      recommended,
+      touchesJson: JSON.stringify(touches),
+      state: 'open',
+      answerOption: null,
+      answerText: null,
+      actor: null,
+      answeredAt: null,
+      deliveredAt: null,
+      createdAt: now(),
+    }
+    await tx.insert(questions).values(row)
+    // Like a human check: the run's own event first, then the node's, so the log ends on what the person has to act on.
+    await tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId))
+    await appendEventSync({ runId, type: 'run.waiting_approval', payload: { blockId: node.blockId } }, tx)
+    await tx.update(nodeRuns).set({ state: 'waiting_approval' }).where(eq(nodeRuns.id, node.id))
+    await appendEventSync({ runId, nodeRunId, type: 'node.question_asked', payload: { blockId: node.blockId, questionId: row.id, kind: q.kind } }, tx)
+    return toQuestion(row as Row)
+  })
+  markWaiting(runId) // the relay watches for an answer given on another computer
+  return asked
+}
+
+/** The question this run is waiting on, if any. */
+export async function openQuestion(runId: string): Promise<Question | null> {
+  const row = (await db.select().from(questions).where(and(eq(questions.runId, runId), eq(questions.state, 'open'))))[0]
+  return row ? toQuestion(row) : null
+}
+
+/** The question with its answer; null until it is answered. What the executor acts on: the row, never the event. */
+export async function takeAnswer(questionId: string): Promise<Question | null> {
+  const row = (await db.select().from(questions).where(eq(questions.id, questionId)))[0]
+  return row && row.state === 'answered' ? toQuestion(row) : null
+}
+
+/** "<question> — <what they chose>", and their own words after it; for `other`, their words stand for the choice. */
+export function decisionText(q: Question): string {
+  const words = q.answerText?.trim() ?? ''
+  if (q.answerOption === OTHER) return strings.question.decided(q.text, words)
+  const label = q.options.find(o => o.id === q.answerOption)?.label ?? q.answerOption ?? ''
+  return words ? strings.question.decidedWithWords(q.text, label, words) : strings.question.decided(q.text, label)
+}
+
+export type AnswerDeps = { send: Send; actor?: () => string }
+
+/**
+ * The person's answer: checked and recorded in one transaction (answer, run and node moving on, the event, the
+ * register entry), then told to the run. If the run cannot be told now, or it belongs to another computer, the answer
+ * stays recorded and the relay tells it later.
+ */
+export async function answerQuestion(questionId: string, a: { option: string; text?: string }, deps: AnswerDeps): Promise<Question> {
+  const first = (await db.select({ runId: questions.runId }).from(questions).where(eq(questions.id, questionId)))[0]
+  if (!first) throw new QuestionError(strings.question.notFound, 404)
+  const answered = await db.transaction(async tx => {
+    await lockRun(tx, first.runId)
+    const row = (await tx.select().from(questions).where(eq(questions.id, questionId)).for('update'))[0]
+    if (!row) throw new QuestionError(strings.question.notFound, 404)
+    if (row.state !== 'open') throw new QuestionError(strings.question.alreadyAnswered, 409)
+    const run = (await tx.select().from(runs).where(eq(runs.id, row.runId)))[0]
+    const node = (await tx.select().from(nodeRuns).where(eq(nodeRuns.id, row.nodeRunId)))[0]
+    if (!run || !node || run.status !== 'waiting_approval' || node.state !== 'waiting_approval') throw new QuestionError(strings.question.notWaiting, 409)
+    const option = a.option.trim()
+    const words = cap(a.text ?? '', MAX_ANSWER)
+    if (option === OTHER) {
+      if (!words) throw new QuestionError(strings.question.needWords, 409)
+    } else if (!parse<Option[]>(row.optionsJson, []).some(o => o.id === option)) {
+      throw new QuestionError(strings.question.unknownOption, 409)
+    }
+    const fields = { state: 'answered', answerOption: option, answerText: words || null, actor: (deps.actor ?? localActor)(), answeredAt: now() }
+    await tx.update(questions).set(fields).where(eq(questions.id, questionId))
+    await tx.update(nodeRuns).set({ state: 'running' }).where(eq(nodeRuns.id, node.id))
+    await appendEventSync({ runId: run.id, nodeRunId: node.id, type: 'node.question_answered', payload: { blockId: node.blockId, questionId, option } }, tx)
+    await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, run.id))
+    await appendEventSync({ runId: run.id, type: 'run.started', payload: { resumed: true } }, tx)
+    const done = toQuestion({ ...row, ...fields })
+    await addEntry(run.projectId, { kind: 'decision', text: decisionText(done), source: 'question', runId: run.id }, tx)
+    return done
+  })
+  await tell(answered, deps.send)
+  return answered
+}
+
+// Claimed and marked before it is sent, so the relay never sends it twice; handed back to the relay if sending fails.
+async function tell(q: Question, send: Send): Promise<void> {
+  if (!(await runPlace(q.runId)).here) return
+  const claimed = await db.update(questions).set({ deliveredAt: now() }).where(and(eq(questions.id, q.id), isNull(questions.deliveredAt))).returning({ id: questions.id })
+  if (claimed.length === 0) return
+  try {
+    await send({ name: QUESTION_ANSWERED, data: { runId: q.runId, questionId: q.id } })
+  } catch {
+    await db.update(questions).set({ deliveredAt: null }).where(eq(questions.id, q.id))
+    markWaiting(q.runId) // so the relay keeps looking until it has been told
+  }
+}
