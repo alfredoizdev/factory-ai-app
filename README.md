@@ -16,8 +16,7 @@ Design a flow of blocks on a canvas and watch AI coding agents run it, live.
 
 ```bash
 npm install
-npm run inngest        # in a second terminal, see "Pressing Run needs Inngest" below
-npm run dev            # starts the local test database, applies its migrations, then the app
+npm run dev            # starts the local test database, Inngest and the app, all in one terminal
 ```
 
 ## Two databases: test data and real data

@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npm run db:local && FACTORY_DB=local INNGEST_DEV=http://127.0.0.1:8288 next dev -H 127.0.0.1 -p 4100",
-    "dev:neon": "INNGEST_DEV=http://127.0.0.1:8288 next dev -H 127.0.0.1 -p 4100",
+    "dev": "node scripts/dev.mjs local",
+    "dev:neon": "node scripts/dev.mjs neon",
     "db:local": "docker compose up -d --wait db && FACTORY_DB=local tsx --tsconfig tsconfig.json src/db/migrate-cli.ts",
     "db:migrate": "npm run db:local",
     "db:local:stop": "docker compose stop db",
