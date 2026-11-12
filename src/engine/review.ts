@@ -1,4 +1,3 @@
-import { strings } from '@/ui/strings'
 
 // What a reviewer says about a change, as data. The reviewer is a model, so all of this is its claim: it is shown as
 // "AI says", never as a measurement. It is read from a small JSON object the reviewer is asked to end with; anything
@@ -21,7 +20,7 @@ export type Finding = {
 }
 export type Review = { verdict: 'ok' | 'changes'; findings: Finding[] }
 
-const MAX_FINDINGS = 10
+export const MAX_FINDINGS = 10
 const MAX_PROBLEM = 300
 const MAX_AFFECTS = 5
 const MAX_AFFECT = 80
@@ -74,12 +73,6 @@ function validReview(value: { verdict?: unknown; findings?: unknown }): Review |
 /** Where a finding is, as a person reads it: "src/app/page.tsx:15", or nothing. */
 export function whereOf(f: Finding): string {
   return f.file ? (f.line ? `${f.file}:${f.line}` : f.file) : ''
-}
-
-/** What the builder is told on the round the reviewer sends back. */
-export function reviewRevisionNote(findings: readonly Finding[]): string {
-  const lines = findings.map((f, i) => `${i + 1}. ${whereOf(f) ? `${whereOf(f)}: ` : ''}${f.problem}`)
-  return strings.review.revisionNote(lines.join('\n'))
 }
 
 /** A reviewer other than the builder: a second opinion from the same model tends to agree with itself. */

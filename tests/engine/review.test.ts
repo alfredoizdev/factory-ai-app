@@ -1,4 +1,4 @@
-import { defaultReviewerModel, FOCUSES, focusesFor, parseReview, reviewRevisionNote } from '@/engine/review'
+import { defaultReviewerModel, FOCUSES, focusesFor, parseReview } from '@/engine/review'
 
 test('the verdict is read from the JSON object the reviewer ends with, fenced or not', () => {
   const text = 'I looked at the diff.\n```json\n{"verdict":"changes","findings":[{"file":"src/a.tsx","line":12,"problem":"The shadow is missing on mobile"}]}\n```\nThat is all.'
@@ -19,14 +19,6 @@ test('findings are capped and cleaned', () => {
   const r = parseReview(JSON.stringify({ verdict: 'changes', findings: many }))!
   expect(r.findings).toHaveLength(10)
   expect(r.findings[0]).toEqual({ type: 'logic', problem: 'p0', severity: 'medium', affects: [], decisions: [] })
-})
-
-const base = { type: 'logic' as const, severity: 'medium' as const, affects: [] as string[], decisions: [] as number[] }
-
-test('the builder is told each problem, with where it is', () => {
-  const note = reviewRevisionNote([{ ...base, file: 'a.tsx', line: 3, problem: 'x' }, { ...base, problem: 'y' }])
-  expect(note).toContain('1. a.tsx:3: x')
-  expect(note).toContain('2. y')
 })
 
 test('the reviewer is a different model from the builder', () => {

@@ -144,6 +144,24 @@ async function* runVerifier(input: AgentExecutionInput, controls: ExecutionContr
   }
 }
 
+/** The fixer: changes the task's working copy for one problem, with the builder's permissions, and nothing else. */
+async function* runFixer(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
+  if (!input.workdir) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
+    return
+  }
+  if (!input.finding) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.noFinding }
+    return
+  }
+  if (input.model !== undefined && !MODEL_NAME.test(input.model)) {
+    yield { type: 'error', source: 'system', message: strings.providers.claude.badModel(input.model) }
+    return
+  }
+  const prompt = strings.providers.claude.fixPrompt(input.request, input.finding, input.repro)
+  yield* runClaude(deps, input.workdir, claudeArgs(prompt, undefined, input.model), controls)
+}
+
 async function* runReviewer(input: AgentExecutionInput, controls: ExecutionControls, deps: Required<ClaudeDeps>): AsyncGenerator<AgentEvent> {
   if (!input.workdir) {
     yield { type: 'error', source: 'system', message: strings.providers.claude.noWorkdir }
@@ -372,6 +390,10 @@ export function createClaudeProvider(deps: ClaudeDeps = {}): AgentProvider {
     async *execute(input, controls) {
       if (input.role === 'verifier') {
         yield* runVerifier(input, controls, full)
+        return
+      }
+      if (input.role === 'fixer') {
+        yield* runFixer(input, controls, full)
         return
       }
       if (input.blockKind === 'input') {

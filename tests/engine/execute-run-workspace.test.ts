@@ -63,9 +63,9 @@ function filesProvider(
   }
 }
 
-async function drive(runId: string, provider: AgentProvider, createWorktree: ExecutorDeps['createWorktree'] = (_repo, id) => ({ path: `/wt/${id}`, branch: `factory/${id}`, baseCommit: 'abc' })) {
+async function drive(runId: string, provider: AgentProvider, createWorktree: ExecutorDeps['createWorktree'] = (_repo, id) => ({ path: `/wt/${id}`, branch: `factory/${id}`, baseCommit: 'abc' }), more: Partial<ExecutorDeps> = {}) {
   try {
-    await orchestrateRun(runId, step, { resolveProvider: () => provider, createWorktree })
+    await orchestrateRun(runId, step, { resolveProvider: () => provider, createWorktree, ...more })
   } catch (e) {
     if (!(e instanceof Parked)) throw e
   }
@@ -543,33 +543,30 @@ describe('the reviewer', () => {
     return (_repo: string, id: string) => ({ path: dir, branch: `factory/${id}`, baseCommit: 'abc' })
   }
 
-  test('problems go back to Build once, with them, and a clean second review lets Approve say so', async () => {
+  // The verifier's copy is a folder of its own, and the reproduction is never run for real here.
+  const noCopy: Partial<ExecutorDeps> = { makeCopy: async () => mkdtempSync(join(tmpdir(), 'factory-verify-')) }
+
+  test('a problem is checked, not sent back to Build; with nothing to show it, Approve says it was discarded', async () => {
     const { strings } = await import('@/ui/strings')
     const runId = await newRun({ repoPath: '/repo' })
     const seen: { kind: string; model?: string; from?: string; note?: string }[] = []
-    await drive(runId, reviewingProvider(['changes', 'ok'], seen), copyWithFile())
-    const builds = seen.filter(s => s.kind === 'build')
-    expect(builds).toHaveLength(2)
-    expect(builds[1]).toMatchObject({ from: 'reviewer' })
-    expect(builds[1]!.note).toContain('a.tsx:3: wrong colour')
+    await drive(runId, reviewingProvider(['changes'], seen), copyWithFile(), noCopy)
+    expect(seen.filter(s => s.kind === 'build')).toHaveLength(1)
+    expect((await payloadOf(runId, 'node.reopened')).length).toBe(0)
     // A different model from the builder's default.
     expect(seen.find(s => s.kind === 'review')!.model).toBe('sonnet')
     expect(seen.some(s => s.kind === 'approve')).toBe(false) // summed up by the app, not run by the agent
     const approve = await payloadOf(runId, 'node.completed', 'approve')
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 1, discarded: 0, needsYou: 0 }))
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 1, needsYou: 0 }))
     expect((await node(runId, 'human')).state).toBe('waiting_approval')
   })
 
-  test('a reviewer that keeps finding problems sends back at most twice, then the person sees them', async () => {
+  test('a clean review lets Approve say so', async () => {
     const { strings } = await import('@/ui/strings')
     const runId = await newRun({ repoPath: '/repo' })
-    const seen: { kind: string }[] = []
-    await drive(runId, reviewingProvider(['changes'], seen), copyWithFile())
-    expect(seen.filter(s => s.kind === 'build')).toHaveLength(3)
-    expect(seen.filter(s => s.kind === 'review')).toHaveLength(9) // three readers in each of the three rounds
+    await drive(runId, reviewingProvider(['ok'], []), copyWithFile(), noCopy)
     const approve = await payloadOf(runId, 'node.completed', 'approve')
-    expect(approve.at(-1)!.summary).toBe(strings.review.approve.summary({ found: 1, fixed: 0, discarded: 0, needsYou: 1 }))
-    expect((await node(runId, 'human')).state).toBe('waiting_approval')
+    expect(approve.at(-1)!.summary).toBe(strings.review.approve.clean)
   })
 })
 

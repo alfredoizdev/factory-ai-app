@@ -4,7 +4,7 @@ import { asc, eq } from 'drizzle-orm'
 import { monotonicFactory } from 'ulid'
 import { db } from '@/db/client'
 import { findings, nodeRuns, runs } from '@/db/schema'
-import { appendEventSync } from '@/engine/events'
+import { appendEventSync, type DbHandle } from '@/engine/events'
 import type { Repro, ReproRun } from '@/engine/repro'
 import { label, touchesCore } from '@/engine/register'
 import type { Finding, Focus, Severity } from '@/engine/review'
@@ -215,14 +215,14 @@ export function distinctProblems(rows: FindingRow[]): FindingRow[] {
   return groups.map(g => g.reduce((latest, r) => (r.round >= latest.round ? r : latest)))
 }
 
-export async function setFinding(id: string, change: Partial<Pick<FindingRow, 'state' | 'reason' | 'repro' | 'evidence' | 'entryNumber'>>): Promise<void> {
+export async function setFinding(id: string, change: Partial<Pick<FindingRow, 'state' | 'reason' | 'repro' | 'evidence' | 'entryNumber'>>, h: DbHandle = db): Promise<void> {
   const set: Partial<typeof findings.$inferInsert> = { updatedAt: new Date().toISOString() }
   if (change.state !== undefined) set.state = change.state
   if (change.reason !== undefined) set.reason = change.reason
   if (change.repro !== undefined) set.reproJson = change.repro === null ? null : JSON.stringify(change.repro)
   if (change.evidence !== undefined) set.evidenceJson = change.evidence === null ? null : JSON.stringify(change.evidence)
   if (change.entryNumber !== undefined) set.entryNumber = change.entryNumber
-  await db.update(findings).set(set).where(eq(findings.id, id))
+  await h.update(findings).set(set).where(eq(findings.id, id))
 }
 
 export async function findingsOf(runId: string): Promise<FindingRow[]> {

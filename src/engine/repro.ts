@@ -103,7 +103,7 @@ function copyGitEnv(root: string): NodeJS.ProcessEnv {
 }
 
 /** Removes a throwaway copy. Never throws: a stray process still writing into it must not turn a result into a crash. */
-function removeCopy(path: string): void {
+export function removeCopy(path: string): void {
   try {
     rmSync(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   } catch {

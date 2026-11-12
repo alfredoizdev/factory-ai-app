@@ -1,7 +1,8 @@
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
-import { defaultReviewerModel, reviewRevisionNote, type Focus, type Review } from '@/engine/review'
+import { defaultReviewerModel, type Focus, type Review } from '@/engine/review'
 import { distinctProblems, findingsOf } from '@/engine/findings'
-import { runReviewStage, settleFindings } from '@/engine/inngest/review-stage'
+import { runReviewStage } from '@/engine/inngest/review-stage'
+import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
 import { giveStanding, type Standing } from '@/engine/register'
 import { markWaiting } from '@/engine/relay'
 import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
@@ -25,7 +26,7 @@ import { createRunWorktree, type RunWorkspace } from '@/engine/worktree'
 import { claudeProvider } from '@/providers/claude'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
 import { demoProvider } from '@/providers/demo'
-import type { AgentProvider } from '@/providers/types'
+import type { AgentExecutionInput, AgentProvider } from '@/providers/types'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
 
@@ -36,7 +37,7 @@ import { projectHere, setLocal } from '@/engine/machine'
 export const MAX_ATTEMPTS = 2
 export const DEFAULT_TIMEOUT_MS = 600_000
 // Longest wait Inngest offers: a person may take days, and nothing may time the run into a verdict for them.
-const APPROVAL_WAIT = '365d'
+export const APPROVAL_WAIT = '365d'
 const CANCEL_POLL_MS = 100
 
 // The part of Inngest's step tools this file uses, so the orchestration can be driven without a dev server.
@@ -58,6 +59,10 @@ export type ExecutorDeps = {
   installDependencies?: (dir: string) => Promise<InstallResult | null>
   /** Copies the project's prepared base's dependencies into the run's copy instead, when its lockfile matches. */
   copyBase?: (runId: string, dir: string) => Promise<BaseCopy>
+  /** Runs a verifier's reproduction in a fresh copy of the task's folder. */
+  runRepro?: typeof realRunRepro
+  /** Makes the throwaway copy a verifier works in. */
+  makeCopy?: typeof realMakeCopy
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -141,7 +146,7 @@ async function runStatusOf(h: DbHandle, runId: string): Promise<string | undefin
   return (await h.select({ s: runs.status }).from(runs).where(eq(runs.id, runId)))[0]?.s
 }
 
-async function isCancelled(runId: string): Promise<boolean> {
+export async function isCancelled(runId: string): Promise<boolean> {
   return (await runStatusOf(db, runId)) === 'cancelled'
 }
 
@@ -242,7 +247,7 @@ export function outcomeOf(state: string): Outcome['outcome'] | null {
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[] }
+export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string } }
 export type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
@@ -262,6 +267,8 @@ export async function runAttempt(
   // Awaited before the next event is read: steps are written in the order the agent said them.
   onStep: (text: string) => Promise<void> | void,
   onEvidence: (data: TestRun) => void,
+  /** Set for one verifier or fixer call on a single finding; the call is made in `workspace.workdir`. */
+  job?: { role: 'verifier' | 'fixer'; finding: NonNullable<AgentExecutionInput['finding']>; repro?: Repro },
 ): Promise<AttemptResult> {
   const controller = new AbortController()
   let closed = false
@@ -292,6 +299,7 @@ export async function runAttempt(
         ...(block.kind === 'build' && workspace.jobs ? { jobs: workspace.jobs } : {}),
         ...((block.kind === 'build' || block.kind === 'plan') && workspace.notes && workspace.notes.length > 0 ? { notes: workspace.notes } : {}),
         ...((block.kind === 'build' || block.kind === 'plan') && workspace.standing && workspace.standing.length > 0 ? { standing: workspace.standing } : {}),
+        ...(job ? { role: job.role, finding: job.finding, ...(job.repro ? { repro: job.repro } : {}) } : {}),
         ...(block.kind === 'review' && workspace.review
           ? {
               focus: workspace.review.focus,
@@ -305,7 +313,7 @@ export async function runAttempt(
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') await onStep(ev.text)
         else if (ev.type === 'evidence') onEvidence(ev.data)
-        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}) }
+        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}) }
         else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
       }
       return { kind: 'ended' }
@@ -677,9 +685,6 @@ async function assessGate(runId: string, block: PlannedBlock, workspace: Workspa
 
 // The person chose not to be asked about low-risk changes, and this one measured low: the gate opens on its own,
 // saying so in the app's own words. The assessment that justified it is already on the record (node.assessed).
-/** How many times a reviewer may send the work back to the builder before it goes to the person as it is. */
-const MAX_REVIEW_ROUNDS = 2
-
 /** Whether any reviewer gave a verdict on this run. */
 async function anyReviewRan(runId: string): Promise<boolean> {
   return (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.reviewed'))).limit(1)).length > 0
@@ -691,11 +696,13 @@ async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome
   // One problem is one, however many rounds a reviewer reported it in.
   const rows = distinctProblems(await findingsOf(runId))
   const count = (...states: string[]) => rows.filter(f => states.includes(f.state)).length
+  // Problems never checked because there were too many are not dismissed: they wait for the person.
+  const tooMany = rows.filter(f => f.state === 'discarded' && f.reason === strings.findings.tooMany).length
   const summary = !(await anyReviewRan(runId))
     ? strings.review.approve.none
     : rows.length === 0
       ? strings.review.approve.clean
-      : strings.review.approve.summary({ found: rows.length, fixed: count('fixed_unchecked'), discarded: count('refuted', 'discarded'), needsYou: count('open') })
+      : strings.review.approve.summary({ found: rows.length, fixed: count('fixed_unchecked'), discarded: count('refuted', 'discarded') - tooMany, needsYou: count('open') + tooMany })
   return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
@@ -739,12 +746,11 @@ async function reopenForRevision(
   blocks: readonly PlannedBlock[],
   round: number,
   note: string | null,
-  by: 'person' | 'reviewer' = 'person',
 ): Promise<boolean> {
   return withTx(runId, async tx => {
-    // The person sends work back from the gate, where the run waits; a reviewer does it while the run is still going.
+    // The person sends work back from the gate, where the run waits.
     const status = (await runStatusOf(tx, runId))
-    if (status !== (by === 'person' ? 'waiting_approval' : 'running')) return false
+    if (status !== 'waiting_approval') return false
     const clean = note ? clip(redact(note), 500) : null
     for (const block of blocks) {
       const node = (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
@@ -753,18 +759,16 @@ async function reopenForRevision(
         .set({ state: 'queued', attempt: 1, summary: null, failureCause: null, startedAt: null, finishedAt: null })
         .where(eq(nodeRuns.id, node.id))
         
-      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by } }, tx)
+      await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reopened', payload: { blockId: block.id, round, note: clean, by: 'person' } }, tx)
     }
-    if (by === 'person') {
-      await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
-      await appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
-    }
+    await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
+    await appendEventSync({ runId, type: 'run.started', payload: { resumed: true, round } }, tx)
     return true
   })
 }
 
 /** How many unrecorded decisions a gate tolerates before it stops listening (the run stays waiting). */
-const MAX_IGNORED_DECISIONS = 20
+export const MAX_IGNORED_DECISIONS = 20
 
 async function readRecordedDecision(runId: string, block: PlannedBlock): Promise<{ decision: Decision; note: string | null; approvalId: string } | null> {
   const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
@@ -987,9 +991,6 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   // Round 1 sees the images sent with the request; a later round sees only those sent with its request for changes.
   let revisionImages: string[] = await step.run('images', () => imagePathsFor(runId))
   let from = 0
-  // Rounds the reviewer sent back, and who asked for the round now being built: the builder is told which.
-  let reviewRounds = 0
-  let revisionFrom: 'person' | 'reviewer' = 'person'
   rounds: while (true) {
   const id = (name: string) => (round === 1 ? name : `${name}-r${round}`)
   for (let index = from; index < plan.blocks.length; index++) {
@@ -1077,7 +1078,6 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           if (!reopened) return // cancelled meanwhile
           round = next
           revisionNote = note
-          revisionFrom = 'person'
           revisionImages = await step.run(id(`images-${block.id}`), () => imagePathsFor(runId, decided!.approvalId))
           from = start
           continue rounds
@@ -1086,34 +1086,15 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         result = await step.run(id(`decide-${block.id}`), () => decideHumanNode(runId, block, approved))
       }
     } else if (block.kind === 'review' && provider.needsWorkspace) {
-      // One reader or three, and what they found is checked against the code before the builder is told any of it.
+      // One reader or three; what they found is checked against the code, then each finding is verified by running
+      // it, and fixed or asked about. Nothing goes back to the builder: Tests is not re-run here yet.
       const stage = await runReviewStage({ runId, plan, block, step, id, deps, workspace: prepared, round, reviewSince: null })
       result = { outcome: stage.outcome }
-      // Problems that held up go back to the builder, a bounded number of times. After that they stay on the record
-      // for the person, and the run goes on to them.
-      if (stage.sendBack.length > 0) {
-        const builder = plan.blocks.findIndex(b => b.kind === 'build' && b.enabled)
-        if (reviewRounds < MAX_REVIEW_ROUNDS && builder !== -1 && builder < index) {
-          const next = round + 1
-          const reviewNote = reviewRevisionNote(stage.sendBack)
-          const reopened = await step.run(id(`reopen-${block.id}`), () => reopenForRevision(runId, plan.blocks.slice(builder, index + 1), next, reviewNote, 'reviewer'))
-          if (!reopened) return
-          await step.run(id(`settle-${block.id}`), () => settleFindings(stage.sendBack, 'fixed_unchecked'))
-          round = next
-          reviewRounds += 1
-          revisionNote = reviewNote
-          revisionFrom = 'reviewer'
-          revisionImages = []
-          from = builder
-          continue rounds
-        }
-        await step.run(id(`settle-${block.id}`), () => settleFindings(stage.sendBack, 'open'))
-      }
+      if (stage.outcome === 'parked') return // waiting on the person's answer: the run stays waiting
     } else {
       const note = revisionNote
       const images = revisionImages
-      const workspace: Workspace = { ...prepared, revisionFrom }
-      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, workspace, note, images))
+      result = await step.run(id(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, note, images))
     }
     if (result.outcome === 'cancelled') return // run.cancelled and node.cancelled were written by cancelRun
     if (result.outcome === 'failed') {

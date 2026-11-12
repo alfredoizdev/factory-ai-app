@@ -151,7 +151,6 @@ export const strings = {
     checksFailed: 'A check failed, so it is not merged.',
   },
   review: {
-    revisionNote: (list: string) => `A code reviewer found these problems in your change. Fix each one, and change nothing else:\n${list}`,
     found: (where: string, problem: string) => (where ? `Problem at ${where}: ${problem}` : `Problem: ${problem}`),
     focus: {
       logic: 'Your focus: does it do what was asked, and is it correct? Look for bugs, broken behaviour and missing cases.',
@@ -160,7 +159,8 @@ export const strings = {
     },
     noProblems: 'The reviewer found no problems.',
     problems: (n: number) => `The reviewer found ${n} ${n === 1 ? 'problem' : 'problems'}.`,
-    sentBack: 'Sent back to Build to fix them.',
+    checking: (n: number, of: number) => `Checking problem ${n} of ${of}.`,
+    fixing: 'Fixing it.',
     unreadable: 'The reviewer answered, but not in the form asked for, so its review was not used as a verdict.',
     reviewerChangedFiles: 'The reviewer changed files in the copy, which a reviewer must never do. Its review was not used.',
     model: (model: string, buildModel: string) => `Reviewing with ${model}, a different model from Build's ${buildModel}.`,
@@ -194,6 +194,12 @@ export const strings = {
     noSuchFile: "The file it points to is not in this change's copy.",
     noSuchLine: 'The line it points to is not in that file.',
     outsideCopy: "The place it points to is outside this change's copy, so it was not read.",
+    notReproduced: 'The checker could not make the problem happen, so nothing was changed for it.',
+    checkNotRun: 'The check could not be run here, so it is not known whether the problem is real.',
+    tooMany: 'Too many problems were reported to check them all. This one was not checked and needs a look from you.',
+    leftByChoice: 'You chose to leave it as it is.',
+    fixedUnchecked: 'Fixed. It has not been checked again yet.',
+    fixFailed: 'The fix did not go through, so this one needs a look from you.',
     risk: {
       core: 'It touches a core area you marked.',
       sensitive: (area: string) => `It touches a sensitive area: ${area}.`,
@@ -211,6 +217,18 @@ export const strings = {
     notWaiting: 'This task is not waiting for an answer any more.',
     notFound: 'That question does not exist.',
     anotherOpen: 'Another question is still waiting for an answer on this task.',
+    // A problem the app will not decide alone: what it is, why it asks, and the two ways to answer.
+    forFinding: (f: { problem: string }, reasons: readonly string[], notChecked: boolean) => ({
+      text: `A reviewer found a problem: ${f.problem}`,
+      why: [
+        notChecked ? 'The app could not make the problem happen to check it, so it is not sure it is real.' : 'The app checked, and the problem is real.',
+        `It is asking instead of fixing it on its own. ${reasons.join(' ')}`.trim(),
+      ].join(' '),
+      options: [
+        { id: 'fix', label: 'Fix it', means: 'A helper changes only what this problem needs. You still see the whole change before anything is sent.' },
+        { id: 'leave', label: 'Leave it as it is', means: 'Nothing is changed for this. The task goes on without it.' },
+      ],
+    }),
     // The line the project's list of decisions keeps: the question, then what the person chose, then their own words.
     decided: (question: string, answer: string) => `${question} — ${answer}`,
     decidedWithWords: (question: string, answer: string, words: string) => `${question} — ${answer} — ${words}`,
@@ -969,6 +987,22 @@ export const strings = {
           'You already made changes for it in this directory; they are still here. A code reviewer looked at them:',
           note,
           '',
+          'Work only inside the current directory. Do not commit, push or create branches.',
+          'When you are done, reply with one plain sentence saying what you changed.',
+        ].join('\n'),
+      // Read by the model, not shown to the person, so it may name files.
+      fixPrompt: (request: string, finding: { type: string; file?: string; line?: number; problem: string }, repro?: { command: string; marker: string }) =>
+        [
+          `The request was: ${request}`,
+          '',
+          'You already made changes for it in this directory; they are still here. A code reviewer found one problem in them:',
+          `(${finding.type}) ${finding.problem}`,
+          finding.file ? `It is at ${finding.file}${finding.line ? `, line ${finding.line}` : ''}.` : 'It does not say where.',
+          ...(repro
+            ? [`This command shows it: ${repro.command}. While the problem is there, it prints the line "${repro.marker}" and fails. After your fix it should no longer do that.`]
+            : []),
+          '',
+          'Fix this one problem and change nothing else: no other files, no tidying, no new features.',
           'Work only inside the current directory. Do not commit, push or create branches.',
           'When you are done, reply with one plain sentence saying what you changed.',
         ].join('\n'),

@@ -429,3 +429,38 @@ describe('the verifier', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 })
+
+describe('the fixer', () => {
+  const finding = { type: 'logic' as const, file: 'src/a.ts', line: 12, problem: 'it divides by zero' }
+  const repro = { command: 'node check.js', marker: 'PROBLEM-SEEN', files: [] }
+  const fix = { blockKind: 'build' as const, role: 'fixer' as const, request: 'make it blue', workdir: '/task', finding, repro, model: 'opus' }
+  const run = async (input: object) => {
+    const child = fakeChild()
+    const spawn = vi.fn(() => child)
+    const pending = collect(createClaudeProvider({ spawn: spawn as never }).execute(input as never, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result: 'Added a check.' }])
+    return { events: await pending, spawn }
+  }
+
+  test('works in the task folder like the builder, told to fix this one problem and how to see it', async () => {
+    const { events, spawn } = await run(fix)
+    const [bin, args, opts] = spawn.mock.calls[0] as unknown as [string, string[], { cwd: string }]
+    expect(opts.cwd).toBe('/task')
+    expect(args[args.indexOf('--permission-mode') + 1]).toBe('bypassPermissions')
+    expect(args[args.indexOf('--model') + 1]).toBe('opus')
+    expect(args[args.indexOf('-p') + 1]).toBe(strings.providers.claude.fixPrompt('make it blue', finding, repro))
+    expect(bin).toBe('claude')
+    expect(strings.providers.claude.fixPrompt('make it blue', finding, repro)).toContain('node check.js')
+    expect(strings.providers.claude.fixPrompt('make it blue', finding)).not.toContain('This command shows it')
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
+  test('without a folder or a finding nothing is started', async () => {
+    for (const bad of [{ ...fix, workdir: undefined }, { ...fix, finding: undefined }]) {
+      const { events, spawn } = await run(bad)
+      expect(events).toHaveLength(1)
+      expect(events[0]).toMatchObject({ type: 'error', source: 'system' })
+      expect(spawn).not.toHaveBeenCalled()
+    }
+  })
+})
