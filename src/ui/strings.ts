@@ -771,6 +771,7 @@ export const strings = {
     done: (files: number) => `In your project: ${files} ${files === 1 ? 'file' : 'files'} changed, not committed. Commit it when you are happy.`,
     keptOn: (branch: string, commit: string) => `Also kept as commit ${commit.slice(0, 7)} on the local branch ${branch}.`,
     notEligible: 'Only a finished run that a person approved can be brought to the project.',
+    passedOnItsOwn: 'It passed the human check on its own, as a small change that touched nothing that matters.',
     dirty: 'Your project has changes that are not committed. Commit or stash them first, so your work and the agent\'s are not mixed.',
     nothing: 'This run changed no files, so there is nothing to bring.',
     conflict: (branch: string) => `Your project changed in the same places since this run began, so the change does not fit cleanly. Nothing was changed. It is kept on the local branch ${branch} to merge by hand.`,

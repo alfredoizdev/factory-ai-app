@@ -129,14 +129,21 @@ export async function deliveryState(runId: string): Promise<Delivery> {
  * Commits whatever the agent left uncommitted in the run's worktree, on the run's own branch, and returns the commit
  * the branch now points at. Used to keep an approved change before it is brought over or built upon.
  */
-export function keepCommit(run: { id: string; request: string; worktreePath: string | null }, described?: CommitMessage | null): string {
+export function keepCommit(
+  run: { id: string; request: string; worktreePath: string | null },
+  described?: CommitMessage | null,
+  passedBy: 'person' | 'app' = 'person',
+): string {
   const wt = run.worktreePath!
   git(wt, ['add', '-A'])
   if (git(wt, ['diff', '--cached', '--name-only']) !== '') {
     // Says what changed when a description was written from the diff; otherwise the request is the best summary there is.
     // Either way the request and the provenance are kept in the body.
     const asked = run.request.replace(/\s+/g, ' ').trim()
-    const provenance = `Made by an agent in AI Factory, run ${run.id}, and approved by a person.`
+    const provenance =
+      passedBy === 'app'
+        ? `Made by an agent in AI Factory, run ${run.id}. ${strings.delivery.passedOnItsOwn}`
+        : `Made by an agent in AI Factory, run ${run.id}, and approved by a person.`
     const message = described
       ? `${described.subject}\n\n${described.body ? `${described.body}\n\n` : ''}Asked for: ${clip(asked, 500)}\n\n${provenance}`
       : `${clip(asked, 72)}\n\n${provenance}`
@@ -238,7 +245,7 @@ export async function keepOnBranch(runId: string, options: KeepOptions = {}): Pr
     let branch = run.branch ?? git(wt, ['rev-parse', '--abbrev-ref', 'HEAD'])
     const exists = (name: string) => git(wt, ['branch', '--list', name]) !== ''
     if (own !== null && own !== branch && exists(own)) throw new DeliveryError(strings.delivery.branchExists(own), 409)
-    const commit = keepCommit(run, options.message)
+    const commit = keepCommit(run, options.message, found.passedBy ?? 'person')
     const from = run.deliveryBase ?? run.baseCommit!
     const files = git(wt, ['diff', '--name-only', from, commit]).split('\n').filter(Boolean)
     if (files.length === 0) throw new DeliveryError(strings.delivery.nothing, 409)

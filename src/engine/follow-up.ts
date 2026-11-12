@@ -31,12 +31,13 @@ export async function startFollowUp(parentRunId: string, note: string): Promise<
   if (!parent) throw new FollowUpError(strings.errors.runNotFound, 404)
   // A run that failed is picked up where it stopped instead: see continueFailed.
   if (parent.status === 'failed') return continueFailed(parent, text)
-  if (parent.status !== 'completed' || (await humanCheckPassedBy(parentRunId)) === null || !parent.worktreePath || !parent.baseCommit) {
+  const passedBy = await humanCheckPassedBy(parentRunId)
+  if (parent.status !== 'completed' || passedBy === null || !parent.worktreePath || !parent.baseCommit) {
     throw new FollowUpError(strings.followUp.notEligible, 409)
   }
   let parentCommit: string
   try {
-    parentCommit = keepCommit(parent)
+    parentCommit = keepCommit(parent, null, passedBy)
   } catch (e) {
     if (e instanceof DeliveryError) throw new FollowUpError(e.message, 409)
     throw new FollowUpError(strings.followUp.couldNotKeep, 409)

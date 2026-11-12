@@ -55,3 +55,30 @@ test('autoApproved on a block that is not a human check does not count', async (
 test('a run that does not exist gives null', async () => {
   expect(await humanCheckPassedBy('nope')).toBeNull()
 })
+
+test('a person approval and an app pass together give the person', async () => {
+  const { projectId, runId, node } = await aRun()
+  const human = await node('human')
+  await appPasses(runId, human.id, 'human')
+  await db.insert(approvals).values({ id: ulid(), projectId, runId, nodeRunId: human.id, decision: 'approved', actor: 'me', diffHash: 'h', createdAt: now(), consumedAt: now() })
+  expect(await humanCheckPassedBy(runId)).toBe('person')
+})
+
+test('a human check the app passed and that was later reopened no longer counts', async () => {
+  const { runId, node } = await aRun()
+  const human = await node('human')
+  await appPasses(runId, human.id, 'human')
+  // The way reopenBlocks leaves it: the node is queued again, the old event stays in the log.
+  await db.update(nodeRuns).set({ state: 'queued' }).where(eq(nodeRuns.id, human.id))
+  await appendEvent({ runId, nodeRunId: human.id, type: 'node.reopened', payload: { blockId: 'human', round: 2, note: 'again', by: 'person' } })
+  expect(await humanCheckPassedBy(runId)).toBeNull()
+})
+
+test('the app passing another gate of the real graph leaves the human check unpassed', async () => {
+  // The real graph has exactly one human block (it is a singleton kind), so "two human blocks" cannot be made;
+  // the nearest real shape is another approval-style block passed by the app while the human check still waits.
+  const { runId, node } = await aRun()
+  await appPasses(runId, (await node('approve')).id, 'approve')
+  await db.update(nodeRuns).set({ state: 'waiting_approval' }).where(eq(nodeRuns.id, (await node('human')).id))
+  expect(await humanCheckPassedBy(runId)).toBeNull()
+})

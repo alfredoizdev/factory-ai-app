@@ -651,13 +651,38 @@ test('a failed run whose working copy is gone cannot be picked up, and says so',
 })
 
 test('a run the app passed is eligible to keep, send and continue, like one a person approved', async () => {
-  const { runId, branch } = await finishedRun({ passedByApp: true })
+  const { runId, repo } = await finishedRun({ passedByApp: true })
   const state = await deliveryState(runId)
   expect(state).toMatchObject({ eligible: true, passedBy: 'app' })
-  expect((await keepOnBranch(runId)).kept).toBe(true)
+  const kept = await keepOnBranch(runId)
+  expect(kept.kept).toBe(true)
+  expect(git(repo, 'rev-parse', kept.branch!)).toBe(kept.commit)
   const followUp = await startFollowUp(runId, 'uppercase')
-  expect((await db.select().from(runs).where(eq(runs.id, followUp.runId)))[0]!.parentRunId).toBe(runId)
-  expect(branch).toBeTruthy()
+  const child = (await db.select().from(runs).where(eq(runs.id, followUp.runId)))[0]!
+  expect(child.parentRunId).toBe(runId)
+  expect(child.baseCommit).toBe(kept.commit)
+})
+
+test('a kept commit says who passed the human check: a person, or the app on its own', async () => {
+  const byApp = await finishedRun({ passedByApp: true })
+  const keptByApp = await keepOnBranch(byApp.runId)
+  const appBody = git(byApp.repo, 'log', '-1', '--format=%b', keptByApp.branch!)
+  expect(appBody).toContain(strings.delivery.passedOnItsOwn)
+  expect(appBody).not.toContain('approved by a person')
+  const byPerson = await finishedRun()
+  const keptByPerson = await keepOnBranch(byPerson.runId)
+  expect(git(byPerson.repo, 'log', '-1', '--format=%b', keptByPerson.branch!)).toContain('and approved by a person.')
+})
+
+test('continuing from a run keeps its change with the same honest sentence', async () => {
+  const byApp = await finishedRun({ passedByApp: true })
+  await startFollowUp(byApp.runId, 'uppercase')
+  const appBody = git(byApp.repo, 'log', '-1', '--format=%b', byApp.branch)
+  expect(appBody).toContain(strings.delivery.passedOnItsOwn)
+  expect(appBody).not.toContain('approved by a person')
+  const byPerson = await finishedRun()
+  await startFollowUp(byPerson.runId, 'uppercase')
+  expect(git(byPerson.repo, 'log', '-1', '--format=%b', byPerson.branch)).toContain('and approved by a person.')
 })
 
 test('a run a person approved says so, and a run nobody passed is not eligible', async () => {
