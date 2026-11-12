@@ -11,6 +11,23 @@ const fenced = (lines: readonly string[]): string[] => [
   REPORT_END,
 ]
 
+/** One entry of the register as an agent reads it. */
+type StandingLine = { number: number; text: string; kind?: 'rule' | 'decision' | 'core'; paths?: readonly string[] }
+const MAX_STANDING_TEXT = 300
+/** An entry's words on one line of their own, cut to a length: an entry cannot add lines to a prompt. */
+const oneLine = (text: string): string => {
+  const flat = text.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return flat.length > MAX_STANDING_TEXT ? `${flat.slice(0, MAX_STANDING_TEXT - 1)}…` : flat
+}
+/** The entries a task stands on, the same lines for every agent: numbered, one line each, a core area as a place to take care. */
+const standingLines = (standing: readonly StandingLine[]): string[] =>
+  standing.map(e => {
+    if (e.number <= 0) return `- ${oneLine(e.text)}`
+    const n = `D-${String(e.number).padStart(2, '0')}`
+    // A core area is where the person wants care, not a rule to check: the app itself stops for their yes there.
+    return e.kind === 'core' ? `${n} (core area: ${oneLine((e.paths ?? []).join(', '))}): sensitive. Change it only as far as the task needs.` : `${n}: ${oneLine(e.text)}`
+  })
+
 const MAX_SINCE_DIFF = 30_000
 const MAX_SINCE_PATHS = 200
 
@@ -1205,17 +1222,7 @@ export const strings = {
           `Someone asked for this change: ${o.request}`,
           ...(o.jobs && o.jobs.length > 0 ? ['The plan they approved:', ...o.jobs.map((j, i) => `${i + 1}. ${j.title}`)] : []),
           ...(o.builderSummary ? [`The builder says: ${o.builderSummary}`] : []),
-          ...(o.standing && o.standing.length > 0
-            ? [
-                'What was agreed for this project:',
-                ...o.standing.map(e => {
-                  if (e.number <= 0) return `- ${e.text}`
-                  const n = `D-${String(e.number).padStart(2, '0')}`
-                  // A core area is where the person wants care, not a rule to check: the app itself stops for their yes there.
-                  return e.kind === 'core' ? `${n} (core area: ${(e.paths ?? []).join(', ')}): sensitive. Change it only as far as the task needs.` : `${n}: ${e.text}`
-                }),
-              ]
-            : []),
+          ...(o.standing && o.standing.length > 0 ? ['What was agreed for this project:', ...standingLines(o.standing)] : []),
           `It has been made in this directory. See it with: git diff ${o.baseCommit} (and git status for new files).`,
           ...(o.since ? sinceLines(o.since) : []),
           'Check that it does what was asked, and look for bugs, broken behaviour, missing cases and anything else that was changed without being asked.',
@@ -1260,6 +1267,12 @@ export const strings = {
           'When you could not reproduce it: {"reproduced":false}. When the code does not do what the finding says: {"reproduced":false,"refuted":true,"why":"what the code really does"}.',
         ].join('\n'),
       plannerChangedFiles: 'The planner changed files, which planning must never do, so its plan was not used.',
+      // For the planner, the builder and the fixer: what the task stands on, in the lines the reviewers are given.
+      agreedNote: (standing: readonly StandingLine[]) =>
+        ['What was agreed for this project on earlier tasks: rules the person set, decisions they made and core areas. Keep to it unless this request says otherwise:', ...standingLines(standing)].join('\n'),
+      // For the checker: the same lines, as what it should know while it checks.
+      agreedForChecker: (standing: readonly StandingLine[]) =>
+        ['What was agreed for this project, for you to know while you check:', ...standingLines(standing)].join('\n'),
       rulesNote: (notes: readonly string[]) =>
         ['The person set these rules for this project on earlier tasks. Follow them unless this request says otherwise:', ...notes.map(n => `- ${n}`)].join('\n'),
       workListNote: (list: string) => ['The person checked this plan. Work through it, job by job:', list].join('\n'),

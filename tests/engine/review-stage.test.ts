@@ -20,7 +20,7 @@ import type { Finding, Focus } from '@/engine/review'
 import type { StageResult } from '@/engine/inngest/review-stage'
 import { MAX_FIX_ATTEMPTS } from '@/engine/tree-snapshot'
 import { createDemoProvider } from '@/providers/demo'
-import type { AgentEvent, AgentProvider } from '@/providers/types'
+import type { AgentEvent, AgentExecutionInput, AgentProvider } from '@/providers/types'
 import { strings } from '@/ui/strings'
 
 // The Review block reads the change with one reviewer or three, and checks what they found before the builder sees it.
@@ -307,11 +307,14 @@ function scripted(script: Script) {
   const calls: { role?: string; workdir?: string; problem?: string; repro?: Repro; kind: string; focus?: Focus; since?: { paths: string[]; diff: string; more?: number } }[] = []
   const copies: string[] = []
   const reproRuns: string[] = []
+  // Every input exactly as the executor built it, for what a role is given.
+  const inputs: AgentExecutionInput[] = []
   const provider: AgentProvider = {
     id: 'files',
     isDemo: false,
     needsWorkspace: true,
     async *execute(input) {
+      inputs.push(input)
       calls.push({ role: input.role, workdir: input.workdir, problem: input.finding?.problem, repro: input.repro, kind: input.blockKind, focus: input.focus, since: input.reviewSince })
       if (input.role === 'verifier') {
         await script.duringVerify?.()
@@ -352,7 +355,7 @@ function scripted(script: Script) {
       return (script.repro ?? (() => seenRun()))(calls.filter(c => c.role === 'verifier').at(-1)!.problem!)
     },
   }
-  return { provider, deps, calls, copies, reproRuns }
+  return { provider, deps, calls, copies, reproRuns, inputs }
 }
 const send = async () => {}
 const projectOf = async (runId: string) => (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.projectId
@@ -365,6 +368,25 @@ const counts = async (runId: string) => ({
   questions: (await questionRows(runId)).length,
 })
 const questionRows = (runId: string) => db.select().from(questions).where(eq(questions.runId, runId))
+
+describe('what every agent is given', () => {
+  test('the checker and the fixer are given the decisions, rules and core areas the task stands on, like the builder and the reviewers', async () => {
+    const runId = await newRun()
+    const projectId = await projectOf(runId)
+    await addEntry(projectId, { kind: 'decision', text: 'The price is rounded down on purpose', source: 'person' })
+    await addEntry(projectId, { kind: 'rule', text: 'Use plain words', source: 'person' })
+    const { dir, base } = workdir(true)
+    const s = scripted({ found: [finding()] })
+    await drive(runId, s.provider, dir, base, recordingStep(), s.deps)
+    const texts = (i: AgentExecutionInput | undefined) => (i?.standing ?? []).map(e => e.text)
+    for (const role of ['verifier', 'fixer'] as const) {
+      const input = s.inputs.find(i => i.role === role)
+      expect(texts(input)).toEqual(expect.arrayContaining(['The price is rounded down on purpose', 'Use plain words']))
+    }
+    expect(texts(s.inputs.find(i => i.blockKind === 'build' && !i.role))).toContain('The price is rounded down on purpose')
+    expect(texts(s.inputs.find(i => i.blockKind === 'review' && !i.role))).toContain('The price is rounded down on purpose')
+  })
+})
 
 describe('a finding is verified, then fixed or asked about', () => {
   test('a reproduced small problem goes to the fixer; nothing is asked and the verifier never works in the task', async () => {

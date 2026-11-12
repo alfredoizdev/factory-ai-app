@@ -106,6 +106,16 @@ test('asking for a new plan runs the planner again with the note; building gives
   expect((done.at(-1)!.payload as { summary: string }).summary).toBe(strings.plan.confirmed(1))
 })
 
+test('the reviewers are given the plan the person checked, with how to tell each job is done', async () => {
+  const runId = await newRun()
+  const provider = planningProvider([[{ title: 'A', done: [] }]])
+  const edited: Job[] = [{ title: 'Add the ring', done: ['ring is 5px'] }]
+  await drive(runId, provider, wordsStep(runId, [{ action: 'build', jobs: edited }]))
+  const readers = provider.calls.filter(c => c.blockKind === 'review' && !c.role)
+  expect(readers.length).toBeGreaterThan(0)
+  for (const r of readers) expect(r.jobs).toEqual(edited)
+})
+
 test('a word on the plan is refused when no plan waits, and a plan needs a job', async () => {
   const runId = await newRun()
   await expect(decidePlan(runId, { action: 'build', jobs: [{ title: 'x', done: [] }] })).rejects.toThrow(PlanError)

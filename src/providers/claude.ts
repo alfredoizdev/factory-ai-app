@@ -97,6 +97,15 @@ export function reviewerArgs(prompt: string, model?: string): string[] {
   return model ? [...args, '--model', model] : args
 }
 
+export /**
+ * What the task stands on, after the prompt: every rule, decision and core area it was given, in the lines the reviewers
+ * get. A run from before the register had only its rules' words, and they are given as they were.
+ */
+function withAgreed(prompt: string, input: AgentExecutionInput): string {
+  if (input.standing && input.standing.length > 0) return `${prompt}\n\n${strings.providers.claude.agreedNote(input.standing)}`
+  return input.notes && input.notes.length > 0 ? `${prompt}\n\n${strings.providers.claude.rulesNote(input.notes)}` : prompt
+}
+
 export function gitSnapshot(workdir: string): string {
   const git = (args: string[]) => execFileSync('git', args, { cwd: workdir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 })
   return createHash('sha256').update(git(['status', '--porcelain', '--untracked-files=all'])).update(git(['diff', 'HEAD'])).digest('hex')
@@ -133,7 +142,8 @@ async function* runVerifier(input: AgentExecutionInput, controls: ExecutionContr
     return
   }
   const workdir = input.workdir
-  const prompt = strings.providers.claude.verifyPrompt({ request: input.request, finding: input.finding })
+  const asked = strings.providers.claude.verifyPrompt({ request: input.request, finding: input.finding })
+  const prompt = input.standing && input.standing.length > 0 ? `${asked}\n\n${strings.providers.claude.agreedForChecker(input.standing)}` : asked
   for await (const ev of runClaude(deps, workdir, withoutMcp(claudeArgs(prompt, undefined, input.model)), controls)) {
     if (ev.type !== 'done') {
       yield ev
@@ -171,8 +181,7 @@ async function* runFixer(input: AgentExecutionInput, controls: ExecutionControls
     yield { type: 'error', source: 'system', message: strings.providers.claude.badModel(input.model) }
     return
   }
-  const asked = strings.providers.claude.fixPrompt(input.request, input.finding, input.repro)
-  const prompt = input.notes && input.notes.length > 0 ? `${asked}\n\n${strings.providers.claude.rulesNote(input.notes)}` : asked
+  const prompt = withAgreed(strings.providers.claude.fixPrompt(input.request, input.finding, input.repro), input)
   yield* runClaude(deps, input.workdir, withoutMcp(claudeArgs(prompt, undefined, input.model)), controls)
 }
 
@@ -238,8 +247,7 @@ async function* runPlanner(input: AgentExecutionInput, controls: ExecutionContro
   }
   const workdir = input.workdir
   const before = deps.snapshot(workdir)
-  const asked = strings.providers.claude.planPrompt(input.request, input.previousRequest, input.revisionNote)
-  const prompt = input.notes && input.notes.length > 0 ? `${asked}\n\n${strings.providers.claude.rulesNote(input.notes)}` : asked
+  const prompt = withAgreed(strings.providers.claude.planPrompt(input.request, input.previousRequest, input.revisionNote), input)
   const images = input.images ?? []
   const withImages = images.length > 0 ? `${prompt}\n\n${strings.providers.claude.imagesNote(images)}` : prompt
   const args = reviewerArgs(withImages, input.model)
@@ -285,7 +293,7 @@ async function* runBuilder(input: AgentExecutionInput, controls: ExecutionContro
       ? strings.providers.claude.followUpPrompt(input.previousRequest, input.request)
       : strings.providers.claude.buildPrompt(input.request)
   // The plan the person checked, on the first round: the builder works through it. Later rounds carry their own note.
-  const ruled = input.notes && input.notes.length > 0 ? `${prompt}\n\n${strings.providers.claude.rulesNote(input.notes)}` : prompt
+  const ruled = withAgreed(prompt, input)
   const planned = input.jobs && input.jobs.length > 0 && !input.revisionNote ? `${ruled}\n\n${strings.providers.claude.workListNote(workList(input.jobs))}` : ruled
   const images = input.images ?? []
   const withImages = images.length > 0 ? `${planned}\n\n${strings.providers.claude.imagesNote(images)}` : planned

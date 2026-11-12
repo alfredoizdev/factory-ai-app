@@ -300,14 +300,16 @@ export async function runAttempt(
         model: block.model,
         ...(block.kind === 'build' && workspace.jobs ? { jobs: workspace.jobs } : {}),
         ...((block.kind === 'build' || block.kind === 'plan') && workspace.notes && workspace.notes.length > 0 ? { notes: workspace.notes } : {}),
-        ...((block.kind === 'build' || block.kind === 'plan') && workspace.standing && workspace.standing.length > 0 ? { standing: workspace.standing } : {}),
+        // What the task stands on goes to every agent: the planner, the builder, each reviewer, the checker and the fixer.
+        ...(workspace.standing && workspace.standing.length > 0 ? { standing: workspace.standing } : {}),
         ...(job ? { role: job.role, finding: job.finding, ...(job.repro ? { repro: job.repro } : {}) } : {}),
         ...(block.kind === 'review' && workspace.review
           ? {
               focus: workspace.review.focus,
+              // The plan the person checked: a reviewer can only tell what was changed without being asked if it knows what was agreed.
+              ...(workspace.jobs ? { jobs: workspace.jobs } : {}),
               ...(workspace.review.builderSummary ? { builderSummary: workspace.review.builderSummary } : {}),
               ...(workspace.review.since ? { reviewSince: workspace.review.since } : {}),
-              ...(workspace.standing && workspace.standing.length > 0 ? { standing: workspace.standing } : {}),
             }
           : {}),
       }
