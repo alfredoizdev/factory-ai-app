@@ -9,7 +9,7 @@ import { db } from '@/db/client'
 import { claims, events, evidence, nodeRuns, projects, runs, usageRecords, workflowVersions } from '@/db/schema'
 import { STAGE_ORDER, type BlockKind, type Graph } from '@/domain/graph'
 import { canReopen, canTransition, rollUpRunStatus, type NodeState, type RunStatus } from '@/domain/states'
-import { appendEventSync, type DbHandle, type EventType } from '@/engine/events'
+import { appendEventSync, lockRun, type DbHandle, type EventType } from '@/engine/events'
 import { APPROVAL_DECIDED, PLAN_DECIDED, inngest, RUN_REQUESTED } from '@/engine/inngest/client'
 import { clip, redact } from '@/engine/redact'
 import { MAX_REVISIONS, takeRecordedDecision, type Decision } from '@/engine/approvals'
@@ -118,8 +118,13 @@ const now = () => new Date().toISOString()
 
 // ---- atomic state writes: the row change and its event commit together or not at all --------------------------
 
-async function withTx<T>(fn: (tx: DbHandle) => Promise<T>): Promise<T> {
-  return db.transaction(tx => fn(tx))
+// Every write about a run holds that run's lock first, until the transaction ends: two writers on one run (the
+// executor and a cancel, say) take turns, always in the same order, so they can neither interleave nor deadlock.
+function withTx<T>(runId: string, fn: (tx: DbHandle) => Promise<T>): Promise<T> {
+  return db.transaction(async tx => {
+    await lockRun(tx, runId)
+    return fn(tx)
+  })
 }
 
 async function runStatusOf(h: DbHandle, runId: string): Promise<string | undefined> {
@@ -132,7 +137,7 @@ async function isCancelled(runId: string): Promise<boolean> {
 
 // queued -> running. Returns false when the run was cancelled (or already finished) before it began.
 async function startRun(runId: string): Promise<boolean> {
-  return withTx(async tx => {
+  return withTx(runId, async tx => {
     const status = (await runStatusOf(tx, runId))
     if (status === 'running') return true // replay after a crash: already started
     if (status !== 'queued') return false
@@ -144,7 +149,7 @@ async function startRun(runId: string): Promise<boolean> {
 
 // Moves the run to a status that is not terminal (running / waiting_approval) and appends the event for it.
 async function setRunStatus(runId: string, status: RunStatus, event: { type: EventType; payload?: unknown }): Promise<void> {
-  await withTx(async tx => {
+  await withTx(runId, async tx => {
     const current = (await runStatusOf(tx, runId))
     if (current === 'cancelled' || current === 'failed' || current === 'completed') return
     if (current !== status) await tx.update(runs).set({ status }).where(eq(runs.id, runId))
@@ -153,7 +158,7 @@ async function setRunStatus(runId: string, status: RunStatus, event: { type: Eve
 }
 
 async function finishRun(runId: string, status: 'completed' | 'failed', payload?: unknown): Promise<void> {
-  await withTx(async tx => {
+  await withTx(runId, async tx => {
     const current = (await runStatusOf(tx, runId))
     if (current === 'cancelled' || current === 'failed' || current === 'completed') return
     await tx.update(runs).set({ status, finishedAt: now() }).where(eq(runs.id, runId))
@@ -303,7 +308,7 @@ async function runAttempt(
 // ---- nodes -------------------------------------------------------------------------------------------------------
 
 async function skipNode(runId: string, block: PlannedBlock, reason: string = strings.run.skippedDisabled): Promise<Outcome> {
-  return withTx(async tx => {
+  return withTx(runId, async tx => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
@@ -370,7 +375,7 @@ async function runProviderNode(
   const provider = deps.resolveProvider(plan.providerId)
 
   // Row, node.queued and node.started commit together: a node is never left queued.
-  const opened = (await withTx(async (tx): Promise<NodeRow | Outcome> => {
+  const opened = (await withTx(runId, async (tx): Promise<NodeRow | Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
@@ -407,7 +412,7 @@ async function runProviderNode(
       revisionNote,
       images,
       async text => {
-        await withTx(async tx => {
+        await withTx(runId, async tx => {
           const node = (await freshNode(opened.id, tx))
           // Everything a real agent prints is cleaned here, before it can reach the log or the browser.
           const clean = clip(redact(text), STEP_MAX)
@@ -424,7 +429,7 @@ async function runProviderNode(
     if (result.kind === 'done' && block.kind === 'plan' && result.plan) {
       // A proposed plan is not a finished block: it waits for the person, who checks it before anything is built.
       const jobs = result.plan
-      const parked = (await withTx(async tx => {
+      const parked = (await withTx(runId, async tx => {
         const node = (await freshNode(opened.id, tx))
         if (node.state !== 'running') return false
         await recordDoneFacts(tx, node, result)
@@ -441,7 +446,7 @@ async function runProviderNode(
     }
 
     if (result.kind === 'done') {
-      const done = (await withTx(async tx => {
+      const done = (await withTx(runId, async tx => {
         const node = (await freshNode(opened.id, tx))
         if (!canTransition(node.state as NodeState, 'passed')) return false
         await writeEvidence(tx, node, block.id, measured)
@@ -495,7 +500,7 @@ async function runProviderNode(
     const canRetry = attempt < MAX_ATTEMPTS && result.kind !== 'timeout' && !(result.kind === 'error' && result.noRetry)
     if (canRetry) {
       // The node stays running: failed is terminal in the state machine, so only the final failure is recorded as one.
-      await withTx(async tx => {
+      await withTx(runId, async tx => {
         const node = (await freshNode(opened.id, tx))
         if (node.state !== 'running') return
         await writeEvidence(tx, node, block.id, measured)
@@ -521,7 +526,7 @@ async function runProviderNode(
       continue
     }
 
-    const failed = (await withTx(async tx => {
+    const failed = (await withTx(runId, async tx => {
       const node = (await freshNode(opened.id, tx))
       if (!canTransition(node.state as NodeState, 'failed')) return false
       await writeEvidence(tx, node, block.id, measured)
@@ -563,15 +568,15 @@ async function prepareDependencies(
   // The project's prepared base, when this copy's lockfile is the one it was installed from: copied, not installed.
   const copied = copyBase ? await copyBase(runId, dir) : undefined
   if (copied?.copied) {
-    await withTx(async tx => {
+    await withTx(runId, async tx => {
       await step(strings.run.copiedFromBase(Math.max(1, Math.round(copied.ms / 1000))), tx)
       await appendEventSync({ runId, type: 'run.installed', payload: { command, ok: true, fromBase: true } }, tx)
     })
     return
   }
-  await withTx(tx => step(copied && copied.reason === 'different-lockfile' ? strings.run.installingChanged(command) : strings.run.installing(command), tx))
+  await withTx(runId, tx => step(copied && copied.reason === 'different-lockfile' ? strings.run.installingChanged(command) : strings.run.installing(command), tx))
   const result = await install(dir)
-  await withTx(async tx => {
+  await withTx(runId, async tx => {
     if (result) {
       const seconds = Math.max(1, Math.round(result.durationMs / 1000))
       await step(result.ok ? strings.run.installed(seconds) : strings.run.installFailed(clip(redact(result.outputTail).trim().split('\n').slice(-2).join(' '), 200)), tx)
@@ -611,7 +616,7 @@ async function testFactsOf(runId: string): Promise<TestFacts> {
 async function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): Promise<RiskAssessment | null> {
   if (!workspace.workdir || !workspace.baseCommit) return null
   const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)))
-  await withTx(async tx => {
+  await withTx(runId, async tx => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node || outcomeOf(node.state)) return
     await appendEventSync(
@@ -657,7 +662,7 @@ async function sumUpReviews(runId: string, block: PlannedBlock, sentBack: number
         : sentBack > 0
           ? strings.review.approve.fixed(sentBack)
           : strings.review.approve.clean
-  return withTx(async (tx): Promise<Outcome> => {
+  return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
@@ -672,7 +677,7 @@ async function sumUpReviews(runId: string, block: PlannedBlock, sentBack: number
 }
 
 async function passLowRiskGate(runId: string, block: PlannedBlock): Promise<Outcome> {
-  return withTx(async (tx): Promise<Outcome> => {
+  return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
@@ -702,7 +707,7 @@ async function reopenForRevision(
   note: string | null,
   by: 'person' | 'reviewer' = 'person',
 ): Promise<boolean> {
-  return withTx(async tx => {
+  return withTx(runId, async tx => {
     // The person sends work back from the gate, where the run waits; a reviewer does it while the run is still going.
     const status = (await runStatusOf(tx, runId))
     if (status !== (by === 'person' ? 'waiting_approval' : 'running')) return false
@@ -732,7 +737,7 @@ async function readRecordedDecision(runId: string, block: PlannedBlock): Promise
   if (!node) return null
   const decided = (await takeRecordedDecision(runId, node.id))
   if (decided === null) {
-    await withTx(async tx => {
+    await withTx(runId, async tx => {
       await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, text: strings.gate.ignoredEvent } }, tx)
     })
   }
@@ -741,7 +746,7 @@ async function readRecordedDecision(runId: string, block: PlannedBlock): Promise
 
 // A human block never calls a provider: it records that it is waiting and the function parks.
 async function parkHumanNode(runId: string, block: PlannedBlock): Promise<Outcome> {
-  const result = (await withTx(async (tx): Promise<Outcome> => {
+  const result = (await withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }
     const settled = outcomeOf(node.state)
@@ -765,7 +770,7 @@ async function parkHumanNode(runId: string, block: PlannedBlock): Promise<Outcom
 async function decideHumanNode(runId: string, block: PlannedBlock, approved: boolean): Promise<Outcome> {
   const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
   if (!node) return { outcome: 'cancelled' }
-  const ok = (await withTx(async tx => {
+  const ok = (await withTx(runId, async tx => {
     const fresh = (await freshNode(node.id, tx))
     const moved = approved
       ? (await transitionNode(tx, fresh, 'passed', { type: 'node.completed', payload: { summary: strings.run.resumed, summarySource: 'system' } }, { summary: strings.run.resumed }))
@@ -785,7 +790,7 @@ async function confirmPlanNode(runId: string, block: PlannedBlock): Promise<{ ou
   const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
   if (!node || !jobs) return { outcome: 'cancelled' }
   const summary = strings.plan.confirmed(jobs.length)
-  const ok = (await withTx(async tx => {
+  const ok = (await withTx(runId, async tx => {
     const moved = (await transitionNode(tx, (await freshNode(node.id, tx)), 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary }))
     if (moved && (await runStatusOf(tx, runId)) === 'waiting_approval') {
       await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
@@ -855,7 +860,7 @@ async function prepareWorkspace(runId: string, plan: Plan, deps: ExecutorDeps): 
     const make = deps.createWorktree ?? ((r: string, id: string, sp?: string, req?: string) => createRunWorktree(r, id, undefined, sp, req))
     // The branch is named after the request, so a person can tell it apart in their own `git branch`.
     const ws = make(plan.repoPath, runId, startPoint, plan.request)
-    await withTx(async tx => {
+    await withTx(runId, async tx => {
       await tx.update(runs).set({ worktreePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit }).where(eq(runs.id, runId))
       await appendEventSync({ runId, type: 'run.workspace', payload: { branch: ws.branch, path: ws.path, baseCommit: ws.baseCommit } }, tx)
     })
@@ -1062,7 +1067,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
 // Last resort when a step throws for good (missing run, exhausted retries): nothing may be left running with no
 // recorded cause. Unfinished nodes fail, then the run fails, each through the guarded transitions.
 export async function failRunAfterError(runId: string): Promise<void> {
-  await withTx(async tx => {
+  await withTx(runId, async tx => {
     const status = (await runStatusOf(tx, runId))
     if (status === undefined || status === 'cancelled' || status === 'failed' || status === 'completed') return
     for (const node of (await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId)))) {

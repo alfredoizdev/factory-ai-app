@@ -7,7 +7,7 @@ import { db } from '@/db/client'
 import { nodeRuns, projects, runs, workflows, workflowVersions } from '@/db/schema'
 import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
 import { canTransition, type NodeState } from '@/domain/states'
-import { appendEventSync } from '@/engine/events'
+import { appendEventSync, lockRun } from '@/engine/events'
 import { onHoldAmong } from '@/engine/ship'
 import { cleanTitle, titleOf } from '@/engine/title'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
@@ -244,6 +244,7 @@ export async function createRun(input: {
 export async function cancelRun(runId: string): Promise<void> {
   (await db.transaction(
     async tx => {
+      await lockRun(tx, runId)
       const run = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
       if (!run) throw new RunNotFoundError(runId)
       if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') return

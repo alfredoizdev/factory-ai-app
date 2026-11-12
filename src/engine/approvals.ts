@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { and, desc, eq, isNull } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
+import { lockRun } from '@/engine/events'
 import { approvals, nodeRuns, runs } from '@/db/schema'
 import { stopPreview } from '@/engine/preview'
 import { claimAttachments } from '@/engine/attachments'
@@ -151,6 +152,7 @@ const DECISIONS: ReadonlySet<string> = new Set<Decision>(['approved', 'rejected'
 export async function takeRecordedDecision(runId: string, nodeRunId: string): Promise<{ decision: Decision; note: string | null; approvalId: string } | null> {
   return db.transaction(
     async tx => {
+      await lockRun(tx, runId)
       const row = (await tx
         .select()
         .from(approvals)

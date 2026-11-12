@@ -1,7 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { events, nodeRuns } from '@/db/schema'
-import { appendEventSync } from '@/engine/events'
+import { appendEventSync, lockRun } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
 
@@ -96,6 +96,7 @@ export class PlanError extends Error {
 export async function decidePlan(runId: string, decision: { action: 'build'; jobs: unknown } | { action: 'replan'; note: string }): Promise<void> {
   await db.transaction(
     async tx => {
+      await lockRun(tx, runId)
       let node: (typeof nodeRuns.$inferSelect) | undefined
       for (const n of await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))) {
         if (n.state === 'waiting_approval' && (await isPlanNode(tx, runId, n.id))) {

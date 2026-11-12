@@ -3,7 +3,7 @@ import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import { projectNotes, runs } from '@/db/schema'
 import { askClaude, type AskModel } from '@/engine/branch-name'
-import { appendEventSync, type DbHandle } from '@/engine/events'
+import { appendEventSync, type DbHandle, lockRun } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 
 // The project's memory. What the person says on one task often holds for the next ("use the team's pink", "do not
@@ -70,6 +70,7 @@ export async function giveRules(runId: string): Promise<string[]> {
   if (!run) return []
   return db.transaction(
     async tx => {
+      await lockRun(tx, runId)
       const recorded = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]?.memoryJson
       if (recorded) return JSON.parse(recorded) as string[]
       const texts = (await rulesFor(run.projectId, tx)).map(n => n.text)
