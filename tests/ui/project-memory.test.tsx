@@ -48,6 +48,14 @@ test('entries are grouped by kind under plain headings, each with its number and
   expect(screen.getByText('src/billing/')).toBeInTheDocument()
 })
 
+test('the number before each entry is explained once, in plain words, and on the number itself', async () => {
+  await open()
+  expect(screen.getByText(strings.memory.numbersWhat)).toBeInTheDocument()
+  expect(strings.memory.numbersWhat).toMatch(/D-03/)
+  expect(screen.getByText('D-03')).toHaveAttribute('title', strings.memory.number('D-03'))
+  expect(strings.memory.number('D-03')).not.toBe('Entry D-03')
+})
+
 test('the log of what reviewers found is collapsed until asked for, and never shows a file', async () => {
   await open()
   expect(screen.queryByText('The token is logged')).toBeNull()

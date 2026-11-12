@@ -7,6 +7,7 @@ import { mergeDuplicates, recordFindings, setFinding } from '@/engine/findings'
 import { askPerson } from '@/engine/questions'
 import { appendEventSync } from '@/engine/events'
 import { addEntry, label } from '@/engine/register'
+import { updateNote } from '@/engine/memory'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import type { Finding } from '@/engine/review'
 import { GET } from '@/app/api/runs/[runId]/findings/route'
@@ -49,7 +50,7 @@ test('one entry per problem, in the order they first appeared, with the question
   expect(body.findings.map(x => [x.ending, x.how])).toEqual([['fixed', 'checked'], ['needs_you', 'not_checked']])
   expect(body.findings[0]!.title).toBe(strings.findings.title.logic)
   expect(body.question!.id).toBe(q.id)
-  expect(body.touched).toEqual([{ number: decision.number, label: label(decision.number), kind: 'decision', text: 'We use Stripe' }])
+  expect(body.touched).toEqual([{ number: decision.number, label: label(decision.number), kind: 'decision', text: 'We use Stripe', paths: [] }])
 })
 
 test('nothing is shown for a run with no findings and no question', async () => {
@@ -76,4 +77,20 @@ test('a decision named in the reasons measured for the human check is explained 
   await appendEventSync({ runId, nodeRunId, type: 'node.assessed', payload: { blockId: 'human', level: 'high', reasons: [`It touches a decision you made (${label(decision.number)}).`] } }, db)
   const body = (await (await get(runId)).json()) as Body
   expect(body.touched.map(t => t.text)).toEqual(['We use Stripe'])
+})
+
+test('a number in what a reviewer or the checker wrote is explained from every entry of the project, a switched-off one too', async () => {
+  const { projectId, runId, nodeRunId } = await run()
+  const core = (await addEntry(projectId, { kind: 'core', text: 'Ask me before changing src/app/', paths: ['src/app/'], source: 'person' }))!
+  const rule = (await addEntry(projectId, { kind: 'rule', text: 'Buttons are blue', source: 'person' }))!
+  await updateNote(projectId, rule.id, { enabled: false })
+  const rows = await recordFindings(runId, nodeRunId, 1, mergeDuplicates([
+    { focus: 'logic', finding: f({ problem: `agreed decision ${label(core.number)} says to ask; rule ${label(rule.number)} too` }) },
+  ]), process.cwd())
+  await setFinding(rows[0]!.id, { state: 'refuted', reason: `Decision ${label(core.number)} appears nowhere in the repo` })
+  const body = (await (await get(runId)).json()) as Body
+  expect(body.touched).toEqual([
+    { number: core.number, label: label(core.number), kind: 'core', text: 'Ask me before changing src/app/', paths: ['src/app/'] },
+    { number: rule.number, label: label(rule.number), kind: 'rule', text: 'Buttons are blue', paths: [] },
+  ])
 })

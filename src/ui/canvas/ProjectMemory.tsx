@@ -219,6 +219,7 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
           {strings.memory.title}
         </h3>
         <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.memory.what}</span>
+        <span style={{ fontSize: 12, color: theme.dim, lineHeight: 1.45 }}>{strings.memory.numbersWhat}</span>
       </div>
 
       {group(

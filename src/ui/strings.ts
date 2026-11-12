@@ -317,6 +317,12 @@ export const strings = {
     tryAgain: 'Try again',
     closed: 'This question has already been answered, or the task is not waiting for an answer any more.',
     earlierDecision: 'an earlier decision of yours',
+    // An entry of the project's register, named the way the person knows it, wherever a sentence gives its number.
+    entryAs: {
+      core: (where: string) => `your core area ${where}`,
+      decision: (text: string) => `your decision \u201c${text}\u201d`,
+      rule: (text: string) => `your rule \u201c${text}\u201d`,
+    },
     seeDetails: 'See details',
     aiSaid: 'What the AI reviewer said',
     where: 'Where',
@@ -755,7 +761,8 @@ export const strings = {
       decision: 'None yet. When you answer a question during a review, your answer is kept here.',
       core: 'None yet. Mark a folder or file below.',
     },
-    number: (label: string) => `Entry ${label}`,
+    number: (label: string) => `Number ${label}: what the agents call this one when they refer to it.`,
+    numbersWhat: 'Each one has a number, like D-03. The agents use it to point to the one they mean; when the app tells you about it, it shows you the words.',
     saveEdit: 'Save',
     cancelEdit: 'Cancel',
     removeAsk: (text: string) => `Remove this? ${text}`,

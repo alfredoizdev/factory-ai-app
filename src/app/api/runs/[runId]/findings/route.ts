@@ -10,7 +10,7 @@ import { strings } from '@/ui/strings'
 
 // The problems the reviewers reported on this run and how each one ended (one entry per problem), and the question the
 // run is waiting on, if any. `touched` is what the question's numbers stand for: the person's own words for each earlier
-// decision or core area, so the screen never shows a bare number. Reading only.
+// decision, rule or core area, so the screen never shows a bare number. Reading only.
 export async function GET(_req: Request, ctx: { params: Promise<{ runId: string }> }) {
   const { runId } = await ctx.params
   const run = (await db.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]
@@ -21,9 +21,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
   const cited = new Set<number>(question?.touches ?? [])
   // And in the reasons measured for the human check.
   const assessed = (await db.select({ payloadJson: events.payloadJson }).from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.assessed')))).map(e => e.payloadJson)
-  for (const m of `${question?.text ?? ''} ${question?.why ?? ''} ${assessed.join(' ')}`.matchAll(/\bD-(\d+)\b/g)) cited.add(Number(m[1]))
+  // And in what the reviewers and the checker wrote about each problem, shown under "See details".
+  const written = findings.flatMap(v => [v.outcome, v.detail.problem, v.detail.reason])
+  for (const m of [question?.text ?? '', question?.why ?? '', question?.detail ?? '', ...assessed, ...written].join(' ').matchAll(/\bD-(\d+)\b/g)) cited.add(Number(m[1]))
+  // Every entry of the project, switched on or off: a number that has one is never read as a deleted decision.
   const touched = cited.size === 0 ? [] : (await listRegister(run.projectId))
     .filter(e => cited.has(e.number) && e.kind !== 'finding')
-    .map(e => ({ number: e.number, label: label(e.number), kind: e.kind, text: clip(redact(e.text), 600) }))
+    .map(e => ({ number: e.number, label: label(e.number), kind: e.kind, text: clip(redact(e.text), 600), paths: e.paths.map(p => clip(redact(p), 300)) }))
   return Response.json({ findings, question: question && { ...question, detail: question.detail === null ? null : clip(redact(question.detail), 1000) }, touched })
 }

@@ -86,3 +86,15 @@ test('a register number in a reason is never shown bare', () => {
   fireEvent.click(screen.getByRole('button', { name: strings.question.seeDetails }))
   expect(document.body.textContent).not.toMatch(/D-\d/)
 })
+
+test('an entry number reads the same in what the reviewer said and in why it ended', () => {
+  const touched = [{ number: 3, label: 'D-03', kind: 'core', text: 'Ask me before changing src/app/', paths: ['src/app/'] }]
+  const problem = 'The change edits a file under src/app/, and agreed decision D-03 says to ask before changing src/app/.'
+  render(<FindingsList touched={touched} findings={[view({ detail: { where: '', problem, command: '', outputTail: '', reason: 'Decision D-03 appears nowhere in the repo' } })]} />)
+  fireEvent.click(screen.getByRole('button', { name: strings.question.seeDetails }))
+  const text = document.body.textContent ?? ''
+  expect(text).not.toMatch(/D-\d/)
+  expect(text).toContain('and your core area src/app/ says to ask')
+  expect(text).toContain('Your core area src/app/ appears nowhere in the repo')
+  expect(text).not.toContain(strings.question.earlierDecision)
+})

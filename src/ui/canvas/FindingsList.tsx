@@ -95,7 +95,7 @@ function Row({ f, n, touched }: { f: FindingView; n: number; touched: readonly T
           {d.problem !== '' && (
             <div style={{ display: 'grid', gap: 2 }}>
               <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: theme.waiting }}>{strings.findings.detail.aiSaid}</span>
-              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{d.problem}</span>
+              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{explained(d.problem, touched)}</span>
             </div>
           )}
           {fact(strings.findings.detail.command, d.command, true)}

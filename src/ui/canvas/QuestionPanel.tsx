@@ -110,7 +110,7 @@ export function QuestionPanel({
           {showDetail && (
             <div id={detailId} style={{ display: 'grid', gap: 4, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118' }}>
               <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: theme.waiting }}>{strings.question.aiSaid}</span>
-              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{question.detail}</span>
+              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{explained(question.detail, touched)}</span>
             </div>
           )}
         </div>
