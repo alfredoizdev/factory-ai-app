@@ -98,6 +98,40 @@ describe('asking', () => {
   })
 })
 
+describe('asking again', () => {
+  test('after the answer, the same question comes back as it was: no second row, no new events, the run goes on', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const first = await askPerson(runId, nodeRunId, ask({ findingId: 'f9' }))
+    await answerQuestion(first.id, { option: 'a' }, deps)
+    const eventsBefore = (await db.select().from(events).where(eq(events.runId, runId))).length
+    const again = await askPerson(runId, nodeRunId, ask({ findingId: 'f9' }))
+    expect(again).toMatchObject({ id: first.id, state: 'answered', answerOption: 'a' })
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(1)
+    expect(await status(runId)).toBe('running')
+    expect((await db.select().from(events).where(eq(events.runId, runId))).length).toBe(eventsBefore)
+  })
+  test('the same holds for a question about no finding', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const first = await askPerson(runId, nodeRunId, ask())
+    await answerQuestion(first.id, { option: 'a' }, deps)
+    expect((await askPerson(runId, nodeRunId, ask())).id).toBe(first.id)
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(1)
+  })
+  test('a caller\'s own leave option keeps its words but goes last', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const q = await askPerson(runId, nodeRunId, ask({ options: [{ id: LEAVE, label: 'Skip it', means: 'No change.' }, ...opts], recommended: null }))
+    expect(q.options.map(o => o.id)).toEqual(['a', 'b', LEAVE])
+    expect(q.options.at(-1)).toEqual({ id: LEAVE, label: 'Skip it', means: 'No change.' })
+  })
+  test('nobody waits on a cancelled run\'s question', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    await askPerson(runId, nodeRunId, ask())
+    expect(await openQuestion(runId)).not.toBeNull()
+    await cancelRun(runId)
+    expect(await openQuestion(runId)).toBeNull()
+  })
+})
+
 describe('answering', () => {
   test('a listed option is recorded with who and when, the run resumes, and the decision is registered once', async () => {
     const { projectId, runId, nodeRunId } = await runningRun()
@@ -195,6 +229,18 @@ describe('delivery', () => {
     expect(await deliverPending(send, 'approval', 'plan', 'question')).toBeGreaterThanOrEqual(1)
     expect(relayed.filter(e => e.name === 'question' && e.data.questionId === q.id)).toHaveLength(1)
     await deliverPending(send, 'approval', 'plan', 'question')
+    expect(relayed.filter(e => e.name === 'question' && e.data.questionId === q.id)).toHaveLength(1)
+  })
+
+  test('two passes at once send one answer once', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const q = await askPerson(runId, nodeRunId, ask())
+    await db.update(runs).set({ machineId: 'elsewhere' }).where(eq(runs.id, runId))
+    await answerQuestion(q.id, { option: 'a' }, deps)
+    await db.update(runs).set({ machineId: (await import('@/engine/machine')).thisMachine().id }).where(eq(runs.id, runId))
+    const relayed: { name: string; data: Record<string, unknown> }[] = []
+    const send = async (e: { name: string; data: Record<string, unknown> }) => void relayed.push(e)
+    await Promise.all([deliverPending(send, 'approval', 'plan', 'question'), deliverPending(send, 'approval', 'plan', 'question')])
     expect(relayed.filter(e => e.name === 'question' && e.data.questionId === q.id)).toHaveLength(1)
   })
 

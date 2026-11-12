@@ -1,6 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
+import { canTransition, type NodeState } from '@/domain/states'
 import { nodeRuns, questions, runs } from '@/db/schema'
 import { localActor } from '@/engine/approvals'
 import { appendEventSync, lockRun } from '@/engine/events'
@@ -89,7 +90,7 @@ function toQuestion(r: Row): Question {
 function normaliseOptions(given: readonly Option[], recommended: string | null): { options: Option[]; recommended: string | null } {
   if (given.length === 0) throw new Error('A question needs at least one option.')
   const seen = new Set<string>()
-  const options: Option[] = given.map(o => {
+  const listed: Option[] = given.map(o => {
     const id = o.id.trim()
     if (!id) throw new Error('An option needs an id.')
     if (id === OTHER) throw new Error(`"${OTHER}" is always allowed and is not a listed option.`)
@@ -99,14 +100,18 @@ function normaliseOptions(given: readonly Option[], recommended: string | null):
     if (!label) throw new Error(`Option "${id}" needs a label.`)
     return { id, label, means: cap(o.means, MAX_MEANS) }
   })
-  if (!seen.has(LEAVE)) options.push({ id: LEAVE, label: strings.question.leaveLabel, means: strings.question.leaveMeans })
+  // The choice to leave it is always last: the caller's own words for it are kept, the app's are used when it has none.
+  const options = [...listed.filter(o => o.id !== LEAVE), listed.find(o => o.id === LEAVE) ?? { id: LEAVE, label: strings.question.leaveLabel, means: strings.question.leaveMeans }]
   if (recommended !== null && !options.some(o => o.id === recommended)) throw new Error(`The recommended option "${recommended}" is not one of the options.`)
   return { options, recommended }
 }
 
+const runCan = (from: string, to: NodeState) => canTransition(from as NodeState, to)
+
 /**
  * Asks the person, and parks the run (and the node) on the answer, as a human check does. Asking the same thing again
- * (a retried step) returns the open question; asking something else while one is open throws.
+ * (a retried step) returns the question it already is, in whatever state, and changes nothing: the caller must branch
+ * on `state` (`answered` means go straight to `takeAnswer`). Asking something else while one is open throws.
  */
 export async function askPerson(
   runId: string,
@@ -121,13 +126,19 @@ export async function askPerson(
     await lockRun(tx, runId)
     const run = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
     if (!run) throw new QuestionError(strings.errors.runNotFound, 404)
+    const same = (
+      await tx.select().from(questions).where(and(
+        eq(questions.runId, runId),
+        eq(questions.nodeRunId, nodeRunId),
+        eq(questions.kind, q.kind),
+        q.findingId === null ? isNull(questions.findingId) : eq(questions.findingId, q.findingId),
+      ))
+    )[0]
+    if (same) return toQuestion(same)
     const open = (await tx.select().from(questions).where(and(eq(questions.runId, runId), eq(questions.state, 'open'))))[0]
-    if (open) {
-      if (open.nodeRunId === nodeRunId && open.findingId === q.findingId && open.kind === q.kind) return toQuestion(open)
-      throw new QuestionError(strings.question.anotherOpen, 409)
-    }
+    if (open) throw new QuestionError(strings.question.anotherOpen, 409)
     const node = (await tx.select().from(nodeRuns).where(and(eq(nodeRuns.id, nodeRunId), eq(nodeRuns.runId, runId))))[0]
-    if (run.status !== 'running' || !node || node.state !== 'running') throw new QuestionError(strings.question.notWaiting, 409)
+    if (run.status !== 'running' || !node || node.state !== 'running' || !runCan(run.status, 'waiting_approval') || !runCan(node.state, 'waiting_approval')) throw new QuestionError(strings.question.notWaiting, 409)
     const row = {
       id: ulid(),
       projectId: run.projectId,
@@ -160,10 +171,13 @@ export async function askPerson(
   return asked
 }
 
-/** The question this run is waiting on, if any. */
+/** The question this run is waiting on, if any (null once the run is cancelled). */
 export async function openQuestion(runId: string): Promise<Question | null> {
   const row = (await db.select().from(questions).where(and(eq(questions.runId, runId), eq(questions.state, 'open'))))[0]
-  return row ? toQuestion(row) : null
+  if (!row) return null
+  // A question left open on a run that was cancelled is not waited on by anyone.
+  const run = (await db.select({ status: runs.status }).from(runs).where(eq(runs.id, runId)))[0]
+  return run?.status === 'waiting_approval' ? toQuestion(row) : null
 }
 
 /** The question with its answer; null until it is answered. What the executor acts on: the row, never the event. */
@@ -197,7 +211,7 @@ export async function answerQuestion(questionId: string, a: { option: string; te
     if (row.state !== 'open') throw new QuestionError(strings.question.alreadyAnswered, 409)
     const run = (await tx.select().from(runs).where(eq(runs.id, row.runId)))[0]
     const node = (await tx.select().from(nodeRuns).where(eq(nodeRuns.id, row.nodeRunId)))[0]
-    if (!run || !node || run.status !== 'waiting_approval' || node.state !== 'waiting_approval') throw new QuestionError(strings.question.notWaiting, 409)
+    if (!run || !node || run.status !== 'waiting_approval' || node.state !== 'waiting_approval' || !runCan(run.status, 'running') || !runCan(node.state, 'running')) throw new QuestionError(strings.question.notWaiting, 409)
     const option = a.option.trim()
     const words = cap(a.text ?? '', MAX_ANSWER)
     if (option === OTHER) {

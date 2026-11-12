@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { boolean, index, integer, pgTable, primaryKey, text, uniqueIndex } from 'drizzle-orm/pg-core'
 
 // IDs are ULIDs (the demo workflow is the literal 'demo'); timestamps are ISO UTC strings.
@@ -316,7 +317,11 @@ export const questions = pgTable(
     deliveredAt: text('delivered_at'),
     createdAt: text('created_at').notNull(),
   },
-  t => [index('questions_run_idx').on(t.runId)],
+  t => [
+    index('questions_run_idx').on(t.runId),
+    // One question per thing asked: a repeated step finds it instead of asking again.
+    uniqueIndex('questions_asked_once').on(t.runId, t.nodeRunId, t.kind, sql`coalesce(${t.findingId}, '')`),
+  ],
 )
 
 /** The computers that have opened this data: a name a person can read, for "its working copy is on …". */

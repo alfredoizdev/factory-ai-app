@@ -1,5 +1,5 @@
 {
-  "id": "d07b0f0d-0d99-4b46-9012-013b2f4c08f2",
+  "id": "d6f876c1-0520-4002-91dc-f7bfa6b057a8",
   "prevId": "37dc63f9-7968-43d7-a68f-2879d7a9b7ca",
   "version": "7",
   "dialect": "postgresql",
@@ -1505,6 +1505,39 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "questions_asked_once": {
+          "name": "questions_asked_once",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "node_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "coalesce(\"finding_id\", '')",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
