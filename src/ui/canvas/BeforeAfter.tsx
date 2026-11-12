@@ -65,7 +65,8 @@ export function BeforeAfterCard({ runId, autoStart = false, compact = false, can
   const { state, error, take } = useSnapshots(runId, autoStart)
   const [open, setOpen] = useState(false)
   const close = useCallback(() => setOpen(false), [])
-  if (!state) return null
+  // A change that cannot be seen (tests, settings) has no before and after to show.
+  if (!state || state.status === 'unneeded') return null
   const at = `${state.route ?? ''}-${state.shots.join(',')}`
   const hint = { fontSize: 11.5, color: theme.dim, lineHeight: 1.4 } as const
   return (

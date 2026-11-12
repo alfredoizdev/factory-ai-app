@@ -270,7 +270,7 @@ function ChangesModal({ files, diff, truncated, onClose }: { files: Review['file
     <div
       data-testid="changes-modal"
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(5, 7, 11, 0.7)', display: 'grid', placeItems: 'center', padding: 24 }}
+      style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(5, 7, 11, 0.7)', display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', gridTemplateColumns: 'minmax(0, 1fr)', placeItems: 'center', padding: 24 }}
     >
       <div
         ref={panel}
@@ -279,7 +279,7 @@ function ChangesModal({ files, diff, truncated, onClose }: { files: Review['file
         aria-label={strings.gate.changesTitle}
         tabIndex={-1}
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(1100px, 100%)', height: 'min(86vh, 100%)', display: 'flex', flexDirection: 'column', background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: '0 30px 80px rgba(0,0,0,0.6)', outline: 'none', color: '#e6e9ef' }}
+        style={{ width: 'min(1100px, 100%)', height: 'min(86vh, calc(100vh - 48px))', minHeight: 0, display: 'flex', flexDirection: 'column', background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: '0 30px 80px rgba(0,0,0,0.6)', outline: 'none', color: '#e6e9ef' }}
       >
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${theme.border}` }}>
           <div style={{ display: 'grid', gap: 2 }}>

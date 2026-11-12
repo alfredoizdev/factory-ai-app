@@ -25,7 +25,8 @@ export const SNAP_ROOT = join(process.cwd(), '.factory', 'snapshots')
 export const SHOTS = ['before-desktop', 'after-desktop', 'before-mobile', 'after-mobile'] as const
 export type Shot = (typeof SHOTS)[number]
 export type SnapshotState = {
-  status: 'none' | 'working' | 'ready' | 'failed'
+  /** unneeded: the change cannot alter how the site looks (tests, settings, notes), so no pictures are taken. */
+  status: 'none' | 'working' | 'ready' | 'failed' | 'unneeded'
   /** The page photographed, such as "/". */
   route: string | null
   shots: Shot[]
@@ -78,6 +79,23 @@ export function routeFor(files: readonly string[]): string {
   return '/'
 }
 
+// Files that never change what a visitor sees: tests, notes, tooling settings and the list of installed packages.
+const UNSEEN = [
+  /(^|\/)(__tests__|__mocks__|tests?|e2e|cypress|playwright|docs?|\.github|\.husky|\.vscode)\//,
+  /\.(test|spec|stories)\.[cm]?[jt]sx?$/,
+  /\.(md|mdx|txt|snap|lock)$/i,
+  /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|bun\.lockb?|tsconfig[^/]*\.json|\.[^/]+)$/,
+  /(^|\/)(vitest|jest|playwright|cypress|eslint|prettier|commitlint|lint-staged)\.config\.[cm]?[jt]s$/,
+  /(^|\/)(vitest|jest)\.setup\.[cm]?[jt]sx?$/,
+]
+const TEST_FILE = /(^|\/)__tests__\/|\.(test|spec)\.[cm]?[jt]sx?$/
+/** Whether a change can alter how the site looks. Unknown (no files) counts as yes. A page counts whatever its folder is called. */
+export function changesTheLook(files: readonly string[]): boolean {
+  if (files.length === 0) return true
+  return files.some(f => (/(^|\/)(app|pages)\//.test(f) && !TEST_FILE.test(f)) || !UNSEEN.some(re => re.test(f)))
+}
+const UNNEEDED: SnapshotState = { status: 'unneeded', route: null, shots: [], message: null }
+
 const fileOf = (runId: string, shot: Shot, root = SNAP_ROOT) => join(root, runId, `${shot}.png`)
 /** A picture's bytes, by its fixed name only: from this computer when it took it, otherwise from R2. */
 export async function readSnapshot(runId: string, shot: string, root = SNAP_ROOT): Promise<Uint8Array | null> {
@@ -99,6 +117,7 @@ const working: Map<string, string> = ((globalThis as { __factorySnapshots?: Map<
 export async function snapshotState(runId: string): Promise<SnapshotState> {
   const now = working.get(runId)
   if (now !== undefined) return { status: 'working', route: null, shots: [], message: now }
+  if (!changesTheLook(await changedFiles(runId))) return UNNEEDED
   const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.snapshots'))).orderBy(desc(events.sequence)))[0]
   if (!row) return { status: 'none', route: null, shots: [], message: null }
   const p = JSON.parse(row.payloadJson) as { route: string | null; shots: Shot[]; message: string | null; change: string }
@@ -125,8 +144,10 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
   const from = run.deliveryBase ?? run.baseCommit
   if (!repo || !from) throw new SnapshotError(strings.snapshots.noWorkingCopy)
 
+  const files = await changedFiles(runId)
+  if (!changesTheLook(files)) return UNNEEDED
   const change = (await changeHash(runId))
-  const route = routeFor((await changedFiles(runId)))
+  const route = routeFor(files)
   const dir = join(root, runId)
   const beforeTree = join(dir, 'before-tree')
   const beforeKey = `${runId}:before`

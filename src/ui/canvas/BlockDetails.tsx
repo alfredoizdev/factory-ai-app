@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { BlockCommand, BlockDetails } from '@/engine/block-details'
-import type { Shot } from '@/engine/snapshots'
+import type { Shot, SnapshotState } from '@/engine/snapshots'
 import type { BlockKind } from '@/domain/graph'
 import type { NodeState } from '@/domain/states'
 import { strings } from '@/ui/strings'
@@ -165,9 +165,18 @@ function Command({ c }: { c: BlockCommand }) {
 /** The page before and after the change, on a computer and on a phone, all four at once. */
 function Pictures({ runId }: { runId: string }) {
   const { state } = useSnapshots(runId, false)
+  // A change nobody can see (tests, settings) has no before and after: the section is left out.
+  if (!state || state.status === 'unneeded') return null
+  return (
+    <Section title={d.pictures} help={d.picturesHelp}>
+      <PicturesBody runId={runId} state={state} />
+    </Section>
+  )
+}
+
+function PicturesBody({ runId, state }: { runId: string; state: SnapshotState }) {
   const [screen, setScreen] = useState<'desktop' | 'mobile'>('desktop')
   const [large, setLarge] = useState<Shot | null>(null)
-  if (!state) return null
   if (state.status === 'working') {
     return (
       <span role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, color: theme.dim }}>
@@ -355,11 +364,7 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, onClose }:
                 )}
               </Section>
 
-              {showsPictures && (
-                <Section title={d.pictures} help={d.picturesHelp}>
-                  <Pictures runId={runId} />
-                </Section>
-              )}
+              {showsPictures && <Pictures runId={runId} />}
 
               {details.jobs.length > 0 && (
                 <Section title={d.jobs(details.jobs.length)}>

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { BlockCard } from '@/ui/canvas/BlockCard'
 import { BlockDetailsDialog, howLong } from '@/ui/canvas/BlockDetails'
 import { strings } from '@/ui/strings'
@@ -65,4 +65,16 @@ test('the Ship details show the page before and after, on a computer or on a pho
   expect(screen.queryByTestId('large-picture')).toBeNull()
   expect(screen.getByTestId('block-details')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: new RegExp(strings.details.seeOnGithub(1).replace(/[()#]/g, '.')) })).toHaveAttribute('href', 'https://github.com/me/p/pull/1')
+})
+
+test('a change nobody can see has no before and after section', async () => {
+  const asked = vi.fn(async (url: string) => {
+    if (url.endsWith('/snapshots')) return new Response(JSON.stringify({ status: 'unneeded', route: null, shots: [], message: null }))
+    return new Response(JSON.stringify({ ...details, blockId: 'human', label: 'Human check', kind: 'human', state: 'waiting_approval', jobs: [], commands: [], steps: [] }))
+  })
+  vi.stubGlobal('fetch', asked)
+  render(<BlockDetailsDialog runId="r1" blockId="human" label="Human check" view={{ state: 'waiting_approval', summary: 'Stopped.', summaryIsClaim: false }} pr={null} onClose={() => {}} />)
+  expect(await screen.findByTestId('details-summary')).toHaveTextContent('Stopped.')
+  await waitFor(() => expect(asked.mock.calls.some(c => String(c[0]).endsWith('/snapshots'))).toBe(true))
+  expect(screen.queryByText(strings.details.pictures)).toBeNull()
 })
