@@ -417,10 +417,16 @@ export function Canvas({
   const focusId = hasRun
     ? (focusOverride ?? autoFocus(ordered.map(b => ({ id: b.id, state: runById.get(b.id)?.state ?? null }))))
     : null
-  // Two kinds of block never collapse, because a spine has nowhere to say what is wrong with them: one
-  // carrying a validation message, and one the run does not contain at all.
+  // Some blocks never collapse. Two because a spine has nowhere to say what is wrong with them: one carrying a
+  // validation message, and one the run does not contain at all. And the block where the work is right now
+  // (running, or waiting for the person) stays open even while another card is being read, so it is always
+  // plain where the task stands.
+  const activeNow = (id: string) => {
+    const state = runById.get(id)?.state
+    return state === 'running' || state === 'waiting_approval'
+  }
   const mustStayFull = new Set(
-    ordered.filter(b => issuesFor(b.id).length > 0 || (hasRun && draftIds.has(b.id) && !inRun(b))).map(b => b.id),
+    ordered.filter(b => issuesFor(b.id).length > 0 || (hasRun && ((draftIds.has(b.id) && !inRun(b)) || activeNow(b.id)))).map(b => b.id),
   )
   const layout = hasRun ? fisheyeLayout(ordered, focusId, mustStayFull) : null
   useEffect(() => {
