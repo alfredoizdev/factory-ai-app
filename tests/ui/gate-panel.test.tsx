@@ -283,7 +283,7 @@ test('done: a saved change in a project with no GitHub repository says so up fro
   render(<Card mode="done" />)
   const notice = await screen.findByTestId('not-connected')
   expect(notice).toHaveTextContent(strings.delivery.notConnected.title)
-  expect(notice).toHaveTextContent(strings.delivery.notConnected.command)
+  expect(notice).toHaveTextContent(strings.delivery.connect.create)
   expect(screen.getByTestId('next-step')).toHaveTextContent(strings.delivery.nowConnect)
   expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.pushOnly) })).toBeNull()
 
@@ -295,5 +295,37 @@ test('done: a saved change in a project with no GitHub repository says so up fro
   state = { ...state, hasRemote: true }
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.notConnected.again) }))
   await waitFor(() => expect(screen.queryByTestId('not-connected')).toBeNull())
+  expect(screen.getByTestId('next-step')).toHaveTextContent(strings.delivery.nowSend)
+})
+
+test('done: a project with no GitHub repository is connected from the card, by creating one or pasting a link', async () => {
+  let state: Record<string, unknown> = { ...approved, kept: true, commit: '1234567abc', files: ['src/app/page.tsx'], here: true, hasRemote: false }
+  const asked: unknown[] = []
+  let refuse: string | null = 'That does not look like a GitHub link.'
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/ship')) return new Response(JSON.stringify({ pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null, onHold: false }))
+    if (url.endsWith('/connect-github')) {
+      asked.push(JSON.parse(String(init?.body)))
+      if (refuse) return new Response(JSON.stringify({ error: refuse }), { status: 400 })
+      state = { ...state, hasRemote: true }
+      return new Response(JSON.stringify({ url: 'https://github.com/me/p' }))
+    }
+    if (url.endsWith('/delivery')) return new Response(JSON.stringify(state))
+    return new Response('{}')
+  }))
+  render(<Card mode="done" />)
+  await screen.findByTestId('not-connected')
+
+  // A link that is refused: the reason is said, and the notice stays.
+  fireEvent.change(screen.getByLabelText(strings.delivery.connect.or), { target: { value: 'nope' } })
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.connect.use) }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('That does not look like a GitHub link.')
+  expect(asked).toEqual([{ url: 'nope' }])
+
+  // Creating one: asked for, and once connected the usual next step is back.
+  refuse = null
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.delivery.connect.create) }))
+  await waitFor(() => expect(screen.queryByTestId('not-connected')).toBeNull())
+  expect(asked[1]).toEqual({ create: true })
   expect(screen.getByTestId('next-step')).toHaveTextContent(strings.delivery.nowSend)
 })

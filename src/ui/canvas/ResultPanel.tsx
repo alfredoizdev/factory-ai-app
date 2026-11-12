@@ -81,6 +81,25 @@ export function ResultSection({
     }
   }
 
+  // Connecting from the app: a new private repository, or one the person already has, by its link.
+  const [connecting, setConnecting] = useState<'create' | 'url' | null>(null)
+  const [connectError, setConnectError] = useState<string | null>(null)
+  const [link, setLink] = useState('')
+  async function connect(how: { create: true } | { url: string }) {
+    setConnecting('create' in how ? 'create' : 'url')
+    setConnectError(null)
+    try {
+      const res = await fetch(`/api/runs/${runId}/connect-github`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(how) })
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) return setConnectError(body?.error ?? d.connect.failed(''))
+      await recheckRemote()
+    } catch {
+      setConnectError(d.connect.failed(''))
+    } finally {
+      setConnecting(null)
+    }
+  }
+
   useEffect(() => {
     let live = true
     fetch(`/api/runs/${runId}/delivery`)
@@ -237,10 +256,38 @@ export function ResultSection({
               <div data-testid="not-connected" style={{ display: 'grid', gap: 8, padding: 12, borderRadius: 10, border: `1px solid ${theme.waiting}`, background: 'rgba(245, 158, 11, 0.07)', fontSize: 12.5, lineHeight: 1.45 }}>
                 <strong style={{ fontSize: 13.5, color: '#e6e9ef' }}>{d.notConnected.title}</strong>
                 <span style={{ color: '#c9d0db' }}>{d.notConnected.text}</span>
-                <span style={{ color: theme.dim }}>{d.notConnected.how}</span>
-                <code style={{ padding: '7px 9px', borderRadius: 6, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, color: '#d6dce6', overflowWrap: 'anywhere', userSelect: 'all' }}>{d.notConnected.command}</code>
-                <span style={{ color: theme.dim }}>{d.notConnected.what}</span>
-                <button type="button" disabled={rechecking} onClick={() => void recheckRemote()} style={primaryButton(rechecking ? 'push' : null)}>
+                <button type="button" disabled={connecting !== null} onClick={() => void connect({ create: true })} style={primaryButton(connecting)}>
+                  {connecting === 'create' ? <WorkingSpinner blockId="connect" size={16} /> : null} {d.connect.create}
+                </button>
+                <span style={{ color: theme.dim }}>{d.connect.createHelp}</span>
+                <label htmlFor="github-link" style={{ marginTop: 6, color: '#e6e9ef', fontWeight: 600 }}>
+                  {d.connect.or}
+                </label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    id="github-link"
+                    value={link}
+                    onChange={e => setLink(e.target.value)}
+                    placeholder={d.connect.placeholder}
+                    spellCheck={false}
+                    style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0b0e14', color: '#e6e9ef', fontSize: 12.5 }}
+                  />
+                  <button type="button" disabled={connecting !== null || link.trim() === ''} onClick={() => void connect({ url: link })} style={{ ...secondaryButton(connecting), flex: 'none', opacity: link.trim() === '' ? 0.5 : 1 }}>
+                    {connecting === 'url' ? <WorkingSpinner blockId="connect-url" size={16} /> : null} {d.connect.use}
+                  </button>
+                </div>
+                <span style={{ color: theme.dim }}>{d.connect.useHelp}</span>
+                {connecting && (
+                  <span role="status" style={{ color: '#cfe0ff' }}>
+                    {d.connect.working}
+                  </span>
+                )}
+                {connectError && (
+                  <span role="alert" style={{ color: theme.failed }}>
+                    {connectError}
+                  </span>
+                )}
+                <button type="button" disabled={rechecking} onClick={() => void recheckRemote()} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: theme.dim, textDecoration: 'underline', fontSize: 12.5, cursor: rechecking ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   {rechecking ? <WorkingSpinner blockId="recheck" size={16} /> : null} {d.notConnected.again}
                 </button>
                 {stillNotConnected && !rechecking && (
