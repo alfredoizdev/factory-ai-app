@@ -17,7 +17,7 @@ beforeAll(() => migrateDb())
 const now = () => new Date().toISOString()
 
 /** A run whose human block is running, as when the review has something to ask. */
-async function runningRun(): Promise<{ projectId: string; runId: string; nodeRunId: string }> {
+async function runningRun(blockId = 'human'): Promise<{ projectId: string; runId: string; nodeRunId: string }> {
   const projectId = ulid()
   const workflowId = ulid()
   await db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: now() })
@@ -26,7 +26,7 @@ async function runningRun(): Promise<{ projectId: string; runId: string; nodeRun
   await publishVersion(workflowId)
   const { runId } = await createRun({ workflowId, request: 'r' })
   await db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
-  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === 'human')!
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === blockId)!
   await db.update(nodeRuns).set({ state: 'running' }).where(eq(nodeRuns.id, node.id))
   return { projectId, runId, nodeRunId: node.id }
 }
@@ -426,5 +426,69 @@ describe('an answer about a file', () => {
     const { projectId, q } = await aboutFile('src/rounding/round.ts')
     await answerQuestion(q.id, { option: LEAVE }, deps)
     expect(await entries(projectId)).toHaveLength(0)
+  })
+})
+
+describe('the planner\'s question', () => {
+  const signIn = [
+    { id: 'a', label: 'Use username', means: 'A new field.' },
+    { id: 'b', label: 'Keep email', means: 'As today.' },
+  ]
+  const planAsk = (over: Partial<Parameters<typeof askPerson>[2]> = {}) => ({
+    findingId: null, kind: 'plan' as const, text: 'Which sign-in?', why: 'It changes sign-in.', options: signIn, recommended: null, touches: [], paths: ['src/auth/'], ...over,
+  })
+
+  test('a second plan question on the node, after the first was answered and taken, is a new row', async () => {
+    const { runId, nodeRunId } = await runningRun('plan')
+    const first = await askPerson(runId, nodeRunId, planAsk())
+    expect(first.kind).toBe('plan')
+    await answerQuestion(first.id, { option: 'a' }, deps)
+    await consumeAnswer(first.id)
+    const second = await askPerson(runId, nodeRunId, planAsk({ text: 'Which page?' }))
+    expect(second.id).not.toBe(first.id)
+    expect(second.state).toBe('open')
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(2)
+    expect(await status(runId)).toBe('waiting_approval')
+  })
+
+  test('one answered but not taken yet is returned as it is, as any question is', async () => {
+    const { runId, nodeRunId } = await runningRun('plan')
+    const first = await askPerson(runId, nodeRunId, planAsk())
+    await answerQuestion(first.id, { option: 'a' }, deps)
+    const again = await askPerson(runId, nodeRunId, planAsk())
+    expect(again).toMatchObject({ id: first.id, state: 'answered' })
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(1)
+  })
+
+  test('its paths are kept on the row', async () => {
+    const { runId, nodeRunId } = await runningRun('plan')
+    const q = await askPerson(runId, nodeRunId, planAsk())
+    expect(JSON.parse((await db.select().from(questions).where(eq(questions.id, q.id)))[0]!.paths!)).toEqual(['src/auth/'])
+  })
+
+  test('the decision says it was the planner\'s question, the label chosen and the person\'s words', () => {
+    const q: Question = {
+      id: 'q', runId: 'r', nodeRunId: 'n', findingId: null, kind: 'plan', text: 'Which sign-in?', why: '', detail: null,
+      options: [...signIn, { id: LEAVE, label: strings.plan.leaveLabel, means: strings.plan.leaveMeans }], recommended: null, touches: [],
+      state: 'answered', answerOption: 'a', answerText: 'keep email for old accounts', actor: 'x', answeredAt: now(),
+    }
+    expect(decisionText(q)).toBe(strings.question.decision({ about: strings.question.about('plan', undefined, 'Which sign-in?'), choice: 'you chose “Use username”', words: 'keep email for old accounts' }))
+    expect(strings.question.about('plan', undefined, 'Which sign-in?')).toBe('About the planner\'s question “Which sign-in?”')
+    expect(decisionText({ ...q, answerText: null })).toBeNull()
+  })
+
+  test('the register entry made from the answer has the question\'s paths', async () => {
+    const { projectId, runId, nodeRunId } = await runningRun('plan')
+    const q = await askPerson(runId, nodeRunId, planAsk())
+    await answerQuestion(q.id, { option: 'a', text: 'keep email for old accounts' }, deps)
+    const [decision] = await entries(projectId)
+    expect(JSON.parse(decision!.paths!)).toEqual(['src/auth/'])
+    expect(decision!.text).toContain('Use username')
+  })
+
+  test('a question of another kind keeps no paths', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const q = await askPerson(runId, nodeRunId, ask())
+    expect((await db.select().from(questions).where(eq(questions.id, q.id)))[0]!.paths).toBeNull()
   })
 })

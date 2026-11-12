@@ -1,0 +1,3 @@
+DROP INDEX "questions_asked_once";--> statement-breakpoint
+CREATE UNIQUE INDEX "questions_plan_open_once" ON "questions" USING btree ("run_id","node_run_id") WHERE "questions"."kind" = 'plan' and "questions"."consumed_at" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "questions_asked_once" ON "questions" USING btree ("run_id","node_run_id","kind",coalesce("finding_id", '')) WHERE "questions"."kind" <> 'plan';

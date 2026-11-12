@@ -330,7 +330,9 @@ export const questions = pgTable(
   t => [
     index('questions_run_idx').on(t.runId),
     // One question per thing asked: a repeated step finds it instead of asking again.
-    uniqueIndex('questions_asked_once').on(t.runId, t.nodeRunId, t.kind, sql`coalesce(${t.findingId}, '')`),
+    uniqueIndex('questions_asked_once').on(t.runId, t.nodeRunId, t.kind, sql`coalesce(${t.findingId}, '')`).where(sql`${t.kind} <> 'plan'`),
+    // The planner may ask again on its node once its last answer was taken, so only one not yet taken is allowed there.
+    uniqueIndex('questions_plan_open_once').on(t.runId, t.nodeRunId).where(sql`${t.kind} = 'plan' and ${t.consumedAt} is null`),
   ],
 )
 

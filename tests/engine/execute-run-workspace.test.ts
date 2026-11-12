@@ -5,10 +5,14 @@ import { dirname, join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
-import { claims, evidence, nodeRuns, projects, runs, usageRecords, workflows } from '@/db/schema'
+import { claims, evidence, nodeRuns, projects, questions, runs, usageRecords, workflows } from '@/db/schema'
+import type { AskMode } from '@/domain/ask-mode'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
-import { orchestrateRun, type ExecutorDeps, type StepApi } from '@/engine/inngest/execute-run'
+import { MAX_REPLANS, modeOf, orchestrateRun, type ExecutorDeps, type Plan, type StepApi } from '@/engine/inngest/execute-run'
+import { PLAN_DECIDED, QUESTION_ANSWERED } from '@/engine/inngest/client'
+import { decidePlan, type Job, type PlanQuestion } from '@/engine/plan'
+import { answerQuestion, openQuestion, type Question } from '@/engine/questions'
 import { recordDecision } from '@/engine/approvals'
 import { addEntry } from '@/engine/register'
 import { depthOf } from '@/engine/inngest/review-stage'
@@ -654,4 +658,288 @@ test('a copy whose lockfile matches the prepared base gets its dependencies by c
   }
   expect(installed).toBe(false)
   expect((await payloadOf(runId, 'node.step', 'build')).map(p => p.text)[0]).toBe(strings.run.copiedFromBase(1))
+})
+
+// ---- the plan, measured, and the project's ask mode ----------------------------------------------------------------
+
+describe('the plan follows the project\'s ask mode', () => {
+  /** A project made the way the app makes one, on a real folder with one commit, and a task in it. */
+  async function projectRun(opts: { askMode?: AskMode; stopForMe?: boolean } = {}): Promise<{ runId: string; projectId: string }> {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-ask-'))
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    execFileSync('git', ['-c', 'user.email=t@e.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'base'], { cwd: dir })
+    const { projectId, workflowId } = await createProject({ path: dir, name: 'Shop', testCommand: 'npm test', checks: [], ...(opts.askMode ? { askMode: opts.askMode } : {}) })
+    const { runId } = await createRun({ workflowId, request: 'add a footer', ...(opts.stopForMe ? { stopForMe: true } : {}) })
+    await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))
+    return { runId, projectId }
+  }
+
+  const footer: Job[] = [{ title: 'Add the footer', done: ['shows the year'], paths: ['src/ui/footer/Footer.tsx'] }]
+  const login: Job[] = [{ title: 'Change sign-in', done: [], paths: ['src/auth/login.ts'] }]
+  const question: PlanQuestion = { text: 'Which sign-in?', why: '', paths: ['src/ui/footer/'], options: [{ id: 'a', label: 'Use username', means: 'A new field.' }, { id: 'b', label: 'Keep email', means: 'As today.' }] }
+
+  type Planned = { jobs: Job[]; question?: PlanQuestion | 'unreadable' }
+  /** The planner gives these answers in turn (the last one again once they run out); every other block passes. */
+  function planner(answers: Planned[]): AgentProvider & { notes: (string | undefined)[]; built: (Job[] | undefined)[] } {
+    const notes: (string | undefined)[] = []
+    const built: (Job[] | undefined)[] = []
+    let i = 0
+    return {
+      id: 'files', isDemo: false, needsWorkspace: true, notes, built,
+      async *execute(input) {
+        if (input.blockKind === 'plan') {
+          notes.push(input.revisionNote)
+          const a = answers[Math.min(i++, answers.length - 1)]!
+          yield { type: 'done', summary: strings.plan.proposed(a.jobs.length), source: 'provider', plan: a.jobs, ...(a.question ? { planQuestion: a.question } : {}) }
+          return
+        }
+        if (input.blockKind === 'build') built.push(input.jobs)
+        if (input.blockKind === 'review') {
+          yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+          return
+        }
+        yield { type: 'done', summary: 'ok', source: 'system' }
+      },
+    }
+  }
+
+  /** Steps that remember their ids; a wait is answered by `on`, or parks the run when it has nothing to say. */
+  function recordingStep(on: (event: string) => Promise<boolean> = async () => false): StepApi & { ids: string[]; waits: string[] } {
+    const ids: string[] = []
+    const waits: string[] = []
+    return {
+      ids, waits,
+      run: async (id, fn) => (ids.push(id), JSON.parse(JSON.stringify((await fn()) ?? null))),
+      waitForEvent: async (id, opts) => {
+        waits.push(id)
+        if (!(await on(opts.event))) throw new Parked()
+        return { data: {} }
+      },
+    }
+  }
+
+  async function go(runId: string, provider: AgentProvider, s: StepApi, worktree: ExecutorDeps['createWorktree'] = (_repo, id) => ({ path: `/wt/${id}`, branch: `factory/${id}`, baseCommit: 'abc' })) {
+    try {
+      await orchestrateRun(runId, s, { resolveProvider: () => provider, createWorktree: worktree })
+    } catch (e) {
+      if (!(e instanceof Parked)) throw e
+    }
+  }
+  const measured = (runId: string) => payloadOf(runId, 'node.plan_measured', 'plan')
+  const planWaited = async (runId: string) => (await payloadOf(runId, 'run.waiting_approval')).filter(p => p.blockId === 'plan')
+
+  test('a simple plan starts on its own in "only what matters"', async () => {
+    const { runId } = await projectRun()
+    const provider = planner([{ jobs: footer }])
+    await go(runId, provider, recordingStep())
+    expect((await node(runId, 'plan')).state).toBe('passed')
+    expect(await payloadOf(runId, 'node.completed', 'plan')).toEqual([{ blockId: 'plan', summary: strings.plan.startedOnItsOwn, summarySource: 'system', autoStarted: true }])
+    const [m] = await measured(runId)
+    expect(m).toMatchObject({ simple: true, entries: ['src/ui/footer/Footer.tsx'], mode: 'what_matters', stopForMe: false })
+    expect(await planWaited(runId)).toEqual([])
+    expect(await payloadOf(runId, 'node.plan_proposed', 'plan')).toEqual([])
+    expect(provider.built).toEqual([footer])
+    // The plan the person did not have to check is still on the record, measured first.
+    const types = (await eventsSince(runId, 0)).filter(e => e.type === 'node.plan_measured' || e.type === 'node.planned').map(e => e.type)
+    expect(types).toEqual(['node.plan_measured', 'node.planned'])
+  })
+
+  test('the same plan stops in "ask me about everything", and says why first', async () => {
+    const { runId } = await projectRun({ askMode: 'everything' })
+    await go(runId, planner([{ jobs: footer }]), recordingStep())
+    expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+    const [m] = await measured(runId)
+    expect(m!.simple).toBe(true)
+    expect((m!.reasons as string[])[0]).toBe(strings.plan.reasons.everything)
+    expect((m!.reasons as string[])[1]).toBe(strings.plan.reasons.simple(1))
+    expect(await planWaited(runId)).toHaveLength(1)
+  })
+
+  test('the same plan stops when the person asked the app to stop for them on this task', async () => {
+    const { runId } = await projectRun({ stopForMe: true })
+    await go(runId, planner([{ jobs: footer }]), recordingStep())
+    expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+    const [m] = await measured(runId)
+    expect(m).toMatchObject({ simple: true, stopForMe: true })
+    expect((m!.reasons as string[])[0]).toBe(strings.plan.reasons.stopForMe)
+  })
+
+  test('the same plan stops in "small changes skip my final check"', async () => {
+    const { runId } = await projectRun({ askMode: 'small_changes' })
+    await go(runId, planner([{ jobs: footer }]), recordingStep())
+    expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+    expect(((await measured(runId))[0]!.reasons as string[])[0]).toBe(strings.plan.reasons.smallChanges)
+  })
+
+  test('a sensitive plan stops and says why', async () => {
+    const { runId } = await projectRun()
+    await go(runId, planner([{ jobs: login }]), recordingStep())
+    expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+    const [m] = await measured(runId)
+    expect(m!.simple).toBe(false)
+    expect((m!.reasons as string[])[0]).toBe(strings.plan.reasons.sensitive(strings.risk.areas.auth))
+  })
+
+  test('a plan the planner gave no paths for stops, as a plan whose files are not known', async () => {
+    const { runId } = await projectRun()
+    await go(runId, planner([{ jobs: [{ title: 'Add the footer', done: [] }] }]), recordingStep())
+    expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+    expect(((await measured(runId))[0]!.reasons as string[])[0]).toBe(strings.plan.reasons.noPaths)
+  })
+
+  test('every new plan is measured again', async () => {
+    const { runId } = await projectRun()
+    const s = recordingStep(async event => {
+      if (event !== PLAN_DECIDED) return false
+      await decidePlan(runId, { action: 'replan', note: 'leave sign-in alone' })
+      return true
+    })
+    const provider = planner([{ jobs: login }, { jobs: footer }])
+    await go(runId, provider, s)
+    expect(provider.notes).toEqual([undefined, 'leave sign-in alone'])
+    expect((await measured(runId)).map(m => m.simple)).toEqual([false, true])
+    expect((await node(runId, 'plan')).state).toBe('passed')
+    expect((await payloadOf(runId, 'node.completed', 'plan')).at(-1)).toMatchObject({ autoStarted: true })
+    // The second plan is its own step, on the id the plan loop gives it.
+    expect(s.ids).toContain('node-plan-plan1')
+    expect(s.waits[0]).toBe('plan-decided-plan-0')
+    expect(provider.built).toEqual([footer])
+  })
+
+  test('the planner\'s question is asked, and the answer goes to the next plan', async () => {
+    const { runId } = await projectRun()
+    let asked: Question | null = null
+    const s = recordingStep(async event => {
+      if (event !== QUESTION_ANSWERED) return false
+      asked = await openQuestion(runId)
+      expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('waiting_approval')
+      await answerQuestion(asked!.id, { option: 'a' }, { send: async () => undefined })
+      return true
+    })
+    const provider = planner([{ jobs: footer, question }, { jobs: footer }])
+    await go(runId, provider, s)
+    expect(asked).toMatchObject({ kind: 'plan', findingId: null, text: question.text, why: strings.plan.questionWhy })
+    expect(asked!.options.map(o => o.id)).toEqual(['a', 'b', 'leave'])
+    expect(asked!.options.at(-1)).toEqual({ id: 'leave', label: strings.plan.leaveLabel, means: strings.plan.leaveMeans })
+    expect(await payloadOf(runId, 'node.question_asked', 'plan')).toMatchObject([{ kind: 'plan', questionId: asked!.id }])
+    const planned = (await eventsSince(runId, 0)).filter(e => ['node.planned', 'node.question_asked'].includes(e.type)).map(e => e.type)
+    expect(planned.slice(0, 2)).toEqual(['node.planned', 'node.question_asked'])
+    expect(provider.notes).toEqual([undefined, strings.providers.claude.answerNote(question.text, 'Use username', null)])
+    // Taken once, and the next plan, with no question and simple, starts on its own.
+    expect((await db.select().from(questions).where(eq(questions.id, asked!.id)))[0]!.consumedAt).not.toBeNull()
+    expect((await node(runId, 'plan')).state).toBe('passed')
+    expect((await payloadOf(runId, 'node.completed', 'plan')).at(-1)).toMatchObject({ autoStarted: true })
+    expect(s.ids).toContain('ask-plan-plan')
+    expect(s.ids).toContain('node-plan-plan1')
+    expect(s.waits[0]).toBe(`question-plan-${asked!.id}-0`)
+    expect(provider.built).toEqual([footer])
+  })
+
+  test('leaving the planner\'s question to it says so in the note', async () => {
+    const { runId } = await projectRun()
+    const s = recordingStep(async event => {
+      if (event !== QUESTION_ANSWERED) return false
+      await answerQuestion((await openQuestion(runId))!.id, { option: 'leave', text: 'whatever is simplest' }, { send: async () => undefined })
+      return true
+    })
+    const provider = planner([{ jobs: footer, question }, { jobs: footer }])
+    await go(runId, provider, s)
+    expect(provider.notes[1]).toBe(strings.providers.claude.answerNote(question.text, null, 'whatever is simplest'))
+  })
+
+  test('a question on the last plan allowed is not asked: the plan stops and says the planner needs the person', async () => {
+    const { runId } = await projectRun()
+    const s = recordingStep(async event => {
+      if (event !== QUESTION_ANSWERED) return false
+      await answerQuestion((await openQuestion(runId))!.id, { option: 'b' }, { send: async () => undefined })
+      return true
+    })
+    const provider = planner([{ jobs: footer, question }])
+    await go(runId, provider, s)
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(MAX_REPLANS)
+    expect(provider.notes).toHaveLength(MAX_REPLANS + 1)
+    expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+    expect(await openQuestion(runId)).toBeNull()
+    expect(((await measured(runId)).at(-1)!.reasons as string[])[0]).toBe(strings.plan.reasons.asks)
+  })
+
+  test('a question that could not be read stops the plan', async () => {
+    const { runId } = await projectRun()
+    await go(runId, planner([{ jobs: footer, question: 'unreadable' }]), recordingStep())
+    expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(0)
+    expect(((await measured(runId))[0]!.reasons as string[])[0]).toBe(strings.plan.reasons.questionUnreadable)
+  })
+
+  test('a planner answer with no usable plan is not measured: Build works from the request, as before', async () => {
+    const { runId } = await projectRun()
+    const provider = filesProvider({ plan: [{ type: 'done', summary: strings.plan.unreadable, source: 'system' }] })
+    await go(runId, provider, recordingStep())
+    expect((await node(runId, 'plan')).state).toBe('passed')
+    expect(await measured(runId)).toEqual([])
+    expect(await payloadOf(runId, 'node.completed', 'plan')).toMatchObject([{ summary: strings.plan.unreadable }])
+  })
+
+  describe('the final check follows the mode', () => {
+    const change = () => realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' })
+    const passes = async (opts: { askMode?: AskMode; stopForMe?: boolean }) => {
+      const { runId } = await projectRun(opts)
+      await go(runId, withTests(), recordingStep(), change())
+      return runId
+    }
+
+    test('a low-risk change passes on its own in "only what matters" and in "small changes"', async () => {
+      for (const askMode of ['what_matters', 'small_changes'] as const) {
+        const runId = await passes({ askMode })
+        expect((await node(runId, 'human')).state).toBe('passed')
+        expect(await payloadOf(runId, 'node.completed', 'human')).toMatchObject([{ summary: strings.risk.passedLow, autoApproved: true }])
+      }
+    })
+
+    test('it stops in "everything", and with "stop for me"', async () => {
+      for (const opts of [{ askMode: 'everything' as const }, { askMode: 'what_matters' as const, stopForMe: true }]) {
+        const runId = await passes(opts)
+        expect((await node(runId, 'human')).state).toBe('waiting_approval')
+        expect(await payloadOf(runId, 'node.assessed', 'human')).toMatchObject([{ level: 'low' }])
+      }
+    })
+
+    test('a run already in flight keeps its old setting', async () => {
+      expect(modeOf({ autoApproveLowRisk: true } as Plan)).toEqual({ mode: 'small_changes', stopForMe: false })
+      expect(modeOf({ autoApproveLowRisk: false } as Plan)).toEqual({ mode: 'everything', stopForMe: false })
+      expect(modeOf({ autoApproveLowRisk: false, askMode: 'what_matters', stopForMe: true } as Plan)).toEqual({ mode: 'what_matters', stopForMe: true })
+      // Its plan was read before the mode existed: the old switch decides, whatever the project says now.
+      const { runId } = await projectRun({ askMode: 'everything' })
+      const s = recordingStep()
+      const run = s.run
+      s.run = async (id, fn) => {
+        const out = await run(id, fn)
+        if (id !== 'plan') return out
+        const old: Partial<Plan> = { ...(out as Plan), autoApproveLowRisk: true }
+        delete old.askMode
+        delete old.stopForMe
+        return old as typeof out
+      }
+      await go(runId, withTests(), s, change())
+      expect((await node(runId, 'human')).state).toBe('passed')
+    })
+  })
+
+  describe('parked runs resume on the ids they parked on', () => {
+    test('a plan waiting for the person waits on plan-decided-plan-0', async () => {
+      const { runId } = await projectRun({ askMode: 'everything' })
+      const s = recordingStep()
+      await go(runId, planner([{ jobs: footer }]), s)
+      expect(s.waits).toEqual(['plan-decided-plan-0'])
+      expect(s.ids).toContain('node-plan')
+    })
+
+    test('a final check waiting for the person waits on approval-human', async () => {
+      const { runId } = await projectRun({ askMode: 'everything' })
+      const s = recordingStep()
+      await go(runId, withTests(), s, realWorktree({ 'src/app/page.tsx': 'x\n' }))
+      expect(s.waits).toEqual(['approval-human'])
+      expect(s.ids).toEqual(expect.arrayContaining(['assess-human', 'node-human']))
+    })
+  })
 })

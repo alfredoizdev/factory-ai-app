@@ -428,17 +428,21 @@ export const strings = {
     // The decision the project keeps when the person answered in their own words: what it was about, in the app's words,
     // what they chose, and their words. A choice with no words of their own is kept with the problem only.
     decision: (o: { about: string; choice: string | null; words: string }) => `${o.about}${o.choice ? `: ${o.choice}.` : '.'} In your words: ${o.words}`,
-    about: (kind: 'finding' | 'fix_held', f?: { type: 'logic' | 'security' | 'effect'; file?: string }) => {
+    about: (kind: 'finding' | 'fix_held' | 'plan', f?: { type: 'logic' | 'security' | 'effect'; file?: string }, planText?: string) => {
+      if (kind === 'plan') return `About the planner's question \u201c${planText}\u201d`
       const where = f?.file ? ` in ${f.file}` : ''
       if (kind === 'fix_held') return `About a fix${where} that changed an important part of the project`
       const what = f ? { logic: 'a problem with what the change does', security: 'a safety problem', effect: 'a problem with what else the change affects' }[f.type] : 'a problem the reviewers reported'
       return `About ${what}${where}`
     },
     // What they chose, said in full; null when they answered in their own words only.
-    chose: (kind: 'finding' | 'fix_held', option: string) =>
-      kind === 'fix_held'
-        ? ({ keep: 'you chose to keep the fix', undo: 'you chose to undo the fix', leave: 'you were not sure, so the fix was undone' } as Record<string, string>)[option] ?? null
-        : ({ fix: 'you chose to have it fixed', leave: 'you chose to leave it as it is' } as Record<string, string>)[option] ?? null,
+    // For the planner's question the options are its own, so the choice is said by its label.
+    chose: (kind: 'finding' | 'fix_held' | 'plan', option: string, label?: string) =>
+      kind === 'plan'
+        ? (label ? `you chose \u201c${label}\u201d` : null)
+        : kind === 'fix_held'
+          ? ({ keep: 'you chose to keep the fix', undo: 'you chose to undo the fix', leave: 'you were not sure, so the fix was undone' } as Record<string, string>)[option] ?? null
+          : ({ fix: 'you chose to have it fixed', leave: 'you chose to leave it as it is' } as Record<string, string>)[option] ?? null,
   },
   history: {
     title: 'Past tasks',
@@ -916,7 +920,17 @@ export const strings = {
     jobStep: (n: number, title: string) => `${n}. ${title}`,
     model: (model: string) => `Planned with ${model}.`,
     notPickedUp: 'The run has not picked this up yet. If it stays like this, check that the Inngest dev server is running.',
+    startedOnItsOwn: 'Simple change, so it started on its own.',
+    seePlan: 'See the plan',
+    // The planner's own question, asked in the question window before it plans again.
+    questionWhy: 'The planner needs this decided before it can plan the work.',
+    leaveLabel: 'Let the planner choose',
+    leaveMeans: 'The planner picks what it thinks is best, and the plan is checked like any other.',
     reasons: {
+      // Put first when the project's setting (or the task's own box) says every plan is checked with the person.
+      everything: 'You chose to be asked about every plan.',
+      smallChanges: 'This project still checks every plan with you.',
+      stopForMe: 'You asked the app to stop for you on this task.',
       asks: 'The planner needs you to decide something.',
       questionUnreadable: 'The planner wanted to ask you something, but its question could not be read.',
       noPaths: 'The planner did not say which files it expects to change.',
@@ -1226,6 +1240,9 @@ export const strings = {
           'Do not commit, push or create branches. Leave the changes in the working tree.',
           'When you are done, reply with one plain sentence saying what you changed.',
         ].join('\n'),
+      // The person's answer to the planner's question, handed to the planner as the note for its next plan.
+      answerNote: (q: string, chose: string | null, words: string | null) =>
+        `The person answered your question "${q}": ${chose ? `they chose "${chose}".` : 'they left it to you.'}${words ? ` In their words: ${words}` : ''} Plan the work with that.`,
       notFound: 'The claude command was not found on this computer.',
       badModel: (model: string) => `"${model.slice(0, 40)}" is not a model name, so the agent was not started. Fix it in the block's settings.`,
       noWorkdir: 'This run has no working copy, so the agent was not started.',

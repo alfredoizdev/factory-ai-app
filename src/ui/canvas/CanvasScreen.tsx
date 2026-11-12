@@ -358,8 +358,9 @@ export function CanvasScreen({
   // The run waits on the person at its plan, or at the human check: the card shows the one it waits at.
   // The change a person decides on is shown in the Human check window; the side card keeps the decision.
   const humanBlock = run?.blocks.find(b => b.kind === 'human')
-  const planWaiting = !!run && run.blocks.some(b => b.kind === 'plan' && views[b.id]?.state === 'waiting_approval')
-  // A question from the review is the person's to answer, in the same place; it is not the human check.
+  // A plan node that waits on the planner's question waits on an answer, not on the plan: the question card shows it.
+  const planWaiting = !!run && run.blocks.some(b => b.kind === 'plan' && views[b.id]?.state === 'waiting_approval' && views[b.id]?.asking !== true)
+  // A question from the review (or from the planner) is the person's to answer, in the same place; it is not the human check.
   const reviewRan = !!run && run.providerId !== DEMO_PROVIDER_ID && run.blocks.some(b => b.kind === 'review' && b.enabled && views[b.id]?.state === 'passed')
   const mode: CardMode =
     run && runStatus === 'waiting_approval' && planWaiting

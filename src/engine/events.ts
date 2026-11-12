@@ -45,6 +45,9 @@ export type NodeEventType =
   | 'node.plan_proposed'
   | 'node.planned'
   | 'node.plan_decided'
+  // The planner's own plan, measured from the files it expects to change, before it waits or starts on its own: whether
+  // it is simple, why (the setting's reason first when the setting stops every plan), what it named, and the setting.
+  | 'node.plan_measured'
   // Reviewers' findings were checked against the code (counts only); a finding reached its end; a question was asked
   // of the person, and answered.
   | 'node.findings_checked'
