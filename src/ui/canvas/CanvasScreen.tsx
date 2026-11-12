@@ -19,7 +19,7 @@ import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner, type NodeRunView } from './BlockCard'
 import { CommandCard, type CardMode } from './CommandCard'
-import { recordMark, useReviewRecord } from './useReviewRecord'
+import { askedIdOf, recordMark, useReviewRecord } from './useReviewRecord'
 import { imagesBusy, readyImageIds, type ComposerImage } from './Composer'
 import { Canvas, RUN_INPUT_ID } from './Canvas'
 import { BlockDetailsDialog } from './BlockDetails'
@@ -182,7 +182,8 @@ export function CanvasScreen({
   // What was asked, each on the card of the step it was asked at. Read again when something new is asked or decided.
   const prompts = usePrompts(runIdNow, `${events.filter(e => e.type === 'node.reopened' || e.type === 'node.plan_decided').length}-${runStatus ?? ''}`)
   // The problems the reviewers reported and the question the run waits on: read again when the run's events say they changed.
-  const { record, failed: recordFailed, reload: reloadRecord } = useReviewRecord(runIdNow, recordMark(events))
+  const mark = recordMark(events)
+  const { record, readMark, failed: recordFailed, reload: reloadRecord } = useReviewRecord(runIdNow, mark)
   const withAsked = (base: Record<string, NodeRunView>): Record<string, NodeRunView> => {
     if (!run || prompts.length === 0) return base
     const out = { ...base }
@@ -678,6 +679,9 @@ export function CanvasScreen({
           onSeeChanges={humanBlock ? () => setDetailsOf(humanBlock.id) : undefined}
           record={record}
           recordFailed={recordFailed}
+          recordMark={mark}
+          recordReadMark={readMark}
+          askedId={askedIdOf(events)}
           onRecordChanged={reloadRecord}
           showFindings={reviewRan}
         />

@@ -190,8 +190,29 @@ export function QuestionPanel({
 }
 
 /** The question card of a run: the panel, with the answer sent to the run and the record read again if it is refused. */
-export function QuestionSection({ runId, record, failed = false, onChanged }: { runId: string; record: ReviewRecord | null; failed?: boolean; onChanged: () => void }) {
-  const question = record?.question ?? null
+export function QuestionSection({
+  runId,
+  record,
+  failed = false,
+  mark = 0,
+  readMark = 0,
+  askedId = null,
+  onChanged,
+}: {
+  runId: string
+  record: ReviewRecord | null
+  failed?: boolean
+  /** The latest event that changes the record, and the one the shown record was read for. */
+  mark?: number
+  readMark?: number
+  /** The question the events say is open. */
+  askedId?: string | null
+  onChanged: () => void
+}) {
+  // A record read before the latest event may be out of date: it is neither shown for a question it does not know, nor
+  // taken as proof that nothing is waiting.
+  const stale = readMark < mark
+  const question = record?.question && !(stale && askedId !== null && record.question.id !== askedId) ? record.question : null
   // The question last shown, and the sentence the server last refused with, stay until a read succeeds with something else.
   const [shown, setShown] = useState<Question | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
@@ -208,8 +229,8 @@ export function QuestionSection({ runId, record, failed = false, onChanged }: { 
     </div>
   )
   if (!question) {
-    if (record) {
-      // Read, and nothing is waiting any more: say so, with the server's own sentence when there was one.
+    if (record && !stale && !failed) {
+      // Read after the latest event, and nothing is waiting any more: say so, with the server's own sentence when there was one.
       return (
         <div role="status" style={{ fontSize: 13.5, fontWeight: 600, color: theme.dim, lineHeight: 1.45 }}>
           {refusal ?? strings.question.closed}

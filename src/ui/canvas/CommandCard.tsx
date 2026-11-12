@@ -73,11 +73,15 @@ export const CommandCard = forwardRef<
     record?: ReviewRecord | null
     /** The record could not be read the last time it was tried. */
     recordFailed?: boolean
+    /** The latest event that changes the record, the one the record was read for, and the question the events say is open. */
+    recordMark?: number
+    recordReadMark?: number
+    askedId?: string | null
     onRecordChanged?: () => void
     /** The reviewers ran on this task: the human check lists what they found. */
     showFindings?: boolean
   }
->(function CommandCard({ onSeeChanges, record = null, recordFailed = false, onRecordChanged, showFindings = false, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
+>(function CommandCard({ onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : mode === 'failed' ? strings.failure.label : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : mode === 'failed' ? strings.failure.placeholder : strings.run.requestPlaceholder
@@ -176,7 +180,7 @@ export const CommandCard = forwardRef<
         </div>
       )}
       {!loading && mode === 'plan' && runId && <PlanSection away={away} runId={runId} note={text} composer={withSend} onSent={onSent} />}
-      {!loading && mode === 'question' && runId && <QuestionSection runId={runId} record={record} failed={recordFailed} onChanged={() => onRecordChanged?.()} />}
+      {!loading && mode === 'question' && runId && <QuestionSection runId={runId} record={record} failed={recordFailed} mark={recordMark} readMark={recordReadMark} askedId={askedId} onChanged={() => onRecordChanged?.()} />}
       {!loading && mode === 'waiting' && runId && (
         <GateSection findings={showFindings ? record?.findings : undefined} touched={record?.touched} away={away} runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} onSeeChanges={onSeeChanges} />
       )}

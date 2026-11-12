@@ -18,12 +18,25 @@ export function recordMark(events: readonly Wire[]): number {
   return 0
 }
 
+/** The question the events say is open: the latest one asked and not answered since. Null when none is. */
+export function askedIdOf(events: readonly Wire[]): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!
+    if (e.type === 'node.question_answered') return null
+    if (e.type === 'node.question_asked') {
+      const id = (e.payload as Record<string, unknown> | null)?.questionId
+      return typeof id === 'string' ? id : null
+    }
+  }
+  return null
+}
+
 /**
  * Reads the record when the run is opened and each time `mark` moves; `reload` reads it now (after an answer was refused,
  * or for "Try again"). A read that fails keeps what was read before and sets `failed` until a read works.
  */
-export function useReviewRecord(runId: string | null, mark: number): { record: ReviewRecord | null; failed: boolean; reload: () => void } {
-  const [held, setHeld] = useState<{ runId: string; record: ReviewRecord } | null>(null)
+export function useReviewRecord(runId: string | null, mark: number): { record: ReviewRecord | null; /** The mark the shown read started at: only a read that started after the latest event may say nothing is waiting. */ readMark: number; failed: boolean; reload: () => void } {
+  const [held, setHeld] = useState<{ runId: string; record: ReviewRecord; mark: number } | null>(null)
   const [failedFor, setFailedFor] = useState<string | null>(null)
   const [again, setAgain] = useState(0)
   useEffect(() => {
@@ -33,7 +46,7 @@ export function useReviewRecord(runId: string | null, mark: number): { record: R
       .then(r => (r.ok ? (r.json() as Promise<ReviewRecord>) : Promise.reject(new Error(String(r.status)))))
       .then(body => {
         if (!live) return
-        setHeld({ runId, record: body })
+        setHeld({ runId, record: body, mark })
         setFailedFor(null)
       })
       .catch(() => live && setFailedFor(runId))
@@ -43,5 +56,5 @@ export function useReviewRecord(runId: string | null, mark: number): { record: R
   }, [runId, mark, again])
   const reload = useCallback(() => setAgain(n => n + 1), [])
   // What was read for another run is never shown for this one.
-  return { record: held && held.runId === runId ? held.record : null, failed: failedFor === runId, reload }
+  return { record: held && held.runId === runId ? held.record : null, readMark: held && held.runId === runId ? held.mark : -1, failed: failedFor === runId, reload }
 }

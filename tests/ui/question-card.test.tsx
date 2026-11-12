@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { CommandCard } from '@/ui/canvas/CommandCard'
-import { recordMark, useReviewRecord, type ReviewRecord } from '@/ui/canvas/useReviewRecord'
+import { askedIdOf, recordMark, useReviewRecord, type ReviewRecord } from '@/ui/canvas/useReviewRecord'
 import type { Wire } from '@/ui/canvas/useRunStream'
 import type { Question } from '@/engine/questions'
 import type { FindingView } from '@/engine/finding-view'
@@ -161,4 +161,55 @@ test('a register number in a risk reason on the human check shows the decision\'
   await screen.findByText(strings.gate.noFiles)
   expect(document.body.textContent).toContain('We use Stripe')
   expect(document.body.textContent).not.toMatch(/D-07\)/)
+})
+
+describe('the card never says nothing is waiting before it has looked', () => {
+  const empty: ReviewRecord = { findings: [], question: null, touched: [] }
+  const busy = () => document.querySelector('[aria-busy="true"]')
+
+  test('(a) a record read before the latest event is not a reason to say nothing is waiting: a skeleton', () => {
+    render(card({ record: empty, recordMark: 5, recordReadMark: 3, askedId: 'q2' }))
+    expect(screen.queryByText(strings.question.closed)).toBeNull()
+    expect(busy()).not.toBeNull()
+  })
+
+  test('(b) the same with a read that failed: the sentence and Try again; a retry that works shows the panel', () => {
+    const again = vi.fn()
+    const { rerender } = render(card({ record: empty, recordMark: 5, recordReadMark: 3, askedId: 'q1', recordFailed: true, onRecordChanged: again }))
+    expect(screen.queryByText(strings.question.closed)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: strings.question.tryAgain }))
+    expect(again).toHaveBeenCalledTimes(1)
+    rerender(card({ record, recordMark: 5, recordReadMark: 5, askedId: 'q1', recordFailed: false, onRecordChanged: again }))
+    expect(screen.getByText(question.text)).toBeInTheDocument()
+    expect(screen.queryByText(strings.question.loadFailed)).toBeNull()
+  })
+
+  test('(c) a read that has caught up with the events and finds no question says so', () => {
+    render(card({ record: empty, recordMark: 5, recordReadMark: 5, askedId: null }))
+    expect(screen.getByText(strings.question.closed)).toBeInTheDocument()
+  })
+
+  test('(d) a second question: the first one is not shown for it, and no closing line comes in between', () => {
+    const second: Question = { ...question, id: 'q2', text: 'The second question?' }
+    const { rerender } = render(card({ record, recordMark: 4, recordReadMark: 4, askedId: 'q1' }))
+    expect(screen.getByText(question.text)).toBeInTheDocument()
+    rerender(card({ record, recordMark: 9, recordReadMark: 4, askedId: 'q2' }))
+    expect(screen.queryByText(question.text)).toBeNull()
+    expect(screen.queryByText(strings.question.closed)).toBeNull()
+    expect(busy()).not.toBeNull()
+    rerender(card({ record: { ...record, question: second }, recordMark: 9, recordReadMark: 9, askedId: 'q2' }))
+    expect(screen.getByText('The second question?')).toBeInTheDocument()
+  })
+
+  test('the hook reports the mark each read started at, and the question asked last', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(empty))))
+    const { result, rerender } = renderHook(({ m }) => useReviewRecord('r1', m), { initialProps: { m: 3 } })
+    await waitFor(() => expect(result.current.readMark).toBe(3))
+    rerender({ m: 8 })
+    expect(result.current.readMark).toBe(3) // still the old read until the new one arrives
+    await waitFor(() => expect(result.current.readMark).toBe(8))
+    const e = (sequence: number, type: Wire['type'], payload: Record<string, unknown> = {}): Wire => ({ sequence, type, payload })
+    expect(askedIdOf([e(1, 'node.question_asked', { questionId: 'q1' }), e(2, 'node.question_answered', { questionId: 'q1' }), e(3, 'node.question_asked', { questionId: 'q2' })])).toBe('q2')
+    expect(askedIdOf([e(1, 'node.question_asked', { questionId: 'q1' }), e(2, 'node.question_answered', { questionId: 'q1' })])).toBeNull()
+  })
 })
