@@ -17,6 +17,8 @@ export type TestFacts = {
   testsChanged: boolean
   /** A reviewer's last word was that something must still be fixed. */
   reviewOpen?: boolean
+  /** In the latest review, a reviewer's answer could not be read: that part of the review is missing. */
+  reviewUnreadable?: boolean
 }
 export type RiskAssessment = { level: 'low' | 'high'; reasons: string[]; files: string[]; linesChanged: number }
 
@@ -67,6 +69,7 @@ export function classifyChange(files: readonly ChangedFile[], tests: TestFacts, 
   else if (!tests.testsPassed) reasons.push(strings.risk.testsFailed)
   if (tests.testsChanged) reasons.push(strings.risk.testsChanged)
   if (tests.reviewOpen) reasons.push(strings.risk.reviewOpen)
+  if (tests.reviewUnreadable) reasons.push(strings.risk.reviewUnreadable)
   const level = reasons.length === 0 ? 'low' : 'high'
   return { level, reasons: level === 'low' ? [strings.risk.lowBecause(files.length, linesChanged)] : reasons, files: files.map(f => f.path), linesChanged }
 }

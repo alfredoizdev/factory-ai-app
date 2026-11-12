@@ -657,7 +657,20 @@ export async function testFactsOf(runId: string): Promise<TestFacts> {
     // Unknown (null) counts as changed: what could not be checked is not assumed untouched.
     testsChanged: runsOfTests.some(t => t.changedTestFiles === null || (t.changedTestFiles?.length ?? 0) > 0),
     reviewOpen: distinctProblems(await findingsOf(runId)).some(needsPerson),
+    reviewUnreadable: (await unreadableInLatestReview(runId)) > 0,
   }
+}
+
+/** How many readers gave no verdict in the latest finished pass of each Review block (read from its closing event). */
+export async function unreadableInLatestReview(runId: string): Promise<number> {
+  const latest = new Map<string, { sequence: number; unreadable: number }>()
+  for (const e of await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'node.completed')))) {
+    const p = JSON.parse(e.payloadJson) as { blockId?: unknown; unreadable?: unknown }
+    if (typeof p.blockId !== 'string' || typeof p.unreadable !== 'number') continue
+    const seen = latest.get(p.blockId)
+    if (!seen || e.sequence > seen.sequence) latest.set(p.blockId, { sequence: e.sequence, unreadable: p.unreadable })
+  }
+  return [...latest.values()].reduce((n, v) => n + v.unreadable, 0)
 }
 
 async function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): Promise<RiskAssessment | null> {
@@ -705,13 +718,16 @@ async function sumUpReviews(runId: string, block: PlannedBlock): Promise<Outcome
   const grouped = problemGroups(await findingsOf(runId))
   const endings = grouped.map(endingOf)
   const count = (e: Ending) => endings.filter(x => x === e).length
-  const summary = !(await anyReviewRan(runId))
-    ? strings.review.approve.none
+  const unreadable = await unreadableInLatestReview(runId)
+  const said = !(await anyReviewRan(runId))
+    ? unreadable > 0 ? strings.review.approve.noneReadable : strings.review.approve.none
     : endings.length === 0
       ? strings.review.approve.clean
       : grouped.every(notReal)
         ? strings.review.approve.noneWasReal(grouped.length)
         : strings.review.approve.summary({ found: endings.length, fixed: count('fixed'), discarded: count('set_aside'), needsYou: count('needs_you') })
+  // A reader that gave no verdict is said here too, so a "no problems" never stands for a review that is incomplete.
+  const summary = unreadable > 0 && (await anyReviewRan(runId)) ? `${strings.review.someUnreadable(unreadable)} ${said}` : said
   return withTx(runId, async (tx): Promise<Outcome> => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node) return { outcome: 'cancelled' }

@@ -36,6 +36,8 @@ export type NodeEventType =
   // The measured risk of a run's change, recorded on the human check before it opens or stops.
   | 'node.assessed'
   | 'node.reviewed'
+  // A reviewer answered, but not in the form asked for: it gave no verdict, and that is on the record (with its focus).
+  | 'node.review_unreadable'
   // A person asked for changes: the block goes back to queued for another round, with their note.
   | 'node.reopened'
   // The plan: the planner proposed one and the run waits on the person (plan_proposed); the jobs as they stand, by

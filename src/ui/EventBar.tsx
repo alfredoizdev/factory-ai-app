@@ -113,7 +113,7 @@ export function EventBar({ event, block, onPoint }: { event: Wire; block: Block;
 }
 
 /** Events kept for a developer reading the run later, never for the person. */
-const FOR_DEVELOPERS: ReadonlySet<string> = new Set(['node.finding_checked'])
+const FOR_DEVELOPERS: ReadonlySet<string> = new Set(['node.finding_checked', 'node.review_unreadable'])
 
 /** The list of lines. Events whose block the run does not contain are left out: a line must name a real block. */
 export function EventBarList({ events, blocks, onPoint }: { events: readonly Wire[]; blocks: readonly Block[]; onPoint: (blockId: string) => void }) {

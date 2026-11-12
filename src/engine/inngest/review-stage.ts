@@ -72,7 +72,7 @@ type Context = {
   reviewSince: string | null
 }
 
-type Reading = { review: Review | null } | { outcome: 'cancelled' | 'failed' | 'passed' | 'skipped' | 'parked' } | { failed: ReturnType<typeof describeFailure> & { messageSource: 'provider' | 'system'; attempt: number } }
+type Reading = { review: Review | null; unreadable?: true } | { outcome: 'cancelled' | 'failed' | 'passed' | 'skipped' | 'parked' } | { failed: ReturnType<typeof describeFailure> & { messageSource: 'provider' | 'system'; attempt: number } }
 
 const SUMMARY_MAX = 600
 
@@ -96,6 +96,8 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
   if (ctx.reviewSince && !since) await step.run(id(`review-since-said-${block.id}`), () => sayOnCard(ctx, opened.nodeId, strings.review.sinceUnreadable))
 
   const found: { focus: Focus; finding: Finding }[] = []
+  // Readers that answered without a verdict: never counted as having found nothing.
+  let unreadable = 0
   for (const focus of focuses) {
     const reading = await step.run(id(`review-${block.id}-${focus}`), () => readFor(ctx, opened.nodeId, focus, sinceForReaders))
     if ('outcome' in reading) return none(reading.outcome)
@@ -104,6 +106,7 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
       const outcome = await step.run(id(`review-fail-${block.id}`), () => failReview(runId, opened.nodeId, reading.failed))
       return none(outcome)
     }
+    if (reading.unreadable) unreadable++
     // One problem cited two ways ("./a.ts", the full path) is one problem: paths are read as the project names them first.
     for (const finding of reading.review?.findings ?? []) found.push({ focus, finding: finding.file !== undefined && workspace.workdir ? { ...finding, file: citedPath(workspace.workdir, finding.file) } : finding })
   }
@@ -163,8 +166,10 @@ export async function runReviewStage(ctx: Context): Promise<StageResult> {
     if (fixAs && workspace.workdir) releaseAttempts(workspace.workdir, row.id, ctx.deps.snapshotStore ? { store: ctx.deps.snapshotStore } : {})
   }
 
-  const summary = real > 0 ? strings.review.problems(real) : rows.length > 0 ? strings.review.noneWasReal(rows.length) : strings.review.noProblems
-  const outcome = await step.run(id(`review-close-${block.id}`), () => closeReview(runId, opened.nodeId, summary))
+  // "Found no problems" is said only when every reader gave a verdict; a missing part of the review is always said.
+  const what = real > 0 ? strings.review.problems(real) : rows.length > 0 ? strings.review.noneWasReal(rows.length) : unreadable === 0 ? strings.review.noProblems : null
+  const summary = [what, unreadable > 0 ? strings.review.someUnreadable(unreadable) : null].filter((s): s is string => s !== null).join(' ')
+  const outcome = await step.run(id(`review-close-${block.id}`), () => closeReview(runId, opened.nodeId, summary, unreadable))
   return none(outcome, fixed)
 }
 
@@ -584,8 +589,12 @@ async function readFor(ctx: Context, nodeId: string, focus: Focus, since: { path
         await recordDoneFacts(tx, node, result)
         if (result.review) {
           await appendEventSync({ runId, nodeRunId: node.id, type: 'node.reviewed', payload: { blockId: block.id, focus, verdict: result.review.verdict, findings: result.review.findings } }, tx)
+          return { review: result.review }
         }
-        return { review: result.review ?? null }
+        // An answer without a verdict is said on the card and kept on the record: this reader's part of the review is missing.
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: strings.review.unreadable } }, tx)
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.review_unreadable', payload: { blockId: block.id, focus } }, tx)
+        return { review: null, unreadable: true }
       })
     }
     const failure = describeFailure(result, block)
@@ -609,12 +618,13 @@ async function failReview(runId: string, nodeId: string, f: Extract<Reading, { f
   })
 }
 
-async function closeReview(runId: string, nodeId: string, summary: string): Promise<Outcome['outcome']> {
+/** `unreadable`: how many readers gave no verdict in this pass; the gate and Approve read it from the closing event. */
+async function closeReview(runId: string, nodeId: string, summary: string, unreadable: number): Promise<Outcome['outcome']> {
   return withTx(runId, async tx => {
     const node = await freshNode(nodeId, tx)
     const settled = outcomeOf(node.state)
     if (settled) return settled
     if (!canTransition(node.state as NodeState, 'passed')) return 'cancelled'
-    return (await transitionNode(tx, node, 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary })) ? 'passed' : 'cancelled'
+    return (await transitionNode(tx, node, 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system', unreadable } }, { summary })) ? 'passed' : 'cancelled'
   })
 }

@@ -185,6 +185,35 @@ describe('how many reviewers read the change', () => {
   })
 })
 
+describe('a reviewer whose answer could not be read', () => {
+  const unreadable: AgentEvent[] = [{ type: 'done', summary: strings.review.unreadable, source: 'system' }]
+
+  test('is said on the card, logged, and never counted as having found nothing', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(false)
+    const { provider } = reviewers(focus => (focus === 'logic' ? says() : unreadable))
+    await drive(runId, provider, dir, base)
+    const steps = (await payloads(runId, 'node.step', 'review')).map(p => p.text)
+    expect(steps.filter(t => t === strings.review.unreadable)).toHaveLength(2)
+    expect((await payloads(runId, 'node.review_unreadable', 'review')).map(p => p.focus)).toEqual(['security', 'effects'])
+    const review = await node(runId, 'review')
+    expect(review.summary).not.toBe(strings.review.noProblems)
+    expect(review.summary).toContain(strings.review.someUnreadable(2))
+    const approve = (await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary as string
+    expect(approve).toContain(strings.review.someUnreadable(2))
+    expect(approve).not.toBe(strings.review.approve.clean)
+  })
+
+  test('when no answer could be read, Approve does not say the review was clean', async () => {
+    const runId = await newRun()
+    const { dir, base } = workdir(true)
+    const { provider } = reviewers(() => unreadable)
+    await drive(runId, provider, dir, base)
+    const approve = (await payloads(runId, 'node.completed', 'approve')).at(-1)!.summary as string
+    expect(approve).toBe(strings.review.approve.noneReadable)
+  })
+})
+
 describe('what the reviewers found', () => {
   test('a line two reviewers reported is one finding, and the builder is not run again for it', async () => {
     const runId = await newRun()

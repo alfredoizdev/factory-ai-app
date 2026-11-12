@@ -59,7 +59,9 @@ function filesProvider(
     calls,
     async *execute(input) {
       calls.push({ kind: input.blockKind, workdir: input.workdir, testCommand: input.testCommand, baseCommit: input.baseCommit, revisionNote: input.revisionNote })
-      for (const ev of script[input.blockKind] ?? [{ type: 'done', summary: 'ok', source: 'system' }]) yield ev
+      // A reviewer that is not scripted answers as a real one does when it finds nothing: with a verdict.
+      const fallback: AgentEvent[] = input.blockKind === 'review' ? [{ type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }] : [{ type: 'done', summary: 'ok', source: 'system' }]
+      for (const ev of script[input.blockKind] ?? fallback) yield ev
     },
   }
 }
@@ -265,6 +267,19 @@ test('a change inside a core area the person marked stops for them even with the
   expect(assessed!.reasons).toEqual(['src/app/page.tsx is inside src/app/, which you marked as a core area.'])
 })
 
+test('a reviewer whose answer could not be read holds the human check for the person, and says so', async () => {
+  const runId = await newRun({ repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: true })
+  const provider = filesProvider({
+    tests: [{ type: 'evidence', kind: 'test_run', data: passingTests }, { type: 'done', summary: 'x', source: 'system' }],
+    review: [{ type: 'done', summary: strings.review.unreadable, source: 'system' }],
+  })
+  await drive(runId, provider, realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
+  expect((await node(runId, 'human')).state).toBe('waiting_approval')
+  const [assessed] = await payloadOf(runId, 'node.assessed', 'human')
+  expect(assessed!.level).toBe('high')
+  expect(assessed!.reasons).toContain(strings.risk.reviewUnreadable)
+})
+
 test('with no tests run, nothing is low risk, even a one-line change', async () => {
   const runId = await newRun({ repoPath: '/repo', testCommand: null, autoApproveLowRisk: true })
   await drive(runId, filesProvider({}), realWorktree({ 'src/app/page.tsx': 'one\nTWO\n' }))
@@ -341,6 +356,10 @@ test('a failing test in round 1 does not count against round 2 once it passes', 
         // Round 1 passes but changes a test (so the gate stops); round 2 passes cleanly.
         const data = testRuns === 1 ? { ...passingTests, changedTestFiles: ['test/a.test.ts'] } : passingTests
         yield { type: 'evidence', kind: 'test_run', data }
+      }
+      if (input.blockKind === 'review') {
+        yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+        return
       }
       yield { type: 'done', summary: 'ok', source: 'system' }
     },

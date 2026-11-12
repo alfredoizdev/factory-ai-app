@@ -231,6 +231,9 @@ export const strings = {
     checking: (n: number, of: number) => `Checking problem ${n} of ${of}.`,
     fixing: 'Fixing it.',
     unreadable: 'The reviewer answered, but not in the form asked for, so its review was not used as a verdict.',
+    // Said with the card's closing sentence, and on Approve: a reader that gave no verdict is never counted as finding nothing.
+    someUnreadable: (n: number) =>
+      n === 1 ? "One reviewer's answer could not be read, so its part of the review is missing." : `${n} reviewers' answers could not be read, so their part of the review is missing.`,
     reviewerChangedFiles: 'The reviewer changed files in the copy, which a reviewer must never do. Its review was not used.',
     model: (model: string, buildModel: string) => `Reviewing with ${model}, a different model from Build's ${buildModel}.`,
     approve: {
@@ -238,6 +241,7 @@ export const strings = {
       // Every report was looked at and none was a real problem.
       noneWasReal: (n: number) => `The reviewers sent ${n} ${n === 1 ? 'report' : 'reports'}. None was a real problem. The final yes is yours.`,
       none: 'No review ran, so there is nothing to sum up. The final yes is yours.',
+      noneReadable: "No reviewer's answer could be read, so the change was not reviewed. The final yes is yours.",
       // "3 problems found. 2 fixed, 1 needs you." Parts that are zero are left out.
       summary: (n: { found: number; fixed: number; discarded: number; needsYou: number }) => {
         const parts = [
@@ -578,6 +582,7 @@ export const strings = {
     testsFailed: 'The tests did not pass.',
     testsChanged: 'It changed its own tests.',
     reviewOpen: 'the reviewer still had problems it wanted fixed',
+    reviewUnreadable: "A reviewer's answer could not be read, so the review is not complete.",
     nothingChanged: 'It changed no files.',
     unreadable: 'What it changed could not be read, so it is treated as high risk.',
     lowBecause: (files: number, lines: number) =>
