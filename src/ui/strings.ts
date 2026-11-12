@@ -11,11 +11,15 @@ const fenced = (lines: readonly string[]): string[] => [
   REPORT_END,
 ]
 
-/** A reason as a full sentence: a capital first letter and a full stop (reasons stored before they were sentences included). */
+/**
+ * A reason as a full sentence: a capital first letter and a full stop (reasons stored before they were sentences
+ * included). A sentence that starts with a file name or path (src/app/page.tsx, package.json) keeps it exactly as it is.
+ */
 export const asSentence = (text: string): string => {
   const t = text.trim()
   if (!t) return t
-  const capital = t[0]!.toUpperCase() + t.slice(1)
+  const first = t.split(/\s/, 1)[0]!.replace(/[,;:.!?…]+$/, '')
+  const capital = /^[\p{L}'’-]+$/u.test(first) ? t[0]!.toUpperCase() + t.slice(1) : t
   return /[.!?…]$/.test(capital) ? capital : `${capital}.`
 }
 

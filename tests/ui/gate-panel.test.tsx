@@ -383,3 +383,16 @@ test('each reason is a line of its own and a full sentence, even one stored befo
   const lines = await screen.findAllByTestId('risk-reason')
   expect(lines.map(l => l.textContent)).toEqual(['It changes package.json.', 'The reviewer still had problems it wanted fixed.'])
 })
+
+test('a reason that starts with a file path keeps the path exactly as it is', async () => {
+  vi.stubGlobal('fetch', routes())
+  const reasons = ['src/app/page.tsx and 1 other file are inside src/app/, which you marked as a core area.', 'package.json is a file you marked as a core area.', '.env is a file you marked as a core area', 'the reviewer still had problems it wanted fixed']
+  render(<Card risk={{ level: 'high', reasons }} />)
+  const lines = await screen.findAllByTestId('risk-reason')
+  expect(lines.map(l => l.textContent)).toEqual([
+    'src/app/page.tsx and 1 other file are inside src/app/, which you marked as a core area.',
+    'package.json is a file you marked as a core area.',
+    '.env is a file you marked as a core area.',
+    'The reviewer still had problems it wanted fixed.',
+  ])
+})
