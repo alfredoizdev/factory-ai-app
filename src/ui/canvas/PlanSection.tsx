@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Job } from '@/engine/plan'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
@@ -23,6 +23,7 @@ const toJobs = (drafts: readonly Draft[]): Job[] =>
  * and one button to build it as it stands. The box below asks the planner for a different plan instead.
  */
 export function PlanSection({ runId, note, composer, onSent }: { runId: string; note: string; composer: (send: ComposerSend) => ReactNode; onSent: () => void; away?: { machine: string | null } | null }) {
+  const list = useRef<HTMLOListElement>(null)
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
   const [busy, setBusy] = useState<'build' | 'replan' | null>(null)
   const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null)
@@ -87,7 +88,7 @@ export function PlanSection({ runId, note, composer, onSent }: { runId: string; 
           <Bone height={70} radius={10} />
         </div>
       ) : (
-        <ol data-testid="plan-jobs" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8, maxHeight: 320, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>
+        <ol ref={list} data-testid="plan-jobs" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8, maxHeight: 'min(52vh, 560px)', overflowY: 'auto', paddingRight: 4, scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
           {drafts.map((d, i) => (
             <li key={d.key} style={{ display: 'grid', gap: 6, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118' }}>
               <span aria-hidden="true" style={{ fontSize: 11, color: theme.dim, paddingLeft: 28 }}>
@@ -136,7 +137,15 @@ export function PlanSection({ runId, note, composer, onSent }: { runId: string; 
       {drafts !== null && !locked && (
         <button
           type="button"
-          onClick={() => setDrafts(ds => [...(ds ?? []), { key: `new-${Date.now()}`, title: '', done: '' }])}
+          onClick={() => {
+            setDrafts(ds => [...(ds ?? []), { key: `new-${Date.now()}`, title: '', done: '' }])
+            // The new job is brought into view with the cursor in it: a list that scrolls must not hide what was just added.
+            requestAnimationFrame(() => {
+              const added = list.current?.lastElementChild as HTMLElement | null | undefined
+              added?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+              added?.querySelector('input')?.focus({ preventScroll: true })
+            })
+          }}
           style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 6, border: `1px dashed ${theme.border}`, background: 'transparent', color: '#d6dce6', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}
         >
           <span aria-hidden="true">+</span> {strings.plan.addJob}
