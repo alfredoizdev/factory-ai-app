@@ -6,8 +6,10 @@ import { spawn as nodeSpawn } from 'node:child_process'
 
 async function main() {
   // The engine modules open a database on import. This script never uses it, so it is given the in-memory one the
-  // tests use, and no real database is reached.
-  process.env.VITEST ??= '1'
+  // tests use, and no real database is reached: set always (an empty VITEST would not count), and the real database's
+  // addresses are dropped as well, before anything is imported.
+  process.env.VITEST = '1'
+  for (const k of Object.keys(process.env)) if (k.includes('DATABASE_URL')) delete process.env[k]
   const { readPlannerAnswer } = await import('@/engine/plan')
   const { createClaudeProvider } = await import('@/providers/claude')
   const [repoDir, request] = process.argv.slice(2)
@@ -54,4 +56,11 @@ async function main() {
   console.log(JSON.stringify(received, null, 2))
 }
 
-void main()
+// Ends on its own once the answer is printed: nothing left open (a child, a timer) keeps it running.
+main().then(
+  () => process.exit(0),
+  (e: unknown) => {
+    console.error(e)
+    process.exit(1)
+  },
+)
