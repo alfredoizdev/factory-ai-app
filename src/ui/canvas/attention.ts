@@ -42,7 +42,7 @@ function offerFor(permission: NotificationPermission | null): Offer {
  * Tells the person, outside the page, that a task needs them: the tab's title always, and a browser notice when the
  * tab is hidden and the person allowed it. The permission is only ever asked for from `allow()`, which a click calls.
  */
-export function useAttention({ attention, waitingCount, taskTitle }: { attention: Attention; waitingCount: number; taskTitle: string | null }): { offer: Offer; allow: () => void } {
+export function useAttention({ attention, waitingCount, taskTitle, askKey = null }: { attention: Attention; waitingCount: number; taskTitle: string | null; askKey?: string | null }): { offer: Offer; allow: () => void } {
   // The browser's own answer, read where there is a browser; the server's page says nothing, so both first pages agree.
   const offer = offerFor(useSyncExternalStore(noSubscription, permissionNow, () => null))
   const [, answered] = useState(0)
@@ -58,11 +58,13 @@ export function useAttention({ attention, waitingCount, taskTitle }: { attention
     [],
   )
 
-  const before = useRef<Attention>(null)
+  // What the person was already told about: the task plus what it asks (its mode and question), never twice.
+  const told = useRef(new Set<string>())
   useEffect(() => {
-    const was = before.current
-    before.current = attention
-    if (!attention || attention === was) return
+    if (!attention) return
+    const key = `${attention}|${askKey ?? ''}`
+    if (told.current.has(key)) return
+    told.current.add(key)
     try {
       if (typeof document === 'undefined' || !document.hidden) return
       if (permissionNow() !== 'granted') return
@@ -70,8 +72,8 @@ export function useAttention({ attention, waitingCount, taskTitle }: { attention
     } catch {
       // A browser that refuses to show it: the tab's title still says it.
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- told once per change of the need, not per new title
-  }, [attention])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- told once per need, not per new title
+  }, [attention, askKey])
 
   const allow = useCallback(() => {
     try {

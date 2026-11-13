@@ -59,7 +59,7 @@ export async function passedOnItsOwnAmong(runIds: string[], h: DbHandle = db): P
     if (humanOf.get(versionOf.get(n.runId) ?? '')?.includes(n.blockId)) passed.set(n.id, n.runId)
   }
   if (passed.size === 0) return out
-  for (const e of await h.select().from(events).where(and(inArray(events.runId, ids), eq(events.type, 'node.completed')))) {
+  for (const e of await h.select().from(events).where(and(inArray(events.nodeRunId, [...passed.keys()]), eq(events.type, 'node.completed')))) {
     if (!e.nodeRunId || !passed.has(e.nodeRunId) || approved.has(e.runId)) continue
     try {
       if ((JSON.parse(e.payloadJson) as { autoApproved?: unknown }).autoApproved === true) out.add(e.runId)

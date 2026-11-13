@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react'
 import { attentionOf, tabTitle, useAttention, type Attention } from '@/ui/canvas/attention'
+import { readyToPublish } from '@/ui/canvas/shipReady'
+import type { ShipState } from '@/engine/ship'
 import { strings } from '@/ui/strings'
 
 const name = strings.app.name
@@ -120,5 +122,73 @@ describe('useAttention', () => {
     vi.stubGlobal('Notification', N)
     const { result } = renderHook(() => useAttention(props(null)))
     expect(result.current.offer).toBe('none')
+  })
+})
+
+describe('ready to publish', () => {
+  const ship = (over: Partial<ShipState> = {}, pr: Partial<NonNullable<ShipState['pr']>> | null = {}): ShipState => ({
+    pr: pr === null ? null : { number: 1, url: 'u', state: 'open', conflicts: false, ...pr },
+    checks: [],
+    checksDone: true,
+    checksFailed: false,
+    deploy: [],
+    mergedAt: null,
+    onHold: false,
+    ...over,
+  })
+  test('open, checks done and fine: ready', () => expect(readyToPublish(ship())).toBe(true))
+  test.each([
+    ['conflicts', ship({}, { conflicts: true })],
+    ['on hold', ship({ onHold: true })],
+    ['checks running', ship({ checksDone: false })],
+    ['checks failed', ship({ checksFailed: true })],
+    ['merged', ship({}, { state: 'merged' })],
+    ['closed', ship({}, { state: 'closed' })],
+    ['no pull request', ship({}, null)],
+  ])('%s: not ready', (_n, s) => expect(readyToPublish(s)).toBe(false))
+  test('nothing known: not ready', () => expect(readyToPublish(null)).toBe(false))
+})
+
+describe('telling once per need', () => {
+  const p = (attention: Attention, askKey: string | null) => ({ attention, waitingCount: 1, taskTitle: 'T', askKey })
+  const hook = (init: ReturnType<typeof p>) => renderHook((x: ReturnType<typeof p>) => useAttention(x), { initialProps: init })
+
+  test('another task, or the same task asking something else, tells again; the same need never does', () => {
+    const { made } = stubNotification('granted')
+    hide(true)
+    const { rerender } = hook(p(null, 'r1:working:'))
+    rerender(p('answer', 'r1:question:q1'))
+    expect(made).toHaveLength(1)
+    rerender(p('answer', 'r1:waiting:'))
+    expect(made).toHaveLength(2)
+    rerender(p('answer', 'r2:plan:'))
+    expect(made).toHaveLength(3)
+    rerender(p(null, 'r2:working:'))
+    rerender(p('answer', 'r2:plan:'))
+    expect(made).toHaveLength(3)
+  })
+
+  test('a constructor that throws does not break the page', () => {
+    class N {
+      static permission = 'granted'
+      constructor() {
+        throw new Error('Illegal constructor')
+      }
+    }
+    vi.stubGlobal('Notification', N)
+    hide(true)
+    const { rerender } = hook(p(null, 'a'))
+    expect(() => rerender(p('answer', 'b'))).not.toThrow()
+  })
+
+  test('a dismissed prompt leaves the offer in place', async () => {
+    class N {
+      static permission = 'default'
+      static requestPermission = vi.fn(async () => 'default')
+    }
+    vi.stubGlobal('Notification', N)
+    const { result } = hook(p(null, null))
+    await act(async () => result.current.allow())
+    expect(result.current.offer).toBe('ask')
   })
 })

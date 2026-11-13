@@ -8,6 +8,7 @@ import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
 import { ShipSection } from './ShipSection'
+import { checksPassed } from './shipReady'
 import { CardSkeleton } from './Skeleton'
 import type { ComposerSend } from './Composer'
 
@@ -181,7 +182,7 @@ export function ResultSection({
   if (!delivery?.eligible) return <>{composer()}</>
 
   const kept = delivery.kept && delivery.branch !== null
-  const checksOk = ship?.pr?.state === 'open' && ship.checksDone && !ship.checksFailed && !ship.pr.conflicts
+  const checksOk = checksPassed(ship)
   // One place on one path: Approved → Save → Check → Publish. Each moment shows one main button, its next step.
   // Saved, but the project has no GitHub repository to send it to: said up front, with how to connect it.
   const notConnected = kept && !shipped && !away && delivery.hasRemote === false

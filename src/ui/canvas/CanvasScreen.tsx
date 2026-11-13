@@ -2,6 +2,7 @@
 
 import { PastTasks } from './PastTasks'
 import { attentionOf, useAttention } from './attention'
+import { readyToPublish } from './shipReady'
 import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
 import type { FailureActions } from './FailurePanel'
@@ -388,8 +389,15 @@ export function CanvasScreen({
   // Telling the person when a task needs them: the tab's title, and a notice from the browser if they allowed it.
   // Ready to publish reads the ship state the result card already read; nothing new is asked for.
   const shipState = shipFor && shipFor.runId === runIdNow ? shipFor.state : null
-  const shipReady = !!shipState && shipState.pr?.state === 'open' && shipState.checksDone && !shipState.checksFailed
-  const { offer: noticeOffer, allow: allowNotice } = useAttention({ attention: attentionOf(mode, shipReady), waitingCount, taskTitle: run?.title ?? null })
+  const shipReady = readyToPublish(shipState)
+  const attention = attentionOf(mode, shipReady)
+  const { offer: noticeOffer, allow: allowNotice } = useAttention({
+    attention,
+    // The open task waits for the person even before the list has been read again.
+    waitingCount: Math.max(waitingCount, attention === 'answer' ? 1 : 0),
+    taskTitle: run?.title ?? null,
+    askKey: run ? `${run.runId}:${mode}:${askedIdOf(events) ?? ''}` : null,
+  })
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
