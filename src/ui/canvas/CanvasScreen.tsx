@@ -463,7 +463,17 @@ export function CanvasScreen({
           {layout === 'canvas' ? strings.steps.viewSteps : strings.steps.viewCanvas}
         </button>
         <button type="button" aria-expanded={tasksOpen} onClick={() => setTasksOpen(o => !o)} style={{ ...headerButton, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8, ...place(16) }}>
-          {floating ? `☰ ${strings.history.open}` : strings.history.open}
+          {floating ? (
+            `☰ ${strings.history.open}`
+          ) : (
+            <>
+              {/* Three lines: a list that opens. */}
+              <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                <path d="M5 7h14M5 12h14M5 17h14" />
+              </svg>
+              {strings.history.open}
+            </>
+          )}
           {!floating && (taskCount ?? 0) > 0 && <span style={{ padding: '1px 8px', borderRadius: 999, background: theme.border, fontSize: 12 }}>{taskCount}</span>}
         </button>
       </>
