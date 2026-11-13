@@ -37,6 +37,7 @@ export function ModelsStep({ models, onChange }: { models: StepModels; onChange:
           </label>
         ))}
       </div>
+      <p style={hint}>{w.defaultNote}</p>
       <p style={hint}>{w.testsNote}</p>
     </div>
   )
