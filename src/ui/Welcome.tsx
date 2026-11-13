@@ -56,9 +56,10 @@ export function Welcome() {
     <main style={{ minHeight: '100vh', background: c.bg, color: c.text, fontFamily: sans, padding: 'clamp(28px, 6vw, 64px) clamp(16px, 5vw, 56px) 72px' }}>
       <div style={{ width: 'min(1160px, 100%)', margin: '0 auto', display: 'grid', gap: 'clamp(48px, 8vw, 88px)' }}>
         <section style={{ display: 'grid', gap: 'clamp(28px, 4vw, 48px)' }}>
-          <div style={{ display: 'grid', gap: 22 }}>
-            <p style={{ ...label, color: c.green, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ color: c.text, display: 'flex' }}><Logo size={30} accent={c.green} /></span>
+          <div style={{ display: 'grid', gap: 'clamp(28px, 4vw, 44px)' }}>
+            {/* The brand: the mark and the name, large enough to be the first thing read. */}
+            <p style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 14, fontSize: 30, fontWeight: 800, letterSpacing: '-0.035em', color: c.text }}>
+              <Logo size={56} accent={c.green} />
               {w.eyebrow}
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: '24px 56px', alignItems: 'end' }}>
