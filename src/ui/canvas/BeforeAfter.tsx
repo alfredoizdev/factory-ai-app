@@ -171,7 +171,7 @@ function BeforeAfterModal({ runId, state, at, onClose }: { runId: string; state:
           <div style={{ display: 'grid', gap: 2, flex: 1, minWidth: 0 }}>
             <div className="factory-display" style={{ fontSize: 19 }}>{strings.snapshots.beforeAfter}</div>
             <div style={{ fontSize: 12, color: theme.dim }}>
-              {state.route ? `${strings.snapshots.page(state.route)} · ` : ''}
+              {state.route ? `${strings.snapshots.page(state.route, state.opened)} · ` : ''}
               {strings.snapshots.what}
             </div>
           </div>

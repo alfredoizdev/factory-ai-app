@@ -206,12 +206,14 @@ function Pictures({ runId }: { runId: string }) {
 }
 
 /** The pictures of one task, small: a click opens them large with the computer and phone tabs. None yet: a button takes them. */
-function TaskPictures({ runId, name }: { runId: string; name: string }) {
-  // Taken by themselves the first time the history is opened, so the person finds them there.
-  const { state, take, error } = useSnapshots(runId, true)
+function TaskPictures({ runId, name, done }: { runId: string; name: string; done: boolean }) {
+  // Taken by themselves the first time the history is seen once the task has finished, so the person finds them
+  // there. Not while it works: its files are still changing, and a picture of half a change is of no use.
+  const { state, take, error } = useSnapshots(runId, done)
   const [open, setOpen] = useState(false)
   const [asked, setAsked] = useState(false)
   if (!state) return <Bone width={300} height={96} radius={8} />
+  if (!done && state.status !== 'ready' && state.status !== 'working') return <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyWhenDone}</span>
   if (state.status === 'unneeded') return <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNothingToSee}</span>
   if (state.status === 'working' || (asked && state.status === 'none' && !error)) {
     return (
@@ -284,7 +286,7 @@ function History({ tasks, github }: { tasks: NonNullable<BlockDetails['history']
                 <span style={{ fontSize: 12.5, color: theme.skipped }}>{when(t.at)}</span>
               </div>
               <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.5, color: '#c9d0db', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={t.request}>{t.request}</p>
-              {t.look ? <TaskPictures runId={t.runId} name={t.name} /> : <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNothingToSee}</span>}
+              {t.look ? <TaskPictures runId={t.runId} name={t.name} done={t.done} /> : <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNothingToSee}</span>}
               {t.files.length > 0 && (
                 <div style={{ display: 'grid', gap: 4, fontSize: 12.5 }}>
                   <span style={{ color: brand.quiet, fontWeight: 700 }}>{d.historyFiles(t.files.length)}</span>
@@ -355,7 +357,7 @@ function PicturesBody({ runId, state }: { runId: string; state: SnapshotState })
           </button>
         ))}
         {/* Which page these pictures are of, so nobody takes the home page for the page that changed. */}
-        {state.route && <span data-testid="pictures-page" style={{ alignSelf: 'center', marginLeft: 'auto', fontSize: 13, color: brand.quiet }}>{strings.snapshots.page(state.route)}</span>}
+        {state.route && <span data-testid="pictures-page" style={{ alignSelf: 'center', marginLeft: 'auto', fontSize: 13, color: brand.quiet }}>{strings.snapshots.page(state.route, state.opened)}</span>}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
         {(['before', 'after'] as const).map(side => {

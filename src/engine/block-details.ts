@@ -38,7 +38,7 @@ export type BlockDetails = {
    * Every task of the change this one belongs to, oldest first: the first task and each one that continued from it.
    * On the Human check and Ship blocks, where the person looks back at what was done.
    */
-  history?: { runId: string; name: string; request: string; at: string; here: boolean; files: string[]; look: boolean }[]
+  history?: { runId: string; name: string; request: string; at: string; here: boolean; files: string[]; look: boolean; /** The task has finished its work: its files will not change under a picture any more. */ done: boolean }[]
   /** Where the change stands on GitHub, when it was sent there: the last thing in its history. */
   github?: { branch: string; at: string; pr: { number: number; url: string } | null; published: boolean }
 }
@@ -93,7 +93,7 @@ async function historyOf(run: typeof runs.$inferSelect): Promise<NonNullable<Blo
   const root = rootOf(run)
   return all
     .filter(r => rootOf(r) === root)
-    .map(r => ({ runId: r.id, name: r.title?.trim() || r.request.replace(/\s+/g, ' ').trim().slice(0, 80), request: r.request, at: r.createdAt, here: r.id === run.id, files: ownFiles(r) }))
+    .map(r => ({ runId: r.id, name: r.title?.trim() || r.request.replace(/\s+/g, ' ').trim().slice(0, 80), request: r.request, at: r.createdAt, here: r.id === run.id, files: ownFiles(r), done: r.status === 'completed' }))
     .map(t => ({ ...t, look: changesTheLook(t.files) }))
 }
 

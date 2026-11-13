@@ -14,6 +14,7 @@ import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
 import { elsewhere } from '@/engine/machine'
 import { snapshotKey, storage } from '@/engine/storage'
+import { snapshotTree } from '@/engine/tree-snapshot'
 
 // Before and after: pictures of the person's site as it was and with the change, taken by a real browser on this
 // computer. Both versions are started with the project's own dev server — the change from the run's working copy, the
@@ -29,6 +30,8 @@ export type SnapshotState = {
   status: 'none' | 'working' | 'ready' | 'failed' | 'unneeded'
   /** The page photographed, such as "/". */
   route: string | null
+  /** What was opened on that page to show the change (the name of a tab), when it does not show as the page opens. */
+  opened?: string | null
   shots: Shot[]
   /** While working: what it is doing. Failed: why. */
   message: string | null
@@ -57,6 +60,98 @@ export const playwrightShoot: Shoot = async (url, files) => {
       await page.screenshot({ path: files[kind] })
       await context.close()
     }
+  } finally {
+    await browser.close()
+  }
+}
+
+export type Reveal = (before: string, after: string, files: { before: { desktop: string; mobile: string }; after: { desktop: string; mobile: string } }) => Promise<string | null>
+
+// What a visitor can open on a page without leaving it or sending anything: a tab that is not the open one, a
+// folded section. Never a plain button or a form: those may do something.
+const OPENABLE = '[role="tab"]:not([aria-selected="true"]), summary, button[aria-expanded="false"]'
+/** Above this share of the picture's dots being different, two pictures show a difference a person would see. */
+const SAME_BELOW = 0.0003
+
+/**
+ * For a change that does not show when the page opens (it is inside a tab that is not the first): the tabs and folded
+ * sections of the page are opened one at a time, on both versions, and the one where before and after differ most is
+ * photographed instead. Returns the name of what was opened; null (and the pictures as they were) when the page
+ * already shows the change as it opens, or nothing that can be opened shows it.
+ */
+export const playwrightReveal: Reveal = async (before, after, files) => {
+  const { chromium } = await import('@playwright/test')
+  const browser = await chromium.launch()
+  try {
+    const context = await browser.newContext(VIEWPORTS.desktop)
+    const [b, a, scratch] = [await context.newPage(), await context.newPage(), await context.newPage()]
+    const open = async (page: typeof a, url: string) => {
+      await page.goto(url, { waitUntil: 'load', timeout: 120_000 })
+      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined)
+      await page.waitForTimeout(1200)
+    }
+    const shot = (page: typeof a) => page.screenshot({ animations: 'disabled' })
+    // How much of the picture differs, counted in a page of the browser so no picture library is needed.
+    const differ = (x: Buffer, y: Buffer) =>
+      scratch.evaluate(
+        async ([one, two]) => {
+          const load = (src: string) =>
+            new Promise<HTMLImageElement>((done, fail) => {
+              const img = new Image()
+              img.onload = () => done(img)
+              img.onerror = () => fail(new Error('picture'))
+              img.src = `data:image/png;base64,${src}`
+            })
+          const [m, n] = await Promise.all([load(one!), load(two!)])
+          if (m.width !== n.width || m.height !== n.height) return 1
+          const dots = (img: HTMLImageElement) => {
+            const c = document.createElement('canvas')
+            c.width = img.width
+            c.height = img.height
+            const g = c.getContext('2d')!
+            g.drawImage(img, 0, 0)
+            return g.getImageData(0, 0, img.width, img.height).data
+          }
+          const [p, q] = [dots(m), dots(n)]
+          let off = 0
+          for (let i = 0; i < p.length; i += 4) if (Math.abs(p[i]! - q[i]!) + Math.abs(p[i + 1]! - q[i + 1]!) + Math.abs(p[i + 2]! - q[i + 2]!) > 48) off++
+          return off / (p.length / 4)
+        },
+        [x.toString('base64'), y.toString('base64')],
+      )
+    // Opens the same thing on a version of the page: by its name where it has one there, else by its place.
+    const press = async (page: typeof a, index: number, name: string) => {
+      const all = page.locator(OPENABLE)
+      const named = name ? all.filter({ hasText: name }).first() : null
+      const target = named && (await named.count()) > 0 ? named : all.nth(index)
+      if ((await target.count()) === 0) return
+      await target.click({ timeout: 4000 }).catch(() => undefined)
+      await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => undefined)
+      await page.waitForTimeout(1200)
+    }
+
+    await Promise.all([open(b, before), open(a, after)])
+    if ((await differ(await shot(b), await shot(a))) > SAME_BELOW) return null
+    const names = (await a.locator(OPENABLE).allInnerTexts()).slice(0, 6).map(t => (t.split('\n')[0] ?? '').trim())
+    let best: { index: number; name: string; by: number } | null = null
+    for (const [index, name] of names.entries()) {
+      // From the page as it opens each time, so one thing opened never hides the next.
+      if (index > 0) await Promise.all([open(b, before), open(a, after)])
+      await Promise.all([press(b, index, name), press(a, index, name)])
+      const by = await differ(await shot(b), await shot(a))
+      if (by > SAME_BELOW && (!best || by > best.by)) best = { index, name, by }
+    }
+    if (!best) return null
+    const found = best
+    for (const kind of ['desktop', 'mobile'] as const) {
+      const ctx = kind === 'desktop' ? context : await browser.newContext(VIEWPORTS[kind])
+      const [pb, pa] = kind === 'desktop' ? [b, a] : [await ctx.newPage(), await ctx.newPage()]
+      await Promise.all([open(pb, before), open(pa, after)])
+      await Promise.all([press(pb, found.index, found.name), press(pa, found.index, found.name)])
+      await pb.screenshot({ path: files.before[kind] })
+      await pa.screenshot({ path: files.after[kind] })
+    }
+    return found.name || null
   } finally {
     await browser.close()
   }
@@ -199,7 +294,22 @@ export async function readSnapshot(runId: string, shot: string, root = SNAP_ROOT
 export const snapshotFile = (runId: string, shot: string, root = SNAP_ROOT): string | null =>
   (SHOTS as readonly string[]).includes(shot) && existsSync(fileOf(runId, shot as Shot, root)) ? fileOf(runId, shot as Shot, root) : null
 
-const changeHash = async (runId: string) => createHash('sha256').update((await pendingDiff(runId))).digest('hex').slice(0, 16)
+/**
+ * What the pictures were taken of: the files of the run's working copy as they are, and the commit they are compared
+ * with. Saving the change (a commit) leaves the files as they were, so pictures taken before it still count; another
+ * edit does not. The text of the pending change is the fallback where the working copy cannot be read that way.
+ */
+const changeHash = async (runId: string) => {
+  const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
+  try {
+    if (run?.worktreePath && existsSync(run.worktreePath)) return createHash('sha256').update(`${beforeOf(run) ?? ''}:${snapshotTree(run.worktreePath)}`).digest('hex').slice(0, 16)
+  } catch {
+    // Below.
+  }
+  return createHash('sha256').update((await pendingDiff(runId))).digest('hex').slice(0, 16)
+}
+/** The commit a run's "before" picture shows: where this task itself started, so a task that continues another shows only its own change. */
+const beforeOf = (run: { baseCommit: string | null; deliveryBase: string | null }) => run.baseCommit ?? run.deliveryBase
 
 // Pictures being taken now, by run. Kept on globalThis so a hot reload does not forget them.
 const working: Map<string, string> = ((globalThis as { __factorySnapshots?: Map<string, string> }).__factorySnapshots ??= new Map())
@@ -211,11 +321,11 @@ export async function snapshotState(runId: string): Promise<SnapshotState> {
   if (!changesTheLook(await changedFiles(runId))) return UNNEEDED
   const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.snapshots'))).orderBy(desc(events.sequence)))[0]
   if (!row) return { status: 'none', route: null, shots: [], message: null }
-  const p = JSON.parse(row.payloadJson) as { route: string | null; shots: Shot[]; message: string | null; change: string }
+  const p = JSON.parse(row.payloadJson) as { route: string | null; opened?: string | null; shots: Shot[]; message: string | null; change: string }
   if (p.change !== (await changeHash(runId))) return { status: 'none', route: null, shots: [], message: null }
   // Pictures live in R2 when it is set up (any computer can show them), otherwise on the computer that took them.
   const shots = p.shots.filter(s => storage() !== null || snapshotFile(runId, s) !== null)
-  return shots.length > 0 ? { status: 'ready', route: p.route, shots, message: null } : { status: 'failed', route: p.route, shots: [], message: p.message }
+  return shots.length > 0 ? { status: 'ready', route: p.route, opened: p.opened ?? null, shots, message: null } : { status: 'failed', route: p.route, shots: [], message: p.message }
 }
 
 export type Links = (url: string) => Promise<string[]>
@@ -261,7 +371,7 @@ const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, en
  * Takes the before and after pictures of a run's change, in the background. Returns at once; snapshotState says how
  * it goes. Once at a time per run. Whatever it started (the version before, a copy of it, a browser) it stops.
  */
-export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot, root = SNAP_ROOT, links: Links = playwrightLinks): Promise<SnapshotState> {
+export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot, root = SNAP_ROOT, links: Links = playwrightLinks, reveal: Reveal = playwrightReveal): Promise<SnapshotState> {
   const away = await elsewhere(runId)
   if (away) throw new SnapshotError(away)
   if (working.has(runId)) return snapshotState(runId)
@@ -269,7 +379,7 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
   if (!run?.worktreePath || !existsSync(run.worktreePath)) throw new SnapshotError(strings.snapshots.noWorkingCopy)
   const project = await projectHere(run.projectId)
   const repo = project?.repoPath
-  const from = run.deliveryBase ?? run.baseCommit
+  const from = beforeOf(run)
   if (!repo || !from) throw new SnapshotError(strings.snapshots.noWorkingCopy)
 
   const files = await changedFiles(runId)
@@ -289,6 +399,7 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
   void (async () => {
     const shots: Shot[] = []
     let message: string | null = null
+    let opened: string | null = null
     try {
       mkdirSync(dir, { recursive: true })
       if (existsSync(beforeTree)) removeTree(repo, beforeTree)
@@ -319,6 +430,12 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
         await shoot(page(afterUrl), { desktop: fileOf(runId, 'after-desktop', root), mobile: fileOf(runId, 'after-mobile', root) })
         shots.push('after-desktop', 'after-mobile')
       }
+      // Before and after look the same as the page opens: the change may be inside a tab, which is then opened on both.
+      if (beforeUrl && afterUrl) {
+        working.set(runId, strings.snapshots.looking)
+        const at = (side: 'before' | 'after') => ({ desktop: fileOf(runId, `${side}-desktop`, root), mobile: fileOf(runId, `${side}-mobile`, root) })
+        opened = await reveal(page(beforeUrl), page(afterUrl), { before: at('before'), after: at('after') }).catch(() => null)
+      }
       // Kept in R2 too, so another computer can show them.
       const store = storage()
       if (store) for (const shot of shots) await store.put(snapshotKey(runId, shot), readFileSync(fileOf(runId, shot, root)), 'image/png')
@@ -331,7 +448,7 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
       // The dev server lets go of the copy first, then the copy goes.
       setTimeout(() => removeTree(repo, beforeTree), 4000).unref()
       try {
-        await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.snapshots', payload: { route, shots, message, change } }, tx)))
+        await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.snapshots', payload: { route, opened, shots, message, change } }, tx)))
       } finally {
         working.delete(runId)
       }
