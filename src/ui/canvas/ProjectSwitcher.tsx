@@ -204,7 +204,7 @@ export function ProjectSwitcher({ workflowId, style, onOpenSettings }: { workflo
             type="button"
             role="menuitem"
             onClick={() => (setOpen(false), setAdding(true))}
-            style={{ ...smallButton(false), justifyContent: 'center', margin: '8px 4px 2px', padding: '8px 10px', color: '#bfdbfe', borderColor: theme.tint('running', 0.5), fontSize: 13 }}
+            style={{ ...smallButton(false), justifyContent: 'center', margin: '8px 4px 2px', padding: '8px 10px', background: theme.passed, color: '#07110a', borderColor: theme.passed, fontWeight: 700, fontSize: 13 }}
           >
             ＋ {s.add}
           </button>
