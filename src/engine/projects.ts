@@ -1,6 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
+import { removeUnusedDemoProject } from '@/db/seed'
 import type { AskMode } from '@/domain/ask-mode'
 import { MODEL_STEPS, modelName, type StepModels } from '@/domain/models'
 import { projectMachines, projects, workflows } from '@/db/schema'
@@ -97,6 +98,8 @@ export async function createProject(input: {
   })
   await saveDraft(workflowId, { blocks: [...graph.blocks, ...extra] })
   await publishVersion(workflowId)
+  // The example project of older versions has no use once there is a real one.
+  await removeUnusedDemoProject()
   for (const rule of input.rules ?? []) await addNote(projectId, rule)
   for (const path of input.coreAreas ?? []) {
     try {

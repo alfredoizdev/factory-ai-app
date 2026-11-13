@@ -1382,6 +1382,12 @@ export const strings = {
       return exitCode === null ? head : `${head} Exit code ${exitCode}.`
     },
   },
+  // The first screen, before there is any project.
+  welcome: {
+    title: 'Welcome to AI Factory',
+    lead: 'Agents plan, build, test and review changes to your project. Simple changes go on their own; the app stops for you on what matters.',
+    hint: 'Start a project from scratch, or point the app at a folder that already has code.',
+  },
   demo: {
     projectName: 'Demo project',
     workflowName: 'Demo workflow',
