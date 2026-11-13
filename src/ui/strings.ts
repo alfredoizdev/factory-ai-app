@@ -1385,10 +1385,14 @@ export const strings = {
   // The first screen, before there is any project: what the app can do, and the two ways to start one.
   welcome: {
     eyebrow: 'AI Factory',
-    title: 'Say what you want. Agents build it, check it and send it.',
+    // The headline in two parts: the first is said in full white, the second quieter.
+    titleLead: 'Say what you want.',
+    titleRest: 'Agents build it, check it and send it.',
     lead: 'A team of AI agents works on your project the way a careful team would: a plan first, then the code, then tests and a review. Simple changes go all the way on their own. You are asked only about what matters.',
+    scratchLabel: 'New project',
     scratch: 'Start from scratch',
     scratchHint: 'Pick what to build. The agents create the project.',
+    existingLabel: 'Existing code',
     existing: 'I already have code',
     existingHint: 'Point at your folder. The agents work on it.',
     howTitle: 'What happens to every task',

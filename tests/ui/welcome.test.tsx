@@ -7,7 +7,7 @@ const w = strings.welcome
 
 test('with no project yet, the app says what it does, the path of a task and what it can do', () => {
   render(<Welcome />)
-  expect(screen.getByRole('heading', { level: 1, name: w.title })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { level: 1, name: `${w.titleLead} ${w.titleRest}` })).toBeInTheDocument()
   expect(screen.getByTestId('welcome-steps').querySelectorAll('li')).toHaveLength(w.steps.length)
   expect(screen.getByTestId('welcome-can').querySelectorAll('article')).toHaveLength(w.can.length)
   expect(screen.queryByRole('dialog')).toBeNull()
