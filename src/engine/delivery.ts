@@ -52,7 +52,7 @@ export type Delivery = {
 }
 
 /** The latest word of the steps that keep, send and open a change on their own. The values are stored: never reword them. */
-export type AutoShip = { state: 'started' | 'opened' | 'stopped'; step: 'keep' | 'send' | 'open' | null; reason: 'no_connection' | 'failed' | null; message: string | null }
+export type AutoShip = { state: 'started' | 'opened' | 'stopped'; step: 'keep' | 'send' | 'open' | null; reason: 'no_connection' | 'failed' | null; message: string | null; /** When this word was recorded (read only; the card uses it to tell a send that was never ended). */ at?: string }
 
 export class DeliveryError extends Error {
   /** `no_connection`: the project is not connected to GitHub (no origin), so there is nowhere to send it. */
@@ -143,7 +143,7 @@ export async function autoShipRecord(runId: string): Promise<AutoShip | null> {
   const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.auto_ship'))).orderBy(desc(events.sequence)))[0]
   if (!row) return null
   const p = JSON.parse(row.payloadJson) as Partial<AutoShip>
-  return { state: p.state ?? 'started', step: p.step ?? null, reason: p.reason ?? null, message: p.message ?? null }
+  return { state: p.state ?? 'started', step: p.step ?? null, reason: p.reason ?? null, message: p.message ?? null, at: row.createdAt }
 }
 
 /**

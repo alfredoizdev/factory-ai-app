@@ -13,6 +13,8 @@ import type { ComposerSend } from './Composer'
 
 /** How often the card asks again while the app is sending the change on its own. */
 const AUTO_POLL_MS = 3000
+/** A send the app began on its own and never ended, after this long, stops being called "working". */
+const AUTO_GIVE_UP_MS = 3 * 60_000
 
 /**
  * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
@@ -95,10 +97,15 @@ export function ResultSection({
   }, [runId])
 
   // The app is keeping, sending and opening it on its own: read again until it says where it got to.
-  const autoWorking = delivery?.autoShip?.state === 'started'
+  // Read again with each poll, so a send that never ends is noticed without a second timer.
+  const [clock, setClock] = useState(() => Date.now())
+  const startedAt = delivery?.autoShip?.at ? Date.parse(delivery.autoShip.at) : NaN
+  const neverEnded = delivery?.autoShip?.state === 'started' && Number.isFinite(startedAt) && clock - startedAt > AUTO_GIVE_UP_MS
+  const autoWorking = delivery?.autoShip?.state === 'started' && !neverEnded
   useEffect(() => {
     if (!autoWorking) return
     const t = setInterval(() => {
+      setClock(Date.now())
       void fetch(`/api/runs/${runId}/delivery`)
         .then(r => (r.ok ? (r.json() as Promise<Delivery>) : null))
         .then(next => next && setDelivery(next))
@@ -182,11 +189,11 @@ export function ResultSection({
   const d = strings.delivery
   // What the app did on its own, in one sentence: where it got to, and who passed the change.
   const auto = delivery.autoShip
-  const stoppedStale = auto?.state === 'stopped' && ((auto.step === 'keep' && kept) || (auto.step === 'send' && (shipped || delivery.pushed)) || (auto.step === 'open' && shipped))
+  const stoppedStale = auto?.state === 'stopped' && ((auto.step === 'keep' && kept) || (auto.step === 'send' && (shipped || delivery.pushed || (auto.reason === 'no_connection' && (delivery.hasRemote === true || connected !== null)))) || (auto.step === 'open' && shipped))
   // Chosen from where the change is NOW, never from the event alone: a line that is no longer true is not shown.
   const autoLine =
     auto?.state === 'opened'
-      ? ship?.pr?.state === 'open'
+      ? ship?.pr?.state === 'open' && !ship.checksFailed && !ship.pr.conflicts
         ? delivery.passedBy === 'app'
           ? d.auto.openedByApp
           : d.auto.openedAfterYes
@@ -200,7 +207,9 @@ export function ResultSection({
             : auto.reason === 'no_connection'
               ? d.auto.stopped.noConnection
               : d.auto.stopped.send
-        : !auto && delivery.passedBy === 'app' && !kept && !delivery.delivered
+        : neverEnded
+          ? d.auto.seemsStopped
+          : !auto && delivery.passedBy === 'app' && !kept && !delivery.delivered
           ? d.auto.passedReady
           : null
   const headline = autoWorking

@@ -159,7 +159,7 @@ test('kept, sent and opened, once each', async () => {
   expect(git(bare, 'log', '-1', '--format=%s', state.branch!)).toBe('Add a footer with the year')
   expect(git(bare, 'branch', '--list', 'main')).toBe('') // their main was not sent
   expect(gh.calls).toContainEqual(['pr', 'create', '--base', 'main', '--head', state.branch, '--fill-first'])
-  expect(state.autoShip).toEqual({ state: 'opened', step: null, reason: null, message: null })
+  expect(state.autoShip).toEqual({ state: 'opened', step: null, reason: null, message: null, at: expect.any(String) })
   expect(gh.calls.some(c => c.includes('merge'))).toBe(false)
 })
 
@@ -202,7 +202,7 @@ test('no origin: it is kept, nothing is sent, and the run is still completed', a
   const state = await deliveryState(runId)
   expect(state.kept).toBe(true)
   expect(state.pushed).toBe(false)
-  expect(state.autoShip).toEqual({ state: 'stopped', step: 'send', reason: 'no_connection', message: strings.delivery.noRemote })
+  expect(state.autoShip).toEqual({ state: 'stopped', step: 'send', reason: 'no_connection', message: strings.delivery.noRemote, at: expect.any(String) })
   expect(await statusOf(runId)).toBe('completed')
 })
 

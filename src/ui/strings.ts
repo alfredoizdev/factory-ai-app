@@ -783,6 +783,8 @@ export const strings = {
     conflict: (branch: string) => `Your project changed in the same places since this run began, so the change does not fit cleanly. Nothing was changed. It is kept on the local branch ${branch} to merge by hand.`,
     /** After it passed in "only what matters": kept, sent to GitHub and opened as a pull request on its own. */
     auto: {
+      /** The app began sending it on its own but never finished, and nothing says why. */
+      seemsStopped: 'It seems to have stopped part-way. The buttons below can finish it.',
       working: 'Sending it to GitHub and opening a pull request for you…',
       openedByApp: 'It passed on its own, so it was sent to GitHub and a pull request is open. Publish it when you are ready.',
       openedAfterYes: 'You approved it, so it was sent to GitHub and a pull request is open. Publish it when you are ready.',
