@@ -319,6 +319,8 @@ export const strings = {
     unhold: 'Take off hold',
     cardOnHold: 'On hold. Ready to publish whenever you say.',
     merged: 'Published.',
+    folderUpdated: 'Your project folder on this computer has it too.',
+    folderNot: 'Your project folder on this computer was not updated by itself. Your next task starts from the published version all the same.',
     deployTitle: 'Going live',
     deployWaiting: 'Publishing. Your change is in main; waiting to see your site update…',
     stepMerged: 'Put into main',

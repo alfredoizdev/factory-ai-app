@@ -38,6 +38,8 @@ export type ShipState = {
   /** After the merge: what reported on the merged commit (a deploy, CI on main). Empty: nothing reported. */
   deploy: Check[]
   mergedAt: string | null
+  /** After the merge: whether the project's folder on this computer was brought up to date with it. */
+  folder?: boolean
   /** Merged, and what runs on main (a deploy, CI) is still on its way or may still appear: not finished yet. */
   deployPending?: boolean
   /** The person said: everything is ready, but do not merge yet. Never true once merged or closed. */
@@ -188,6 +190,35 @@ async function adoptPullRequest(runId: string, gh: Gh): Promise<Record<string, u
   return recordOf(runId, 'run.pr_opened')
 }
 
+const quietGit = (repo: string, args: string[]) =>
+  new Promise<string | null>(resolve =>
+    execFile('git', args, { cwd: repo, timeout: 20_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, out) => resolve(err ? null : String(out).trim())),
+  )
+
+/**
+ * What a person who does not program would otherwise have to do by hand once a change is published. All best effort:
+ * - the project's folder on this computer gets the published change, when it is on the main branch and git can simply
+ *   move it forward (git itself refuses when that would touch work the person has there). True when it did.
+ * - a repository that began empty has the first branch it received as its main one on GitHub: when that is this
+ *   change's own branch, GitHub is told the real main branch.
+ */
+async function afterPublish(repo: string, head: string | undefined, gh: Gh): Promise<boolean> {
+  const main = defaultBranch(repo)
+  if (!main) return false
+  await quietGit(repo, ['fetch', '--quiet', 'origin', `refs/heads/${main}:refs/remotes/origin/${main}`])
+  const where = originRepo(repo)
+  if (where && head && head !== main) {
+    try {
+      const onGitHub = (await gh(['api', `repos/${where}`, '--jq', '.default_branch'], repo)).trim()
+      if (onGitHub === head) await gh(['api', '-X', 'PATCH', `repos/${where}`, '-f', `default_branch=${main}`], repo)
+    } catch {
+      // GitHub keeps what it had; the change is published all the same.
+    }
+  }
+  if ((await quietGit(repo, ['symbolic-ref', '--quiet', '--short', 'HEAD'])) !== main) return false
+  return (await quietGit(repo, ['merge', '--quiet', '--ff-only', `origin/${main}`])) !== null
+}
+
 /** How long after a merge a deploy is given to show up before saying none is connected. */
 const DEPLOY_GRACE_MS = 60_000
 
@@ -197,19 +228,22 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
   const empty: ShipState = { pr: null, checks: [], checksDone: false, checksFailed: false, deploy: [], mergedAt: null, onHold: false }
   if (!opened) return empty
   const { repo } = (await repoOf(runId))
-  let view: { number: number; url: string; state: string; mergeable: string; statusCheckRollup: Rollup[]; mergeCommit: { oid: string } | null; mergedAt: string | null }
+  let view: { number: number; url: string; state: string; mergeable: string; statusCheckRollup: Rollup[]; mergeCommit: { oid: string } | null; mergedAt: string | null; headRefName?: string }
   try {
-    view = JSON.parse(await gh(['pr', 'view', String(opened.number), ...named(repo), '--json', 'number,url,state,mergeable,statusCheckRollup,mergeCommit,mergedAt'], repo))
+    view = JSON.parse(await gh(['pr', 'view', String(opened.number), ...named(repo), '--json', 'number,url,state,mergeable,statusCheckRollup,mergeCommit,mergedAt,headRefName'], repo))
   } catch (e) {
     throw ghFailure(e)
   }
   const checks = (view.statusCheckRollup ?? []).map(checkOf)
   const justOpened = Date.now() - Date.parse(String(opened.at)) < CHECKS_GRACE_MS
   const state = view.state === 'MERGED' ? 'merged' : view.state === 'CLOSED' ? 'closed' : 'open'
-  // Published on GitHub itself rather than from the card: written down here too, the first time it is seen, so the
-  // history says "Published" and a later request starts a change of its own instead of joining this one.
-  if (state === 'merged' && !(await recordOf(runId, 'run.merged'))) {
-    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number: view.number, onGitHub: true } }, tx)))
+  // Published, from the card or on GitHub itself: written down the first time it is seen, so the history says
+  // "Published" and a later request starts a change of its own. The person's folder is brought up to date then too.
+  let published = state === 'merged' ? await recordOf(runId, 'run.merged') : null
+  if (state === 'merged' && !published) {
+    const folder = await afterPublish(repo, view.headRefName, gh)
+    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number: view.number, folder } }, tx)))
+    published = { folder }
   }
   let deploy: Check[] = []
   if (state === 'merged' && view.mergeCommit?.oid) {
@@ -233,6 +267,7 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
     checksFailed: checks.some(c => c.state === 'failed'),
     deploy,
     mergedAt: view.mergedAt ?? null,
+    folder: published ? published.folder === true : undefined,
     deployPending:
       state === 'merged' &&
       (deploy.some(c => c.state === 'pending') || (deploy.length === 0 && !!view.mergedAt && Date.now() - Date.parse(view.mergedAt) < DEPLOY_GRACE_MS)),
@@ -297,13 +332,6 @@ export async function mergePullRequest(runId: string, gh: Gh = defaultGh): Promi
   } catch (e) {
     throw ghFailure(e)
   }
-  // Learn what main looks like now (new tests, for one) without waiting for the next task to fetch it. Best effort.
-  const main = defaultBranch(repo)
-  if (main) {
-    await new Promise<void>(resolve =>
-      execFile('git', ['fetch', '--quiet', 'origin', `refs/heads/${main}:refs/remotes/origin/${main}`], { cwd: repo, timeout: 15_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, () => resolve()),
-    )
-  }
-  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number: current.pr!.number } }, tx)))
+  // Seeing it merged writes it down and brings the project's folder up to date.
   return shipState(runId, gh)
 }

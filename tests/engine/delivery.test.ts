@@ -579,6 +579,34 @@ describe('shipping through GitHub', () => {
     expect(merged.deploy).toEqual([{ name: 'Deploy', state: 'passed', url: 'https://site' }])
   })
 
+  test('publishing brings the project folder up to date, and tells GitHub the real main branch when it had taken the change\'s own', async () => {
+    const { openPullRequest, mergePullRequest } = await import('@/engine/ship')
+    const { runId, repo } = await shippable()
+    const main = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+    const rev = (name: string) => execFileSync('git', ['rev-parse', name], { cwd: repo, encoding: 'utf8' }).trim()
+    let view: View = { number: 7, url: 'u', state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [], mergeCommit: null, mergedAt: null, headRefName: 'ai/ship-me' }
+    const { gh, calls } = fakeGh(
+      () => view,
+      args => {
+        if (args[1] === 'merge') {
+          // GitHub's merge: main there now holds the change.
+          execFileSync('git', ['push', '-q', 'origin', `ai/ship-me:refs/heads/${main}`], { cwd: repo })
+          view = { ...view, state: 'MERGED', mergeCommit: { oid: 'abc' }, mergedAt: 'now' }
+          return ''
+        }
+        if (args[0] === 'api' && args.includes('.default_branch')) return 'ai/ship-me\n'
+        return undefined
+      },
+    )
+    await openPullRequest(runId, gh)
+    await aged(runId)
+    expect(rev('HEAD')).not.toBe(rev('ai/ship-me'))
+    const merged = await mergePullRequest(runId, gh)
+    expect(merged.folder).toBe(true)
+    expect(rev('HEAD')).toBe(rev('ai/ship-me'))
+    expect(calls.find(c => c.includes('PATCH'))).toEqual(['api', '-X', 'PATCH', 'repos/ai-factory-test/never-real', '-f', `default_branch=${main}`])
+  })
+
   test('a ready pull request can be put on hold and taken off it; the task list says so; merging ends the hold', async () => {
     const { openPullRequest, mergePullRequest, setHold, ShipError } = await import('@/engine/ship')
     const { listRuns } = await import('@/engine/run')
@@ -624,7 +652,7 @@ describe('shipping through GitHub', () => {
     const { and, eq } = await import('drizzle-orm')
     const noted = await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.merged')))
     expect(noted).toHaveLength(1)
-    expect(JSON.parse(noted[0]!.payloadJson)).toMatchObject({ number: 3, onGitHub: true })
+    expect(JSON.parse(noted[0]!.payloadJson)).toMatchObject({ number: 3 })
   })
 
   test('no gh on the computer is said plainly', async () => {

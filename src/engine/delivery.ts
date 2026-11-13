@@ -320,7 +320,7 @@ async function mergedOnGitHub(runId: string, cwd: string): Promise<boolean> {
   } catch {
     return false
   }
-  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number, onGitHub: true } }, tx)))
+  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number } }, tx)))
   return true
 }
 

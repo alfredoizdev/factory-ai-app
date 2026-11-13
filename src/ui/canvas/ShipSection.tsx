@@ -203,6 +203,7 @@ export function ShipSection({
               ) : (
                 <span style={{ color: theme.passed, fontWeight: 700 }}>✓ {strings.ship.merged}</span>
               )}
+              {state.folder !== undefined && <span data-testid="ship-folder" style={hint}>{state.folder ? strings.ship.folderUpdated : strings.ship.folderNot}</span>}
               {state.deploy.length > 0 && <CheckList checks={state.deploy} />}
               {!deployPending && state.deploy.length === 0 && <span style={hint}>{strings.ship.noDeploy}</span>}
               {!deployPending && state.deploy.length > 0 && !state.deploy.some(d => d.state === 'failed') && <span style={{ color: theme.passed }}>✓ {strings.ship.live}</span>}
