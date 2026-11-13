@@ -376,7 +376,7 @@ describe('pushing the kept branch', () => {
     return { ...r, origin }
   }
 
-  test('an origin that holds nothing yet gets the main branch first, so a pull request has somewhere to go', async () => {
+  test('an origin without the main branch gets it first, so a pull request has somewhere to go', async () => {
     const { runId, origin, repo } = await withOrigin()
     await keepOnBranch(runId, { name: 'ai/first-page-x1' })
     await pushBranch(runId)
@@ -386,14 +386,15 @@ describe('pushing the kept branch', () => {
 
   test('sends only the kept branch to an origin that already holds the project, and says so', async () => {
     const { runId, origin, repo } = await withOrigin()
-    // Origin already holds something of theirs: only the kept branch is added to it.
-    git(repo, 'branch', 'theirs')
-    git(repo, 'push', '-q', 'origin', 'theirs')
+    // Origin already holds their main, at an older point: only the kept branch is added, and main is left alone.
+    git(repo, 'push', '-q', 'origin', 'main~0:refs/heads/main')
+    const theirMain = git(origin, 'rev-parse', 'main')
     const kept = (await keepOnBranch(runId, { name: 'ai/outline-buttons-x1' }))
     const pushed = await pushBranch(runId)
     expect(pushed.pushed).toBe(true)
     expect(git(origin, 'rev-parse', 'ai/outline-buttons-x1')).toBe(git(origin, 'rev-parse', kept.commit!))
-    expect(git(origin, 'branch', '--list', 'main')).toBe('') // their main was not sent
+    expect(git(origin, 'rev-parse', 'main')).toBe(theirMain) // their main was not sent again
+    expect(git(origin, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').sort()).toEqual(['ai/outline-buttons-x1', 'main'])
     expect((await eventsSince(runId, 0)).some(e => e.type === 'run.pushed')).toBe(true)
   })
 
