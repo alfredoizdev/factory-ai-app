@@ -1205,6 +1205,10 @@ export const strings = {
     close: 'Close',
     loading: 'Reading what this step did…',
     unreadable: 'The details of this step could not be read.',
+    history: 'History of this change',
+    historyHelp: 'Every task that went into it, oldest first, with what you asked for and the pictures of each.',
+    historyHere: 'This task',
+    historyNoPictures: 'No pictures: nothing on a page changed, or none were taken.',
     // What each kind of step is for, in one line under its name.
     purpose: {
       input: 'Receives what you asked for and hands it to the agents.',

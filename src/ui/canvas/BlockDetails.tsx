@@ -204,6 +204,38 @@ function Pictures({ runId }: { runId: string }) {
   )
 }
 
+/** The pictures of one task of the history: shown when there are some, a quiet line otherwise. */
+function TaskPictures({ runId }: { runId: string }) {
+  const { state } = useSnapshots(runId, false)
+  if (!state) return null
+  if (state.status === 'working' || (state.status === 'ready' && state.shots.length > 0)) return <PicturesBody runId={runId} state={state} />
+  return <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNoPictures}</span>
+}
+
+/** Every task of the change, in order: its name, when it was asked, what was asked, and its pictures. */
+function History({ tasks }: { tasks: NonNullable<BlockDetails['history']> }) {
+  return (
+    <Section title={d.history} help={d.historyHelp}>
+      <ol data-testid="details-history" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 10 }}>
+        {tasks.map((t, i) => (
+          <li key={t.runId} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 12, padding: '14px 16px', borderRadius: 10, background: '#0f141c', border: `1px solid ${t.here ? theme.tint('passed', 0.5) : theme.border}` }}>
+            <span style={{ width: 26, height: 26, borderRadius: 999, display: 'grid', placeItems: 'center', background: theme.tint('passed', 0.18), color: theme.passed, fontSize: 13, fontWeight: 800 }}>{i + 1}</span>
+            <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px' }}>
+                <strong style={{ fontSize: 15, color: '#e6e9ef', overflowWrap: 'anywhere' }}>{t.name}</strong>
+                {t.here && <span style={{ padding: '2px 9px', borderRadius: 999, background: theme.tint('passed', 0.18), color: theme.passed, fontSize: 11.5, fontWeight: 800 }}>{d.historyHere}</span>}
+                <span style={{ fontSize: 12.5, color: theme.skipped }}>{new Date(t.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+              </div>
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.5, color: '#c9d0db', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 120, overflowY: 'auto', ...thin }}>{t.request}</p>
+              <TaskPictures runId={t.runId} />
+            </div>
+          </li>
+        ))}
+      </ol>
+    </Section>
+  )
+}
+
 function PicturesBody({ runId, state }: { runId: string; state: SnapshotState }) {
   const [screen, setScreen] = useState<'desktop' | 'mobile'>('desktop')
   const [large, setLarge] = useState<Shot | null>(null)
@@ -424,7 +456,8 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
                 </Section>
               )}
 
-              {showsPictures && <Pictures runId={runId} />}
+              {/* A change made of several tasks shows each with its own pictures; a single task, just its pictures. */}
+              {showsPictures && ((details.history?.length ?? 0) > 1 ? <History tasks={details.history!} /> : <Pictures runId={runId} />)}
 
               {(view?.planMeasure ?? details.planMeasure) && (
                 <PlanWhy measure={(view?.planMeasure ?? details.planMeasure)!} startedOnItsOwn={view?.autoStarted === true} />

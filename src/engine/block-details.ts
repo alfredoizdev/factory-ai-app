@@ -32,6 +32,30 @@ export type BlockDetails = {
   /** Why the plan stopped for the person or started on its own, and the files or folders it expects to change. Plan block only. */
   planMeasure?: { simple: boolean; reasons: string[]; entries: string[]; question?: string }
   commands: BlockCommand[]
+  /**
+   * Every task of the change this one belongs to, oldest first: the first task and each one that continued from it.
+   * On the Human check and Ship blocks, where the person looks back at what was done.
+   */
+  history?: { runId: string; name: string; request: string; at: string; here: boolean }[]
+}
+
+/** The tasks that make up one change: the run's oldest ancestor and everything that continued from it, in order. */
+async function historyOf(run: typeof runs.$inferSelect): Promise<NonNullable<BlockDetails['history']>> {
+  const all = await db.select().from(runs).where(eq(runs.workflowId, run.workflowId)).orderBy(asc(runs.createdAt))
+  const byId = new Map(all.map(r => [r.id, r]))
+  const rootOf = (r: typeof runs.$inferSelect): string => {
+    let at = r
+    const seen = new Set<string>()
+    while (at.parentRunId && byId.has(at.parentRunId) && !seen.has(at.id)) {
+      seen.add(at.id)
+      at = byId.get(at.parentRunId)!
+    }
+    return at.id
+  }
+  const root = rootOf(run)
+  return all
+    .filter(r => rootOf(r) === root)
+    .map(r => ({ runId: r.id, name: r.title?.trim() || r.request.replace(/\s+/g, ' ').trim().slice(0, 80), request: r.request, at: r.createdAt, here: r.id === run.id }))
 }
 
 const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null)
@@ -98,5 +122,6 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
     jobs,
     ...(planMeasure ? { planMeasure } : {}),
     commands,
+    ...(block?.kind === 'ship' || block?.kind === 'human' ? { history: await historyOf(run) } : {}),
   }
 }
