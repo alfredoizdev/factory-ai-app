@@ -1,7 +1,7 @@
 'use client'
 
 import { FailedSection, type FailureActions } from './FailurePanel'
-import { forwardRef, useId, useState } from 'react'
+import { forwardRef, useState } from 'react'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { RUN_INPUT_ID } from './Canvas'
@@ -232,7 +232,9 @@ export const CommandCard = forwardRef<
 /** The per-task box. "What is this?" opens its explanation right here, one click away and reachable by keyboard. */
 function StopForMe({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   const [open, setOpen] = useState(false)
-  const why = useId()
+  // A fixed name, not useId: there is one task box on the page, and a generated id came out different on the server
+  // and in the browser, which React reports as an error when the page loads.
+  const why = 'stop-for-me-why'
   return (
     <div data-testid="stop-for-me" style={{ display: 'grid', gap: 4, minWidth: 0 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 12px' }}>
