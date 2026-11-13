@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { ProjectSettingsError } from '@/engine/project-settings'
@@ -60,4 +60,26 @@ export function startFromScratch(input: { path: string; name: string; githubUrl?
   git(['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', strings.wizard.firstCommit])
   if (origin) git(['remote', 'add', 'origin', origin])
   return path
+}
+
+export type FirstSend = 'sent' | 'not_empty' | 'unreachable'
+
+/**
+ * Connects a project just started from scratch to its GitHub repository: when the repository holds nothing yet, the
+ * main branch (the one first commit) is sent, so every later change has a branch to open its pull request into.
+ * A repository that already holds something is left alone, and so is one that cannot be reached: the person's own
+ * git login is used and never a prompt. Says which of the three happened.
+ */
+export async function sendFirstCommit(path: string): Promise<FirstSend> {
+  const git = (args: string[]) =>
+    new Promise<string>((resolve, reject) =>
+      execFile('git', args, { cwd: path, timeout: 30_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, stdout) => (err ? reject(err) : resolve(String(stdout).trim()))),
+    )
+  try {
+    if ((await git(['ls-remote', '--heads', 'origin'])) !== '') return 'not_empty'
+    await git(['push', '--porcelain', '--set-upstream', 'origin', 'refs/heads/main:refs/heads/main'])
+    return 'sent'
+  } catch {
+    return 'unreachable'
+  }
 }

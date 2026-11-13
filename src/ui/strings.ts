@@ -162,7 +162,7 @@ export const strings = {
       chooseParent: 'Choose where…',
       github: 'GitHub repository (optional)',
       githubPlaceholder: 'https://github.com/you/my-project',
-      githubHint: 'The repository must already exist on GitHub. Nothing is sent now. Without it, changes stay on this computer.',
+      githubHint: 'The repository must already exist on GitHub, empty. The app connects the project to it and sends its first commit, so it is ready for pull requests. Without it, changes stay on this computer.',
       addTests: 'Add tests, so the agents check their own work',
       addTestsHint: 'Without tests the app always stops for you before finishing a change.',
     },

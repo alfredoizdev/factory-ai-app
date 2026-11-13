@@ -117,3 +117,19 @@ test('from the wizard: nothing picked and no tests leaves no rule and says the a
   expect(again.status).toBe(400)
   expect(((await again.json()) as { error: string }).error).toBe(e.notEmpty)
 })
+
+test('a project from scratch is connected to its repository: an empty one gets main, one that holds something is left alone', async () => {
+  const { sendFirstCommit } = await import('@/engine/scratch')
+  const path = join(mkdtempSync(join(tmpdir(), 'factory-scratch-')), 'shop')
+  startFromScratch({ path, name: 'Shop' })
+  const bare = mkdtempSync(join(tmpdir(), 'factory-scratch-origin-'))
+  git(bare, 'init', '-q', '--bare', '-b', 'main')
+  git(path, 'remote', 'add', 'origin', bare)
+  expect(await sendFirstCommit(path)).toBe('sent')
+  expect(git(bare, 'rev-parse', 'main')).toBe(git(path, 'rev-parse', 'main'))
+  // Asked again, the repository is no longer empty: nothing is sent.
+  expect(await sendFirstCommit(path)).toBe('not_empty')
+  // A repository that is not there is not a failure of the project.
+  git(path, 'remote', 'set-url', 'origin', join(bare, 'gone'))
+  expect(await sendFirstCommit(path)).toBe('unreachable')
+})

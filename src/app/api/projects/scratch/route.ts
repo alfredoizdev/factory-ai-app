@@ -6,7 +6,7 @@ import { prepareBase } from '@/engine/base'
 import { ProjectSettingsError } from '@/engine/project-settings'
 import { createProject } from '@/engine/projects'
 import { rejectCrossSite } from '@/engine/same-origin'
-import { startFromScratch } from '@/engine/scratch'
+import { cleanGitHubUrl, sendFirstCommit, startFromScratch } from '@/engine/scratch'
 import { strings } from '@/ui/strings'
 
 export const dynamic = 'force-dynamic'
@@ -22,7 +22,8 @@ const schema = z.object({
 })
 
 // A project from scratch: makes the folder an empty repository, adds it as a project with what was chosen kept as
-// standing rules, and hands back the text of its first task. The agents build the project; nothing is sent anywhere.
+// standing rules, and hands back the text of its first task. The agents build the project. With a GitHub repository given and empty, its main branch is sent, so the first
+// pull request has somewhere to go.
 export async function POST(req: Request) {
   const refused = rejectCrossSite(req)
   if (refused) return refused
@@ -41,7 +42,9 @@ export async function POST(req: Request) {
     const rules = [...(names.length > 0 ? [strings.wizard.rules.builtWith(names)] : []), ...(addTests ? [strings.wizard.rules.tests] : [])]
     const created = await createProject({ path, name, testCommand: null, checks: [], askMode, models, rules })
     void prepareBase(created.projectId)
-    return Response.json({ ...created, firstTask: strings.wizard.firstTask(name.trim(), names, addTests) }, { status: 201 })
+    // With a GitHub repository given, the project is connected now: an empty repository gets the main branch.
+    const github = cleanGitHubUrl(body.data.githubUrl) ? await sendFirstCommit(path) : null
+    return Response.json({ ...created, github, firstTask: strings.wizard.firstTask(name.trim(), names, addTests) }, { status: 201 })
   } catch (e) {
     // The folder exists now: the person is told, so they can add it the other way instead of hitting "not empty".
     if (e instanceof ProjectSettingsError) return Response.json({ error: `${e.message} ${strings.wizard.errors.createdButFailed(path)}` }, { status: 400 })
