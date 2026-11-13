@@ -304,6 +304,10 @@ export type RunSummary = {
   passedOnItsOwn: boolean
   /** What the task needs next from the person, or where it ended up; null when nothing is asked of them. */
   next: NextStep | null
+  /** While it works: which step it is on, of how many, and that step's name. */
+  progress: { step: number; of: number; name: string } | null
+  /** While it waits for the person: the first reason it stopped, in words. */
+  why: string | null
 }
 
 /**
@@ -312,6 +316,50 @@ export type RunSummary = {
  * published: merged.
  */
 export type NextStep = 'plan' | 'check' | 'send' | 'publish' | 'published'
+
+/** How far each working task is: the steps of its flow that are done, and the one being worked on. */
+export async function progressAmong(rows: readonly { runId: string; status: string; versionId: string }[]): Promise<Map<string, { step: number; of: number; name: string }>> {
+  const out = new Map<string, { step: number; of: number; name: string }>()
+  const working = rows.filter(r => r.status === 'running' || r.status === 'queued')
+  if (working.length === 0) return out
+  const blocksOf = new Map<string, { id: string; label: string }[]>()
+  for (const v of await db.select().from(workflowVersions).where(inArray(workflowVersions.id, [...new Set(working.map(r => r.versionId))]))) {
+    try {
+      blocksOf.set(v.id, (JSON.parse(v.graphJson) as Graph).blocks.filter(b => b.enabled).map(b => ({ id: b.id, label: b.label })))
+    } catch {
+      blocksOf.set(v.id, [])
+    }
+  }
+  const nodes = await db.select({ runId: nodeRuns.runId, blockId: nodeRuns.blockId, state: nodeRuns.state }).from(nodeRuns).where(inArray(nodeRuns.runId, working.map(r => r.runId)))
+  for (const r of working) {
+    const blocks = blocksOf.get(r.versionId) ?? []
+    if (blocks.length === 0) continue
+    const mine = nodes.filter(n => n.runId === r.runId)
+    const done = mine.filter(n => n.state === 'passed' || n.state === 'skipped').length
+    const now = mine.find(n => n.state === 'running')
+    const at = now ? blocks.find(b => b.id === now.blockId) : blocks[Math.min(done, blocks.length - 1)]
+    out.set(r.runId, { step: Math.min(done + 1, blocks.length), of: blocks.length, name: at?.label ?? '' })
+  }
+  return out
+}
+
+/** Why each waiting task stopped: the first reason given when its plan or its change was measured. */
+export async function whyAmong(rows: readonly { runId: string; status: string }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const ids = rows.filter(r => r.status === 'waiting_approval').map(r => r.runId)
+  if (ids.length === 0) return out
+  const found = await db
+    .select({ runId: events.runId, payloadJson: events.payloadJson })
+    .from(events)
+    .where(and(inArray(events.runId, ids), inArray(events.type, ['node.plan_measured', 'node.assessed'])))
+    .orderBy(asc(events.sequence))
+  for (const e of found) {
+    const reasons = (JSON.parse(e.payloadJson) as { reasons?: unknown }).reasons
+    const first = Array.isArray(reasons) ? reasons.find(x => typeof x === 'string' && x.trim() !== '') : undefined
+    if (typeof first === 'string') out.set(e.runId, first)
+  }
+  return out
+}
 
 /** Each task's next step, from what was written down about it: one query, and GitHub is not asked. */
 export async function nextStepAmong(rows: readonly { runId: string; status: string }[]): Promise<Map<string, NextStep>> {
@@ -367,6 +415,7 @@ export async function listRuns(workflowId: string, limit = 50): Promise<RunSumma
       providerId: runs.providerId,
       parentRunId: runs.parentRunId,
       title: runs.title,
+      versionId: runs.versionId,
     })
     .from(runs)
     .where(eq(runs.workflowId, workflowId))
@@ -376,5 +425,21 @@ export async function listRuns(workflowId: string, limit = 50): Promise<RunSumma
   const held = await onHoldAmong(rows.map(r => r.runId))
   const onItsOwn = await passedOnItsOwnAmong(rows.map(r => r.runId))
   const next = await nextStepAmong(rows)
-  return rows.map(r => ({ ...r, title: titleOf(r), onHold: held.has(r.runId), passedOnItsOwn: onItsOwn.has(r.runId), next: next.get(r.runId) ?? null }))
+  const progress = await progressAmong(rows)
+  const why = await whyAmong(rows)
+  return rows.map(r => ({
+    runId: r.runId,
+    request: r.request,
+    status: r.status,
+    createdAt: r.createdAt,
+    branch: r.branch,
+    providerId: r.providerId,
+    parentRunId: r.parentRunId,
+    title: titleOf(r),
+    onHold: held.has(r.runId),
+    passedOnItsOwn: onItsOwn.has(r.runId),
+    next: next.get(r.runId) ?? null,
+    progress: progress.get(r.runId) ?? null,
+    why: why.get(r.runId) ?? null,
+  }))
 }

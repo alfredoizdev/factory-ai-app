@@ -676,7 +676,7 @@ export function CanvasScreen({
             )}
           </div>
         )}
-        <TasksDrawer open={tasksOpen} onClose={closeTasks}>
+        <TasksDrawer open={tasksOpen} onClose={closeTasks} count={taskCount}>
           <PastTasks
             workflowId={workflowId}
             currentRunId={run?.runId ?? null}

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from 'react'
 import { strings } from '@/ui/strings'
+import { brand } from '@/ui/brand'
 import { theme } from '@/ui/theme'
 import { useReducedMotion } from './useReducedMotion'
 
@@ -11,7 +12,7 @@ export const DRAWER_WIDTH = 460
  * A panel that slides in from the right over the canvas. It closes with its ✕, with Escape, or with a click on the
  * dimmed canvas behind it. Closed, it is out of the way and out of the tab order.
  */
-export function TasksDrawer({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
+export function TasksDrawer({ open, onClose, count = null, children }: { open: boolean; onClose: () => void; /** How many tasks there are, shown beside the title. */ count?: number | null; children: ReactNode }) {
   const reduced = useReducedMotion()
   const panel = useRef<HTMLElement>(null)
   useEffect(() => {
@@ -61,8 +62,8 @@ export function TasksDrawer({ open, onClose, children }: { open: boolean; onClos
           maxWidth: '100%',
           display: 'flex',
           flexDirection: 'column',
-          background: theme.bg,
-          borderLeft: `1px solid ${theme.border}`,
+          background: brand.bg,
+          borderLeft: `1px solid ${brand.line}`,
           boxShadow: open ? '-18px 0 40px rgba(0,0,0,0.45)' : 'none',
           transform: open ? 'translateX(0)' : 'translateX(100%)',
           // Closed, it is not just off screen but hidden, once it has slid out: nothing can find or scroll to it.
@@ -71,18 +72,20 @@ export function TasksDrawer({ open, onClose, children }: { open: boolean; onClos
           outline: 'none',
         }}
       >
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: `1px solid ${theme.border}` }}>
-          <h2 style={{ margin: 0, fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: theme.dim }}>{strings.history.title}</h2>
-          <button
-            type="button"
-            aria-label={strings.history.close}
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 4 }}
-          >
+        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px', borderBottom: `1px solid ${brand.line}` }}>
+          <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10, fontFamily: brand.mono, fontSize: 12, fontWeight: 500, letterSpacing: '0.2em', textTransform: 'uppercase', color: brand.quiet }}>
+            {strings.history.title}
+            {count !== null && count > 0 && (
+              <span data-testid="tasks-count" style={{ minWidth: 22, height: 22, padding: '0 6px', boxSizing: 'border-box', display: 'inline-grid', placeItems: 'center', borderRadius: 999, background: '#222222', color: brand.text, fontSize: 12, fontWeight: 700, letterSpacing: 0 }}>
+                {count}
+              </span>
+            )}
+          </h2>
+          <button type="button" aria-label={strings.history.close} onClick={onClose} style={{ background: 'none', border: 'none', color: brand.quiet, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 4 }}>
             ✕
           </button>
         </header>
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 10, scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>{children}</div>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 14, scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>{children}</div>
       </aside>
     </>
   )
