@@ -122,7 +122,9 @@ export function AddProjectDialog({
     // the project's folder goes, named after the project.
     if (chosen.empty) {
       setParent(null)
-      setWhere(v => ({ ...v, path }))
+      // A space typed by accident before or after the folder's name in the Mac's window is dropped: the app makes
+      // the folder with the clean name.
+      setWhere(v => ({ ...v, path: path.replace(/\s*([^/]*?)\s*$/, '$1') }))
       return
     }
     setParent(path)

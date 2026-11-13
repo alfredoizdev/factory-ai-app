@@ -223,10 +223,10 @@ test('a folder that already has code: its own folders are offered to ask about, 
   expect(sent.models).toEqual({ plan: 'haiku', build: 'sonnet', review: 'sonnet' })
 })
 
-test('from scratch: an empty folder the person chose is the project\'s own folder, with nothing added inside it', async () => {
+test('from scratch: an empty folder the person chose is the project\'s own folder, with nothing added inside it and no stray space around its name', async () => {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (url: string) => new Response(JSON.stringify(url === '/api/system/choose-folder' ? { path: '/Users/me/Desktop/landing', empty: true } : {}))),
+    vi.fn(async (url: string) => new Response(JSON.stringify(url === '/api/system/choose-folder' ? { path: '/Users/me/Desktop/ landing ', empty: true } : {}))),
   )
   render(<AddProjectDialog startWith="scratch" onClose={() => {}} onCreated={() => {}} />)
   next()
