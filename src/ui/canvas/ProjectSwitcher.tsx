@@ -185,9 +185,10 @@ export function ProjectSwitcher({ workflowId, style, onOpenSettings }: { workflo
                   <span>{s.base[current.baseStatus as keyof typeof s.base] ?? s.base.none}</span>
                 </span>
                 {current.baseStatus === 'failed' && current.baseMessage && <span style={{ color: theme.dim, overflowWrap: 'anywhere' }}>{current.baseMessage}</span>}
-                {current.repoPath && current.baseStatus !== 'installing' && (
-                  <button type="button" onClick={() => void prepare()} style={{ ...smallButton(current.baseStatus !== 'ready'), justifySelf: 'start' }}>
-                    {current.baseStatus === 'ready' ? s.prepareAgain : s.prepare}
+                {/* Once installed there is nothing to press: the app installs them again by itself when they change. */}
+                {current.repoPath && current.baseStatus !== 'installing' && current.baseStatus !== 'ready' && (
+                  <button type="button" onClick={() => void prepare()} style={{ ...smallButton(true), justifySelf: 'start' }}>
+                    {current.baseStatus === 'failed' ? s.prepareAgain : s.prepare}
                   </button>
                 )}
               </div>

@@ -124,7 +124,7 @@ export const strings = {
     switchTo: 'Switch project',
     noFolder: 'no folder set',
     prepare: 'Make tasks start faster',
-    prepareAgain: 'Install them again',
+    prepareAgain: 'Try again',
     base: {
       none: 'Each task installs the libraries this project needs before it starts, which takes a while. Install them once here and every task starts faster.',
       installing: 'Installing the libraries this project needs, once, so every task starts faster…',
