@@ -101,7 +101,7 @@ export const CommandCard = forwardRef<
       send={send}
       minHeight={mode === 'waiting' || mode === 'done' || mode === 'plan' || mode === 'failed' ? 96 : undefined}
       inputId={RUN_INPUT_ID}
-      label={label}
+      label={send?.name ?? label}
       placeholder={placeholder}
       text={text}
       onText={onText}

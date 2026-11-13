@@ -966,11 +966,15 @@ export const strings = {
   },
   followUp: {
     title: 'Another change',
+    /** The box's name while the change is not published: what is asked joins it. */
+    titleAdjust: 'Adjust this change',
+    /** The box's name once the change is published: what is asked is a new task that builds on it. */
+    titleContinue: 'Continue from this change',
     hint: 'Forgot something? Ask for it here: it is added to this same change, and to its pull request while it is not published yet. For something separate, use New task in the top bar.',
     /** Under a change that is already published: what is asked now cannot join it. */
     hintPublished: 'This change is already published. What you ask for here starts a new task that builds on it, with its own steps and its own publish. This one stays in the history.',
     placeholder: 'What to change next. Press Enter to send it (Shift+Enter for a new line).',
-    start: 'Continue from this change',
+    start: 'Send it',
     starting: 'Starting the follow-up…',
     needNote: 'Say what to change next.',
     notEligible: 'Only a finished change that passed the human check, by you or on its own, can be continued.',

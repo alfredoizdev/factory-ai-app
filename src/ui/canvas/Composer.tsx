@@ -340,7 +340,7 @@ export function imagesIn(data: DataTransfer): File[] {
   return [...data.items].filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter((f): f is File => f !== null)
 }
 
-export type ComposerSend = { label: string; onSend: () => void; enabled: boolean; busy?: boolean }
+export type ComposerSend = { label: string; onSend: () => void; enabled: boolean; busy?: boolean; /** The box's own name, when the moment gives it a better one than the card's. */ name?: string }
 
 /** Send: a paper plane. */
 function SendIcon() {

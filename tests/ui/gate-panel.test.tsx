@@ -387,6 +387,9 @@ test('done: after the merge the card says publishing until the site has answered
   // Published: what is asked now is a new task that builds on this one, and the card says so.
   expect(screen.getByText(strings.followUp.hintPublished)).toBeVisible()
   expect(screen.queryByText(strings.followUp.hint)).toBeNull()
+  // And the box is named for it: no longer an adjustment to this change.
+  expect(screen.getByText(strings.followUp.titleContinue)).toBeInTheDocument()
+  expect(screen.queryByText(strings.followUp.titleAdjust)).toBeNull()
 })
 
 test('each reason is a line of its own and a full sentence, even one stored before reasons were', async () => {

@@ -416,6 +416,7 @@ export function ResultSection({
         <div style={{ fontSize: 12, color: theme.dim }}>{merged ? strings.followUp.hintPublished : strings.followUp.hint}</div>
         {composer({
           label: strings.followUp.start,
+          name: merged ? strings.followUp.titleContinue : strings.followUp.titleAdjust,
           onSend: () => void followUp(),
           enabled: busy === null && !imagesBusy && note.trim() !== '',
           busy: busy === 'follow',
