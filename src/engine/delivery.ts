@@ -307,6 +307,24 @@ export async function keepOnBranch(runId: string, options: KeepOptions = {}): Pr
 }
 
 /**
+ * Whether a run's pull request was merged on GitHub itself, where the app was not told. Asked of GitHub, and written
+ * down when so. False when the run has no pull request or GitHub cannot be asked: the caller goes on as before.
+ */
+async function mergedOnGitHub(runId: string, cwd: string): Promise<boolean> {
+  const opened = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.pr_opened'))).orderBy(desc(events.sequence)).limit(1))[0]
+  const number = opened ? (JSON.parse(opened.payloadJson) as { number?: unknown }).number : undefined
+  if (typeof number !== 'number') return false
+  try {
+    const out = execFileSync('gh', ['pr', 'view', String(number), '--json', 'state'], { cwd, encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'ignore'] })
+    if ((JSON.parse(out) as { state?: string }).state !== 'MERGED') return false
+  } catch {
+    return false
+  }
+  await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number, onGitHub: true } }, tx)))
+  return true
+}
+
+/**
  * For a run that continues an approved change: when that change is saved on its branch and not published yet, the
  * run's worktree moves onto that branch, with its commit on top, and the branch's name is returned. People add what
  * they forgot before publishing, and it belongs in the pull request they are looking at, not in a second one.
@@ -317,6 +335,7 @@ async function joinParentBranch(run: typeof runs.$inferSelect, wt: string, commi
   if (!run.parentRunId) return null
   const parentKept = await recordOf(run.parentRunId, 'run.kept')
   if (!parentKept?.branch || (await recordOf(run.parentRunId, 'run.merged'))) return null
+  if (await mergedOnGitHub(run.parentRunId, wt)) return null
   const branch = parentKept.branch
   try {
     const tip = git(wt, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`])

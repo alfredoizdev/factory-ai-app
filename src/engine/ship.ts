@@ -206,6 +206,11 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
   const checks = (view.statusCheckRollup ?? []).map(checkOf)
   const justOpened = Date.now() - Date.parse(String(opened.at)) < CHECKS_GRACE_MS
   const state = view.state === 'MERGED' ? 'merged' : view.state === 'CLOSED' ? 'closed' : 'open'
+  // Published on GitHub itself rather than from the card: written down here too, the first time it is seen, so the
+  // history says "Published" and a later request starts a change of its own instead of joining this one.
+  if (state === 'merged' && !(await recordOf(runId, 'run.merged'))) {
+    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.merged', payload: { number: view.number, onGitHub: true } }, tx)))
+  }
   let deploy: Check[] = []
   if (state === 'merged' && view.mergeCommit?.oid) {
     // Origin's repository by name; gh fills in {owner}/{repo} itself only when origin is not on GitHub.

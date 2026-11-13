@@ -618,6 +618,13 @@ describe('shipping through GitHub', () => {
     // Recorded once: later reads use the record.
     await shipState(runId, gh)
     expect(calls.filter(c => c[1] === 'list')).toHaveLength(1)
+    // Merged on GitHub, not from the card: written down once, so the app knows the change is published.
+    const { db } = await import('@/db/client')
+    const { events } = await import('@/db/schema')
+    const { and, eq } = await import('drizzle-orm')
+    const noted = await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.merged')))
+    expect(noted).toHaveLength(1)
+    expect(JSON.parse(noted[0]!.payloadJson)).toMatchObject({ number: 3, onGitHub: true })
   })
 
   test('no gh on the computer is said plainly', async () => {
