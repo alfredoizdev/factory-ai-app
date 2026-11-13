@@ -20,6 +20,8 @@ export type ProjectAnalysis = {
   /** Each check the project defines, as the command that runs it the way the project installs; null when it has none. */
   commands: Record<CheckName, string | null>
   defaultBranch: string | null
+  /** The branch the folder is on right now; null when it is on none. */
+  currentBranch?: string | null
   github: { repo: string | null; gh: GhState }
   /** What deploys it or runs on it, as far as the repository says: hosts and CI workflows. */
   deploy: string[]
@@ -141,6 +143,14 @@ const probeGh: GhProbe = () =>
   )
 
 /** Reads a repository. Refused (by validRepoRoot's own message) when the path is not a repository's top folder. */
+function currentBranchOf(root: string): string | null {
+  try {
+    return execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null
+  } catch {
+    return null
+  }
+}
+
 export async function analyzeProject(path: string, gh: GhProbe = probeGh): Promise<ProjectAnalysis> {
   const root = validRepoRoot(path)
   const pkg = readPkg(root)
@@ -159,6 +169,7 @@ export async function analyzeProject(path: string, gh: GhProbe = probeGh): Promi
     framework: frameworkOf(root),
     commands: commandsOf(root),
     defaultBranch: defaultBranch(root),
+    currentBranch: currentBranchOf(root),
     github: { repo, gh: ghState },
     deploy: deployOf(root),
     folders: foldersOf(root),

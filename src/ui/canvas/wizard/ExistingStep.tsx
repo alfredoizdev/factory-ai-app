@@ -73,6 +73,9 @@ export function ExistingStep({
             <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: brand.quiet }}>{s.found}</div>
             <Row level="ok" label={s.gitRepo} value={s.gitRepoFound} />
             <Row level={analysis.defaultBranch !== null ? 'ok' : 'required'} label={s.mainBranch} value={analysis.defaultBranch ?? s.noMainBranch} />
+            {analysis.defaultBranch !== null && analysis.currentBranch !== undefined && (
+              <Row level={analysis.currentBranch === analysis.defaultBranch ? 'ok' : 'optional'} label={s.folderOn} value={analysis.currentBranch === analysis.defaultBranch ? s.folderOnMain(analysis.defaultBranch) : s.folderOnOther(analysis.currentBranch, analysis.defaultBranch)} />
+            )}
             <Row level={analysis.packageManager !== null ? 'ok' : 'optional'} label={s.packageManager} value={analysis.packageManager ?? s.noPackageJson} />
             <Row level={analysis.framework !== null ? 'ok' : 'optional'} label={s.framework} value={analysis.framework ?? s.unknown} />
             <Row level={analysis.commands.test ? 'ok' : 'optional'} label={s.tests} value={analysis.commands.test ? s.testsFound(analysis.commands.test) : s.testsNone} />

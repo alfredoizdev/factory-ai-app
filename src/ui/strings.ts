@@ -245,6 +245,10 @@ export const strings = {
     tests: 'Tests',
     testsFound: (command: string) => command,
     testsNone: 'none found: lint and build can still check each change',
+    folderOn: 'Folder shows',
+    folderOnMain: (main: string) => `${main}, the published version`,
+    folderOnOther: (branch: string | null, main: string) =>
+      `${branch ? `"${branch}"` : 'an older version'}, not ${main}. Tasks still start from the published version, but this folder will not update by itself after you publish.`,
     noMainBranch: 'not found: the project needs a branch called main or master to start tasks from',
     legend: { ok: 'Found', optional: 'Missing, but not needed to continue', required: 'Required to continue' },
     fixRequired: 'Fix what is marked in red, then press "Check this folder" again.',
