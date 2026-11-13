@@ -60,35 +60,6 @@ async function readError(res: Response, fallback: string): Promise<string> {
 
 type Agent = typeof DEMO_PROVIDER_ID | typeof CLAUDE_PROVIDER_ID
 
-/** Where this browser remembers which layout the person likes. */
-const VIEW_KEY = 'factory.view'
-
-type Layout = 'canvas' | 'steps'
-// What was picked on this page, for a browser that will not store it.
-let pickedLayout: Layout | null = null
-const LAYOUT_EVENT = 'factory-view'
-function readLayout(): Layout {
-  if (pickedLayout) return pickedLayout
-  try {
-    return window.localStorage.getItem(VIEW_KEY) === 'steps' ? 'steps' : 'canvas'
-  } catch {
-    return 'canvas'
-  }
-}
-function watchLayout(onChange: () => void) {
-  window.addEventListener(LAYOUT_EVENT, onChange)
-  return () => window.removeEventListener(LAYOUT_EVENT, onChange)
-}
-function pickLayout(next: Layout) {
-  pickedLayout = next
-  try {
-    window.localStorage.setItem(VIEW_KEY, next)
-  } catch {
-    // Not remembered, but shown.
-  }
-  window.dispatchEvent(new Event(LAYOUT_EVENT))
-}
-
 export function CanvasScreen({
   workflowId,
   graph,
@@ -259,8 +230,6 @@ export function CanvasScreen({
   const withShip =
     reachedPerson && runIdNow && shipBlock && shippedViews[shipBlock.id] ? { ...shippedViews, [shipBlock.id]: { ...shippedViews[shipBlock.id]!, results: runIdNow } } : shippedViews
   const closeTasks = useCallback(() => setTasksOpen(false), [])
-  // Which of the two layouts shows the task. Remembered on this browser; the canvas until the person picks otherwise.
-  const layout = useSyncExternalStore(watchLayout, readLayout, () => 'canvas' as const)
 
   async function startRun() {
     setBusy(true)
@@ -454,31 +423,17 @@ export function CanvasScreen({
     askKey: run ? `${run.runId}:${mode}:${askedIdOf(events) ?? ''}` : null,
   })
 
-  // The switch between the two layouts and the list of tasks: floating over the canvas, or in the top bar.
-  const topButtons = (floating: boolean) => {
-    const place = (right: number) => (floating ? { position: 'absolute' as const, top: 12, right, zIndex: 6, background: theme.card, boxShadow: '0 6px 18px rgba(0,0,0,0.35)' } : null)
-    return (
-      <>
-        <button type="button" data-testid="view-switch" title={strings.steps.viewHint} onClick={() => pickLayout(layout === 'canvas' ? 'steps' : 'canvas')} style={{ ...headerButton, fontWeight: 600, ...place(112) }}>
-          {layout === 'canvas' ? strings.steps.viewSteps : strings.steps.viewCanvas}
-        </button>
-        <button type="button" aria-expanded={tasksOpen} onClick={() => setTasksOpen(o => !o)} style={{ ...headerButton, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8, ...place(16) }}>
-          {floating ? (
-            `☰ ${strings.history.open}`
-          ) : (
-            <>
-              {/* Three lines: a list that opens. */}
-              <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-                <path d="M5 7h14M5 12h14M5 17h14" />
-              </svg>
-              {strings.history.open}
-            </>
-          )}
-          {!floating && (taskCount ?? 0) > 0 && <span style={{ padding: '1px 8px', borderRadius: 999, background: theme.border, fontSize: 12 }}>{taskCount}</span>}
-        </button>
-      </>
-    )
-  }
+  // The list of tasks, in the top bar: the right edge of the screen is the command panel's.
+  const tasksButton = (
+    <button type="button" aria-expanded={tasksOpen} onClick={() => setTasksOpen(o => !o)} style={{ ...headerButton, marginLeft: 'auto', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      {/* Three lines: a list that opens. */}
+      <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+        <path d="M5 7h14M5 12h14M5 17h14" />
+      </svg>
+      {strings.history.open}
+      {(taskCount ?? 0) > 0 && <span style={{ padding: '1px 8px', borderRadius: 999, background: theme.border, fontSize: 12 }}>{taskCount}</span>}
+    </button>
+  )
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* The controls stay in the top bar, visible with the sidebar closed: which agent, run, stop, and the run's state. */}
@@ -534,8 +489,8 @@ export function CanvasScreen({
         </button>
         {/* A finished run stays on screen until the person moves on: this clears it for a separate, fresh task. */}
         {run && !live && (
-          // In the steps layout it is the one green button of the top bar.
-          <button type="button" style={layout === 'steps' ? { ...headerButton, fontWeight: 700, background: theme.passed, borderColor: theme.passed, color: '#0d1f12' } : { ...headerButton, fontWeight: 600 }} onClick={() => newTask('new')}>
+          // The one green button of the top bar.
+          <button type="button" style={{ ...headerButton, fontWeight: 700, background: theme.passed, borderColor: theme.passed, color: '#0d1f12' }} onClick={() => newTask('new')}>
             ＋ {strings.delivery.newTask}
           </button>
         )}
@@ -617,11 +572,7 @@ export function CanvasScreen({
             </span>
           )
         )}
-        {layout === 'steps' && (
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            {topButtons(false)}
-          </span>
-        )}
+        {tasksButton}
       </header>
       {suggested && dismissedSuggestion !== suggested && (
         <div data-testid="test-suggestion" role="status" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: `1px solid ${theme.border}`, background: 'rgba(121, 220, 139, 0.07)', fontSize: 13 }}>
@@ -641,9 +592,6 @@ export function CanvasScreen({
       {/* clip, not hidden: a hidden box can still be scrolled by the browser (find in page, scrollIntoView), which would
           slide the whole canvas sideways to show the closed drawer. A clipped one cannot scroll at all. */}
       <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'clip' }}>
-        {/* Top right of the canvas, where the list it opens slides in from. In the steps layout the right edge is the
-            command panel's, so the two buttons are in the top bar instead. */}
-        {layout === 'canvas' && topButtons(true)}
         {run === null && (
           // No task is open (a new one not started yet, or the open one was deleted): say so, and where to go next.
           // The flow below stays visible: it is what the next task will run through.
@@ -753,7 +701,7 @@ export function CanvasScreen({
           />
         </TasksDrawer>
         <CommandCard
-          docked={layout === 'steps'}
+          docked
           key={`${run?.runId ?? 'none'}-${loading ? 'loading' : mode}`}
           ref={cardRef}
           mode={mode}
@@ -795,7 +743,6 @@ export function CanvasScreen({
           notice={{ offer: noticeOffer, onAllow: allowNotice }}
         />
         <Canvas
-          layout={layout}
           stepDetails={id =>
             run ? (
               <BlockDetailsDialog key={`inline-${run.runId}-${id}`} inline runId={run.runId} blockId={id} label={run.blocks.find(b => b.id === id)?.label ?? id} view={withAsked(withShip)[id]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} away={run.here === false ? { machine: run.machine ?? null } : null} onClose={() => undefined} />
@@ -816,7 +763,7 @@ export function CanvasScreen({
           overlay={
             run && !loading ? (
               <>
-                <TaskTitle key={run.runId} roomy={layout === 'steps'} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} />
+                <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} />
               </>
             ) : undefined
           }

@@ -16,7 +16,7 @@ import { Depth } from './Depth'
 import { StepsLane, stepToShow } from './StepsView'
 import { ParticleLayer, type Cable } from './FlowParticles'
 import { useReducedMotion } from './useReducedMotion'
-import { COMMAND_CARD_WIDTH } from './layout'
+import { DOCKED_WIDTH } from './layout'
 import { BlockCard, CARD_WIDTH, EXPANDED_CARD_WIDTH, NotInRunCard, SPINE_WIDTH, SpineCard, type NodeRunView } from './BlockCard'
 import { autoFocus, fisheyeLayout, laneViewport, type Placement } from './fisheye'
 import { SidebarIcon, type SidebarIconName } from './SidebarIcons'
@@ -125,7 +125,8 @@ const CLIP_ROOM = 14
 
 // One way of fitting the lane, used on load and on every refit, so a reload lands where the view already was. The
 // right side keeps room for the command card (its width plus its 16px margin and some air), so no block is under it.
-const PAD = { top: 48, bottom: 48, left: 40, right: COMMAND_CARD_WIDTH + 56 }
+// The command panel is fixed over the right edge of the canvas, at full height: the flow keeps clear of it.
+const PAD = { top: 48, bottom: 48, left: 40, right: DOCKED_WIDTH + 40 }
 const FIT = {
   maxZoom: 1,
   padding: { top: `${PAD.top}px`, bottom: `${PAD.bottom}px`, left: `${PAD.left}px`, right: `${PAD.right}px` },
