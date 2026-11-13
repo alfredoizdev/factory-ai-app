@@ -118,7 +118,9 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   if (event.type === 'node.plan_measured') {
     if (!node) return moved
     const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
-    return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, planMeasure: { simple: payload.simple === true, reasons: strs(payload.reasons), entries: strs(payload.entries) } } }, lastSequence: event.sequence }
+    const q = (payload.question as { text?: unknown } | null | undefined)?.text
+    const asked = typeof q === 'string' && q.trim() !== '' ? q : undefined
+    return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, planMeasure: { simple: payload.simple === true, reasons: strs(payload.reasons), entries: strs(payload.entries), ...(asked ? { question: asked } : {}) } } }, lastSequence: event.sequence }
   }
 
   const state = NODE_EVENT_STATE[event.type]

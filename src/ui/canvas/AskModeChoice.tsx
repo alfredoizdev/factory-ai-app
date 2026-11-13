@@ -44,12 +44,13 @@ export function AskModeChoice({
             value={mode}
             checked={value === mode}
             disabled={disabled}
+            aria-labelledby={`${group}-${mode}-label`}
             aria-describedby={`${group}-${mode}`}
             onChange={() => onChange(mode)}
             style={{ marginTop: 2, flex: 'none' }}
           />
           <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-            <span style={{ color: 'inherit', fontWeight: 600 }}>{LABELS[mode].label}</span>
+            <span id={`${group}-${mode}-label`} style={{ color: 'inherit', fontWeight: 600 }}>{LABELS[mode].label}</span>
             <span id={`${group}-${mode}`} style={{ display: 'block' }}>{LABELS[mode].help}</span>
           </span>
         </label>

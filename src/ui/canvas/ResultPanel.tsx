@@ -11,13 +11,13 @@ import { ShipSection } from './ShipSection'
 import { CardSkeleton } from './Skeleton'
 import type { ComposerSend } from './Composer'
 
+/** How often the card asks again while the app is sending the change on its own. */
+const AUTO_POLL_MS = 3000
+
 /**
  * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
  * on top of it. Bringing it over writes into the person's folder, so the button says exactly what it will do.
  */
-/** How often the card asks again while the app is sending the change on its own. */
-const AUTO_POLL_MS = 3000
-
 type Mode = 'branch' | 'apply' | 'switch' | 'back' | 'push'
 
 export function ResultSection({
@@ -183,16 +183,24 @@ export function ResultSection({
   // What the app did on its own, in one sentence: where it got to, and who passed the change.
   const auto = delivery.autoShip
   const stoppedStale = auto?.state === 'stopped' && ((auto.step === 'keep' && kept) || (auto.step === 'send' && (shipped || delivery.pushed)) || (auto.step === 'open' && shipped))
+  // Chosen from where the change is NOW, never from the event alone: a line that is no longer true is not shown.
   const autoLine =
     auto?.state === 'opened'
-      ? delivery.passedBy === 'app'
-        ? d.auto.openedByApp
-        : d.auto.openedAfterYes
+      ? ship?.pr?.state === 'open'
+        ? delivery.passedBy === 'app'
+          ? d.auto.openedByApp
+          : d.auto.openedAfterYes
+        : null
       : auto?.state === 'stopped' && !stoppedStale
-        ? auto.reason === 'no_connection'
-          ? d.auto.stopped.noConnection
-          : d.auto.stopped[auto.step ?? 'send']
-        : !auto && delivery.passedBy === 'app'
+        ? // The step first: at "open" the change was already sent, whatever the reason.
+          auto.step === 'open'
+          ? d.auto.stopped.open
+          : auto.step === 'keep'
+            ? d.auto.stopped.keep
+            : auto.reason === 'no_connection'
+              ? d.auto.stopped.noConnection
+              : d.auto.stopped.send
+        : !auto && delivery.passedBy === 'app' && !kept && !delivery.delivered
           ? d.auto.passedReady
           : null
   const headline = autoWorking

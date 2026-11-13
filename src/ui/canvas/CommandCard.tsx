@@ -44,7 +44,7 @@ export const CommandCard = forwardRef<
     images: ComposerImage[]
     onImages: (update: (prev: ComposerImage[]) => ComposerImage[]) => void
     /** What the app made of the plan on screen: its reasons, one sentence first. */
-    planMeasure?: { reasons: string[] }
+    planMeasure?: { reasons: string[]; question?: string }
     /** The per-task box on a fresh task: stop for the person at the plan and before the change is kept. */
     stopForMe?: boolean
     onStopForMe?: (v: boolean) => void

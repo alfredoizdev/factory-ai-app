@@ -90,3 +90,57 @@ test('a change the person approved, with nothing sent on its own, shows no extra
   await screen.findByTestId('next-step')
   expect(screen.queryByTestId('auto-line')).toBeNull()
 })
+
+const merged = { ...withPr, pr: { number: 7, url: 'https://gh/pr/7', state: 'merged', conflicts: false }, deploy: [] }
+const closed = { ...withPr, pr: { number: 7, url: 'https://gh/pr/7', state: 'closed', conflicts: false } }
+const opened = { state: 'opened', step: null, reason: null, message: null }
+
+test('"ready, not in your project yet" goes away once the change is saved or brought into the project', async () => {
+  serve({ ...base, passedBy: 'app', autoShip: null })
+  const first = render(<Card />)
+  expect(await screen.findByTestId('auto-line')).toHaveTextContent(d.auto.passedReady)
+  first.unmount()
+  serve({ ...kept, passedBy: 'app', autoShip: null })
+  const second = render(<Card />)
+  await screen.findByTestId('next-step')
+  expect(screen.queryByTestId('auto-line')).toBeNull()
+  second.unmount()
+  serve({ ...kept, delivered: true, files: ['a.ts'], passedBy: 'app', autoShip: null })
+  render(<Card />)
+  await screen.findByTestId('next-step')
+  expect(screen.queryByTestId('auto-line')).toBeNull()
+})
+
+test('"a pull request is open" is not said once it is merged or closed', async () => {
+  for (const ship of [merged, closed]) {
+    serve({ ...kept, passedBy: 'app', pushed: true, autoShip: opened }, ship)
+    const view = render(<Card />)
+    await screen.findByTestId('ship-section')
+    expect(screen.queryByTestId('auto-line')).toBeNull()
+    view.unmount()
+  }
+})
+
+test('a stop that a later manual step overtook is no longer shown', async () => {
+  const stop = (step: string) => ({ state: 'stopped', step, reason: 'failed', message: 'x' })
+  for (const [delivery, ship] of [
+    [{ ...kept, passedBy: 'app', autoShip: stop('keep') }, noPr],
+    [{ ...kept, passedBy: 'app', pushed: true, autoShip: stop('send') }, noPr],
+    [{ ...kept, passedBy: 'app', pushed: true, autoShip: stop('open') }, withPr],
+  ] as const) {
+    serve(delivery, ship)
+    const view = render(<Card />)
+    await screen.findByTestId('next-step')
+    await screen.findByTestId('ship-section')
+    expect(screen.queryByTestId('auto-line')).toBeNull()
+    view.unmount()
+  }
+})
+
+test('when only opening the pull request failed, the card says it was sent, whatever the reason', async () => {
+  serve({ ...kept, passedBy: 'app', pushed: true, autoShip: { state: 'stopped', step: 'open', reason: 'no_connection', message: null } })
+  render(<Card />)
+  const line = await screen.findByTestId('auto-line')
+  expect(line).toHaveTextContent(d.auto.stopped.open)
+  expect(line).not.toHaveTextContent(d.auto.stopped.noConnection)
+})

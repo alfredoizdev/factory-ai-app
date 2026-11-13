@@ -23,7 +23,7 @@ const fits = () => {
   expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth)
 }
 
-function Card({ measure }: { measure?: { reasons: string[] } }) {
+function Card({ measure }: { measure?: { reasons: string[]; question?: string } }) {
   const [text, setText] = useState('')
   const [images, setImages] = useState<ComposerImage[]>([])
   return <CommandCard mode="plan" runId="r1" planMeasure={measure} text={text} onText={setText} images={images} onImages={setImages} onRun={() => undefined} canRun={false} onFollowUp={() => undefined} onSent={() => undefined} />
@@ -40,8 +40,21 @@ test('a parked plan says the first reason in one sentence above the jobs; the re
   await screen.findByTestId('plan-jobs')
   expect(why.compareDocumentPosition(screen.getByTestId('plan-jobs')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: strings.plan.whyStopped }))
+  expect(screen.getByTestId('plan-why')).toHaveTextContent(reasons[0]!)
   expect(screen.getByTestId('plan-why')).toHaveTextContent(reasons[1]!)
   fits()
+})
+
+test('a plan parked at the limit with a planner question shows the question under the reason', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(plan))))
+  render(<Card measure={{ reasons: [r.asks], question: 'Which sign-in do you want?' }} />)
+  expect(screen.getByTestId('plan-why')).toHaveTextContent(r.asks)
+  expect(screen.getByTestId('plan-why')).toHaveTextContent('Which sign-in do you want?')
+})
+
+test('the stream and the details keep the planner question text', () => {
+  const s = foldEvent(foldEvent(emptyStream, { sequence: 1, type: 'node.started' as never, payload: { blockId: 'plan' } }), { sequence: 2, type: 'node.plan_measured' as never, payload: { blockId: 'plan', simple: false, reasons: ['a'], entries: [], question: { text: 'Which?' } } })
+  expect(toViews(s.nodes, [planBlock]).plan!.planMeasure).toEqual({ simple: false, reasons: ['a'], entries: [], question: 'Which?' })
 })
 
 test('with one reason there is nothing more to open', () => {

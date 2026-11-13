@@ -44,7 +44,9 @@ test('every help text is on screen under its option, and tied to it', () => {
   render(<AgentSettings settings={{ ...base, askMode: 'small_changes' }} onSaved={() => {}} />)
   for (const [label, help] of [[a.whatMatters, a.whatMattersHelp], [a.everything, a.everythingHelp], [a.smallChanges, a.smallChangesHelp]] as const) {
     expect(screen.getByText(help)).toBeVisible()
-    expect(screen.getByRole('radio', { name: new RegExp(label) })).toHaveAccessibleDescription(help)
+    const radio = screen.getByRole('radio', { name: new RegExp(label) })
+    expect(radio).toHaveAccessibleDescription(help)
+    expect(radio).toHaveAccessibleName(label)
   }
 })
 
@@ -140,4 +142,14 @@ test('checking the box sends stopForMe with the request, and the box is clear ag
   const post = calls.find(c => c.url.endsWith('/runs') && c.init?.method === 'POST')!
   expect(JSON.parse(String(post.init!.body)).stopForMe).toBe(true)
   await waitFor(() => expect(screen.getByRole('checkbox', { name: strings.composer.stopForMe })).not.toBeChecked())
+})
+
+test('the choices cannot be changed while a save is on its way', async () => {
+  let release: (r: Response) => void = () => undefined
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(res => { release = res })))
+  render(<AgentSettings settings={base} onSaved={() => {}} />)
+  fireEvent.click(screen.getByRole('radio', { name: new RegExp(a.everything) }))
+  for (const radio of screen.getAllByRole('radio')) expect(radio).toBeDisabled()
+  release(new Response(JSON.stringify({ ...base, askMode: 'everything' })))
+  await waitFor(() => expect(screen.getByRole('radio', { name: new RegExp(a.whatMatters) })).toBeEnabled())
 })

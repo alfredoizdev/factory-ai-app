@@ -30,7 +30,7 @@ export type BlockDetails = {
   /** The jobs of the plan, on the Plan block. */
   jobs: { title: string; done: string[]; paths?: string[] }[]
   /** Why the plan stopped for the person or started on its own, and the files or folders it expects to change. Plan block only. */
-  planMeasure?: { simple: boolean; reasons: string[]; entries: string[] }
+  planMeasure?: { simple: boolean; reasons: string[]; entries: string[]; question?: string }
   commands: BlockCommand[]
 }
 
@@ -53,7 +53,10 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
   for (const e of log) {
     const p = JSON.parse(e.payloadJson) as Record<string, unknown>
     // A new round starts the block over: what it did before no longer describes it.
-    if (e.type === 'node.reopened') steps.length = 0
+    if (e.type === 'node.reopened') {
+      steps.length = 0
+      planMeasure = undefined
+    }
     if (e.type === 'node.step' && text(p.text)) steps.push({ text: p.text as string, at: e.createdAt })
     if (e.type === 'node.completed' || e.type === 'node.waiting_approval') summary = text(p.summary) ?? summary
     if (e.type === 'node.failed') summary = text(p.message) ?? summary
@@ -63,7 +66,10 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
         .filter((j): j is { title: string; done?: unknown; paths?: unknown } => typeof (j as { title?: unknown })?.title === 'string')
         .map(j => (Array.isArray(j.paths) ? { title: j.title, done: strs(j.done), paths: strs(j.paths) } : { title: j.title, done: strs(j.done) }))
     }
-    if (e.type === 'node.plan_measured') planMeasure = { simple: p.simple === true, reasons: strs(p.reasons), entries: strs(p.entries) }
+    if (e.type === 'node.plan_measured') {
+      const q = (p.question as { text?: unknown } | null | undefined)?.text
+      planMeasure = { simple: p.simple === true, reasons: strs(p.reasons), entries: strs(p.entries), ...(typeof q === 'string' && q.trim() !== '' ? { question: q } : {}) }
+    }
   }
 
   const used = await db.select().from(usageRecords).where(eq(usageRecords.nodeRunId, node.id))

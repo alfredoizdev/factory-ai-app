@@ -691,9 +691,6 @@ export const strings = {
   },
   delivery: {
     title: 'Approved',
-    ready: 'You approved it. It is ready, but not in your project yet.',
-    readyKept: 'You approved it, and it is saved as its own version of your project.',
-    sent: 'You approved it and sent it to GitHub. Follow it below.',
     finished: 'Done. This change is published. There is nothing else to do for it.',
     nowPublishing: 'Publishing your change. This takes a moment.',
     steps: ['Approved', 'Save', 'Check', 'Publish'],

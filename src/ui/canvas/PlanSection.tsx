@@ -23,7 +23,7 @@ const toJobs = (drafts: readonly Draft[]): Job[] =>
  * The plan, waiting for the person: the jobs the planner proposed, each editable, removable, with a way to add one,
  * and one button to build it as it stands. The box below asks the planner for a different plan instead.
  */
-export function PlanSection({ runId, note, composer, onSent, measure }: { runId: string; note: string; measure?: { reasons: string[] }; composer: (send: ComposerSend) => ReactNode; onSent: () => void; away?: { machine: string | null } | null }) {
+export function PlanSection({ runId, note, composer, onSent, measure }: { runId: string; note: string; measure?: { reasons: string[]; question?: string }; composer: (send: ComposerSend) => ReactNode; onSent: () => void; away?: { machine: string | null } | null }) {
   const list = useRef<HTMLOListElement>(null)
   // Jobs whose checks box was opened by hand (it shows on its own once it has text).
   const [withChecks, setWithChecks] = useState<Set<string>>(new Set())
@@ -89,20 +89,20 @@ export function PlanSection({ runId, note, composer, onSent, measure }: { runId:
       {/* One sentence on why the plan waits; the rest is one click away. */}
       {measure && measure.reasons.length > 0 && (
         <div data-testid="plan-why" style={{ display: 'grid', gap: 6, fontSize: 13, lineHeight: 1.45, color: '#d9c9a3', overflowWrap: 'anywhere' }}>
-          <span>{measure.reasons[0]}</span>
+          {moreReasons ? (
+            <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4 }}>
+              {measure.reasons.map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+          ) : (
+            <span>{measure.reasons[0]}</span>
+          )}
+          {measure.question && <span data-testid="plan-question" style={{ color: '#f1e6c8', fontWeight: 600 }}>{measure.question}</span>}
           {measure.reasons.length > 1 && (
-            <>
-              <button type="button" aria-expanded={moreReasons} onClick={() => setMoreReasons(o => !o)} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline' }}>
-                {strings.plan.whyStopped}
-              </button>
-              {moreReasons && (
-                <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4 }}>
-                  {measure.reasons.slice(1).map((r, i) => (
-                    <li key={i}>{r}</li>
-                  ))}
-                </ul>
-              )}
-            </>
+            <button type="button" aria-expanded={moreReasons} onClick={() => setMoreReasons(o => !o)} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline' }}>
+              {strings.plan.whyStopped}
+            </button>
           )}
         </div>
       )}

@@ -36,3 +36,12 @@ test('a block with no measured plan has no planMeasure', async () => {
   const runId = await newRun()
   expect((await blockDetails(runId, 'build'))!.planMeasure).toBeUndefined()
 })
+
+test('the planner question text is carried, and a new round starts the measure over', async () => {
+  const runId = await newRun()
+  const plan = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === 'plan')!
+  await appendEvent({ runId, nodeRunId: plan.id, type: 'node.plan_measured', payload: { blockId: 'plan', simple: false, reasons: ['r'], entries: [], question: { text: 'Which way?' } } })
+  expect((await blockDetails(runId, 'plan'))!.planMeasure).toEqual({ simple: false, reasons: ['r'], entries: [], question: 'Which way?' })
+  await appendEvent({ runId, nodeRunId: plan.id, type: 'node.reopened', payload: { blockId: 'plan' } })
+  expect((await blockDetails(runId, 'plan'))!.planMeasure).toBeUndefined()
+})

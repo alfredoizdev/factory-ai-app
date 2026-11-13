@@ -22,7 +22,7 @@ export type NodeRunView = {
   /** The measured risk of the run's change, on the human check. Absent: not measured (a demo run). */
   risk?: { level: 'low' | 'high'; reasons: string[] }
   /** The plan block: what the app made of the planner's plan, and why it stopped for the person or started on its own. */
-  planMeasure?: { simple: boolean; reasons: string[]; entries: string[] }
+  planMeasure?: { simple: boolean; reasons: string[]; entries: string[]; question?: string }
   /** The plan block: it started on its own, without the person. */
   autoStarted?: true
   /** Which round of the run this block is on, from the second on: the person asked for changes. */
