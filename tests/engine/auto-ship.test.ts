@@ -153,7 +153,7 @@ test('kept, sent and opened, once each', async () => {
   expect(state.branch).toMatch(/^ai\/footer-year-/)
   expect(git(bare, 'rev-parse', state.branch!)).toBe(state.commit)
   expect(git(bare, 'log', '-1', '--format=%s', state.branch!)).toBe('Add a footer with the year')
-  expect(git(bare, 'branch', '--list', 'main')).toBe('') // their main was not sent
+  expect(git(bare, 'branch', '--list', 'main')).not.toBe('') // origin held nothing: main went first, as it is
   // The pull request goes to origin's repository by name, never to whichever repository gh would pick itself.
   expect(gh.calls).toContainEqual(['pr', 'create', '--repo', 'ai-factory-test/never-real', '--base', 'main', '--head', state.branch, '--fill-first'])
   expect(gh.calls.filter(c => c[0] === 'pr').every(c => c[c.indexOf('--repo') + 1] === 'ai-factory-test/never-real')).toBe(true)

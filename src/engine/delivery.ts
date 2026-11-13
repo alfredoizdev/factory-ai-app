@@ -8,6 +8,7 @@ import { events, projects, runs } from '@/db/schema'
 import { appendEventSync } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 import { branchFromWords, fallbackWords, type CommitMessage } from '@/engine/branch-name'
+import { defaultBranch } from '@/engine/branches'
 import { branchNameFor } from '@/engine/worktree'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
@@ -436,7 +437,8 @@ const gitAsync = (cwd: string, args: string[]) =>
 
 /**
  * Sends the kept branch — that branch only, never forced — to the project's origin, with the person's own git
- * credentials. Their other branches are not sent. Refused before the change is kept, or with no origin.
+ * credentials. Their other branches are not sent, with one exception: an origin that holds nothing yet first gets
+ * the main branch, as it is. Refused before the change is kept, or with no origin.
  */
 export async function pushBranch(runId: string): Promise<Delivery> {
   return serialized(runId, async () => {
@@ -452,6 +454,12 @@ export async function pushBranch(runId: string): Promise<Delivery> {
     const remote = originUrl(repo)
     if (remote === null) throw new DeliveryError(strings.delivery.noRemote, 409, 'no_connection')
     try {
+      // A repository that holds nothing yet (a project started from scratch) gets its main branch first: a pull
+      // request needs a branch to go into, and the first branch GitHub receives becomes the one it shows.
+      const base = defaultBranch(repo)
+      if (base && base !== branch && (await gitAsync(repo, ['ls-remote', '--heads', 'origin'])) === '') {
+        await gitAsync(repo, ['push', '--porcelain', 'origin', `refs/heads/${base}:refs/heads/${base}`])
+      }
       await gitAsync(repo, ['push', '--porcelain', 'origin', `refs/heads/${branch}:refs/heads/${branch}`])
     } catch (e) {
       // git's own words, minus anything secret and any address that could carry a token.

@@ -1273,7 +1273,8 @@ describe('after a change passes in "only what matters"', () => {
     for (const id of ['auto-ship-check', 'auto-ship-keep', 'auto-ship-send', 'auto-ship-open']) expect(once(ids, id)).toBe(1)
     const branch = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.branch!
     expect(g(bare, 'branch', '--list', branch)).not.toBe('')
-    expect(g(bare, 'branch', '--list', 'main')).toBe('')
+    // Origin held nothing, so main went first: a pull request needs a branch to go into.
+    expect(g(bare, 'branch', '--list', 'main')).not.toBe('')
     expect(gh.calls.some(c => c.includes('merge'))).toBe(false)
   })
 

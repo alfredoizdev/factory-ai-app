@@ -376,8 +376,19 @@ describe('pushing the kept branch', () => {
     return { ...r, origin }
   }
 
-  test('sends only the kept branch to origin, and says so', async () => {
-    const { runId, origin } = await withOrigin()
+  test('an origin that holds nothing yet gets the main branch first, so a pull request has somewhere to go', async () => {
+    const { runId, origin, repo } = await withOrigin()
+    await keepOnBranch(runId, { name: 'ai/first-page-x1' })
+    await pushBranch(runId)
+    expect(git(origin, 'rev-parse', 'main')).toBe(git(repo, 'rev-parse', 'main'))
+    expect(git(origin, 'branch', '--list', 'ai/first-page-x1')).not.toBe('')
+  })
+
+  test('sends only the kept branch to an origin that already holds the project, and says so', async () => {
+    const { runId, origin, repo } = await withOrigin()
+    // Origin already holds something of theirs: only the kept branch is added to it.
+    git(repo, 'branch', 'theirs')
+    git(repo, 'push', '-q', 'origin', 'theirs')
     const kept = (await keepOnBranch(runId, { name: 'ai/outline-buttons-x1' }))
     const pushed = await pushBranch(runId)
     expect(pushed.pushed).toBe(true)
