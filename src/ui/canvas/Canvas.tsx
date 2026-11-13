@@ -8,6 +8,7 @@ import { summarize } from '@/domain/summary'
 import { BlockInspector } from './BlockInspector'
 import { addBlock, addableKinds, canDisable, canRemove, chainTo, moveBlock, removeBlock, updateBlock } from './editing'
 import { theme } from '@/ui/theme'
+import { Logo } from '@/ui/Logo'
 import { strings } from '@/ui/strings'
 import { Depth } from './Depth'
 import { ParticleLayer, type Cable } from './FlowParticles'
@@ -632,7 +633,10 @@ export function Canvas({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.13em', textTransform: 'uppercase', color: theme.dim }}>{strings.app.name}</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 800, letterSpacing: '0.13em', textTransform: 'uppercase', color: theme.dim }}>
+            <span style={{ color: '#e8eaf0', display: 'flex' }}><Logo size={22} /></span>
+            {strings.app.name}
+          </span>
           <RailButton icon="collapse" label={strings.sidebar.close} onClick={() => setSidebarOpen(false)} />
         </div>
 

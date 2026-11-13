@@ -26,3 +26,8 @@ test('each way to start opens the wizard already on that way, past the first scr
   fireEvent.click(screen.getByTestId('welcome-existing'))
   expect(screen.getByLabelText(strings.setup.folder)).toBeInTheDocument()
 })
+
+test('the welcome screen carries the app\'s mark', () => {
+  render(<Welcome />)
+  expect(screen.getByTestId('app-logo')).toBeInTheDocument()
+})

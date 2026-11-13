@@ -2,6 +2,7 @@
 
 import { useState, type CSSProperties } from 'react'
 import { AddProjectDialog } from '@/ui/canvas/AddProjectDialog'
+import { Logo } from '@/ui/Logo'
 import { strings } from '@/ui/strings'
 
 const w = strings.welcome
@@ -57,7 +58,7 @@ export function Welcome() {
         <section style={{ display: 'grid', gap: 'clamp(28px, 4vw, 48px)' }}>
           <div style={{ display: 'grid', gap: 22 }}>
             <p style={{ ...label, color: c.green, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', background: c.green }} />
+              <span style={{ color: c.text, display: 'flex' }}><Logo size={30} accent={c.green} /></span>
               {w.eyebrow}
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: '24px 56px', alignItems: 'end' }}>
