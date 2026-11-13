@@ -440,16 +440,23 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
   const [details, setDetails] = useState<BlockDetails | null | undefined>(undefined)
   const [allSteps, setAllSteps] = useState(false)
 
+  // Read again every few seconds while the block works, and once more when it stops, so the steps listed here are
+  // the ones it has taken so far and not the ones it had taken when this was opened.
+  const working = view?.state === 'running'
   useEffect(() => {
     let live = true
-    fetch(`/api/runs/${runId}/blocks/${encodeURIComponent(blockId)}`)
-      .then(r => (r.ok ? (r.json() as Promise<BlockDetails>) : null))
-      .then(v => live && setDetails(v))
-      .catch(() => live && setDetails(null))
+    const read = (first: boolean) =>
+      fetch(`/api/runs/${runId}/blocks/${encodeURIComponent(blockId)}`)
+        .then(r => (r.ok ? (r.json() as Promise<BlockDetails>) : null))
+        .then(v => live && (v || first) && setDetails(v))
+        .catch(() => live && first && setDetails(null))
+    void read(true)
+    const again = working ? setInterval(() => void read(false), 4000) : null
     return () => {
       live = false
+      if (again) clearInterval(again)
     }
-  }, [runId, blockId])
+  }, [runId, blockId, working])
 
   useEffect(() => {
     if (inline) return

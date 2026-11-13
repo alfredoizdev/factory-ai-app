@@ -809,6 +809,7 @@ export function Canvas({
           <StepsLane
             blocks={presented.blocks}
             stateOf={stateIn}
+            workOf={id => runById.get(id) ?? null}
             hasRun={hasRun}
             pickedId={stepPick}
             onPick={id => {

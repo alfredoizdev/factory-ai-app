@@ -59,6 +59,7 @@ export function StepsLane({
   hasRun,
   pickedId,
   onPick,
+  workOf,
   title,
   detail,
   blank = false,
@@ -71,6 +72,8 @@ export function StepsLane({
   /** The block whose details are shown: a step's own, or one check of a group. */
   pickedId: string | null
   onPick: (blockId: string) => void
+  /** What a block of the task says about its work: its sentence and the things it did, newest last. */
+  workOf?: (id: string) => { summary: string; steps: readonly string[] } | null
   /** The open task's title, above the row. */
   title?: ReactNode
   /** The picked block's details, drawn under the row. */
@@ -99,10 +102,14 @@ export function StepsLane({
             const group = st.blocks.length > 1
             const before = i > 0 ? stepState(steps[i - 1]!) : null
             const pulse = off ? null : pulseOf(state)
+            // The step where something is happening says what, on the card itself: its sentence, and the last thing it did.
+            const liveBlock = off ? undefined : st.blocks.find(b => b.enabled && LIVE.includes(stateOf(b.id) ?? ''))
+            const work = liveBlock ? (workOf?.(liveBlock.id) ?? null) : null
+            const latest = work && state === 'running' ? work.steps[work.steps.length - 1] : undefined
             return (
               <Fragment key={st.id}>
                 {i > 0 && <li aria-hidden="true" className={state === 'running' ? 'factory-step-flow' : undefined} style={{ flex: '0 1 22px', minWidth: 8, height: 2, marginTop: 34, ...(state === 'running' ? ({ '--pulse': pulse } as CSSProperties) : { background: before === 'passed' ? brand.green : brand.line, opacity: before === 'passed' ? 0.55 : 1 }) }} />}
-                <li style={{ flex: '1 1 104px', maxWidth: 170, minWidth: 104, display: 'grid', opacity: off ? 0.5 : 1 }}>
+                <li style={{ flex: work ? '2 1 230px' : '1 1 104px', maxWidth: work ? 320 : 170, minWidth: 104, display: 'grid', opacity: off ? 0.5 : 1 }}>
                   <div data-live={pulse ? 'true' : undefined} className={pulse ? 'factory-step-live' : undefined} style={{ display: 'grid', gap: 12, alignContent: 'start', padding: 14, borderRadius: 14, border: `1px solid ${pulse ? `rgb(${pulse})` : on ? brand.green : brand.line}`, background: on ? '#1c1f1c' : brand.card, ...(pulse ? ({ '--pulse': pulse } as CSSProperties) : { boxShadow: on ? '0 0 0 3px rgba(121, 220, 139, 0.12)' : 'none' }) }}>
                     <button
                       type="button"
@@ -120,6 +127,17 @@ export function StepsLane({
                         <span style={{ minHeight: 13, fontFamily: brand.mono, fontSize: 10.5, letterSpacing: '0.14em', textTransform: 'uppercase', color: colourOf(state) }}>{label(state, off)}</span>
                       </span>
                     </button>
+                    {work && (work.summary || latest) && (
+                      <div data-testid={`step-work-${st.id}`} style={{ display: 'grid', gap: 6, paddingTop: 10, borderTop: `1px solid ${brand.line}`, fontSize: 13, lineHeight: 1.45 }}>
+                        {work.summary && <span style={{ color: brand.text, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' }}>{work.summary}</span>}
+                        {latest && latest !== work.summary && (
+                          <span style={{ display: 'flex', gap: 7, color: brand.quiet, fontFamily: brand.mono, fontSize: 11.5 }}>
+                            <span aria-hidden="true" style={{ color: colourOf(state) }}>›</span>
+                            <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' }}>{latest}</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {group && (
                       // Each check of the group, with its own mark: picking one shows that check's details.
                       <ul style={{ listStyle: 'none', margin: 0, padding: '10px 0 0', display: 'grid', gap: 4, borderTop: `1px solid ${brand.line}` }}>

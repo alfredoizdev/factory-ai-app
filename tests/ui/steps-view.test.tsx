@@ -53,6 +53,16 @@ describe('the steps view', () => {
     expect(document.querySelectorAll('[data-live]').length).toBe(1)
   })
 
+  it('says on the working step what it is doing: its sentence and the last thing it did, and nothing on the others', () => {
+    const work = { plan: { summary: 'Reading your project and drafting the plan.', steps: ['Planned with fable.', 'Running: grep -rn play src'] }, input: { summary: 'Input received.', steps: [] } }
+    render(<StepsLane blocks={blocks} stateOf={states({ input: 'passed', plan: 'running' })} workOf={id => work[id as 'plan'] ?? null} hasRun pickedId="plan" onPick={() => undefined} />)
+    const card = screen.getByTestId('step-work-plan')
+    expect(card.textContent).toContain('Reading your project and drafting the plan.')
+    expect(card.textContent).toContain('Running: grep -rn play src')
+    expect(card.textContent).not.toContain('Planned with fable.')
+    expect(screen.queryByTestId('step-work-input')).toBeNull()
+  })
+
   it('says what the row is for before any task runs', () => {
     render(<StepsLane blocks={blocks} stateOf={() => null} hasRun={false} pickedId="ship" onPick={() => undefined} />)
     expect(screen.getByText(strings.steps.beforeRun)).toBeTruthy()
