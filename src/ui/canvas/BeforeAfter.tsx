@@ -157,7 +157,7 @@ function BeforeAfterModal({ runId, state, at, onClose }: { runId: string; state:
     cursor: 'pointer',
   })
   return createPortal(
-    <div data-testid="before-after-modal" onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(5, 7, 11, 0.75)', display: 'grid', placeItems: 'center', padding: 24 }}>
+    <div data-testid="before-after-modal" onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(5, 7, 11, 0.75)', display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', padding: 24 }}>
       <div
         ref={panel}
         role="dialog"

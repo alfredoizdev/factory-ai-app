@@ -345,7 +345,7 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
   const shownSteps = allSteps ? steps : steps.slice(-FEW_STEPS)
   const showsPictures = kind === 'ship' || kind === 'human'
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center', background: 'rgba(5, 7, 11, 0.7)' }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', background: 'rgba(5, 7, 11, 0.7)' }}>
       <div
         role="dialog"
         aria-modal="true"

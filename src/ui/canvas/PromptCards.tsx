@@ -96,7 +96,7 @@ function PromptModal({ prompt, onClose }: { prompt: Prompt; onClose: () => void 
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   return createPortal(
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(5, 7, 11, 0.7)', display: 'grid', placeItems: 'center', padding: 24 }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(5, 7, 11, 0.7)', display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', padding: 24 }}>
       <div
         ref={panel}
         role="dialog"

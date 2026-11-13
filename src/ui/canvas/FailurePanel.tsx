@@ -265,7 +265,7 @@ export function FailureDialog({
   const first = failure?.failed[0]
   const technical = failure?.failed.filter(b => b.command || b.message) ?? []
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center', background: 'rgba(5, 7, 11, 0.65)' }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', background: 'rgba(5, 7, 11, 0.65)' }}>
       <div
         role="dialog"
         aria-modal="true"

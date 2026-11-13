@@ -20,7 +20,7 @@ export function ProjectSettingsDialog({ settings, onClose, onSaved }: { settings
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'grid', placeItems: 'center', background: 'rgba(5, 7, 11, 0.6)' }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', background: 'rgba(5, 7, 11, 0.6)' }}>
       <div
         ref={panel}
         role="dialog"
