@@ -1,16 +1,16 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { events, runs } from '@/db/schema'
 import { shipsOnItsOwn, type AskMode } from '@/domain/ask-mode'
 import type { AskModel } from '@/engine/branch-name'
 import { defaultBranch } from '@/engine/branches'
-import { DeliveryError, deliveryState, keepOnBranch, pushBranch, type AutoShip } from '@/engine/delivery'
+import { autoShipRecord, changedFiles, DeliveryError, deliveryState, keepOnBranch, pushBranch, type AutoShip } from '@/engine/delivery'
 import { keepOptionsFor } from '@/engine/delivery-options'
 import { appendEvent } from '@/engine/events'
 import { projectHere } from '@/engine/machine'
 import { humanCheckPassedBy } from '@/engine/passed-check'
 import { clip } from '@/engine/redact'
-import { openPullRequest, ShipError, type Gh } from '@/engine/ship'
+import { gitHubConnectionProblem, openPullRequest, ShipError, type Gh } from '@/engine/ship'
 import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
 
@@ -26,10 +26,7 @@ export type AutoStep = { ok: true } | { ok: false }
 
 type Step = NonNullable<AutoShip['step']>
 
-async function latest(runId: string): Promise<AutoShip | null> {
-  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.auto_ship'))).orderBy(desc(events.sequence)))[0]
-  return row ? (JSON.parse(row.payloadJson) as AutoShip) : null
-}
+const latest = autoShipRecord
 
 const record = (runId: string, payload: AutoShip) => appendEvent({ runId, type: 'run.auto_ship', payload })
 
@@ -58,6 +55,8 @@ export async function shouldShipOnItsOwn(runId: string, mode: AskMode, stopForMe
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run || run.status !== 'completed' || run.providerId === DEMO_PROVIDER_ID) return false
   if ((await humanCheckPassedBy(runId)) === null) return false
+  // A run that changed nothing has nothing to keep or send: it is not tried, rather than said to have failed.
+  if ((await changedFiles(runId)).length === 0) return false
   const last = await latest(runId)
   return last?.state !== 'stopped' && last?.state !== 'opened'
 }
@@ -71,8 +70,11 @@ export async function autoKeep(runId: string, deps: AutoShipDeps = {}): Promise<
   })
 }
 
-/** Sends the kept branch, that branch only and never forced, to origin. A branch already sent is not sent again. */
-export async function autoSend(runId: string): Promise<AutoStep> {
+/**
+ * Sends the kept branch, that branch only and never forced, to origin. A branch already sent is not sent again. Nothing
+ * is sent unless the whole way to a pull request is there first: an origin on GitHub, and gh installed and signed in.
+ */
+export async function autoSend(runId: string, deps: AutoShipDeps = {}): Promise<AutoStep> {
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   const repo = run ? ((await projectHere(run.projectId))?.repoPath ?? null) : null
   const state = await deliveryState(runId)
@@ -82,7 +84,11 @@ export async function autoSend(runId: string): Promise<AutoStep> {
     await stop(runId, 'send', 'failed', strings.delivery.auto.mainBranch)
     return { ok: false }
   }
-  return softly(runId, 'send', async () => void (await pushBranch(runId)))
+  return softly(runId, 'send', async () => {
+    const missing = repo ? await gitHubConnectionProblem(repo, deps.gh) : null
+    if (missing) throw missing
+    await pushBranch(runId)
+  })
 }
 
 /** Opens the pull request into the main branch, or reuses the one recorded, and says it is open. Never merges. */

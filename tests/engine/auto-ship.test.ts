@@ -10,7 +10,7 @@ import { autoKeep, autoOpen, autoSend, shouldShipOnItsOwn } from '@/engine/auto-
 import { deliveryState } from '@/engine/delivery'
 import { eventsSince } from '@/engine/events'
 import { APPROVAL_DECIDED, PLAN_DECIDED } from '@/engine/inngest/client'
-import { orchestrateRun, type StepApi } from '@/engine/inngest/execute-run'
+import { afterRunGaveUp, orchestrateRun, type StepApi } from '@/engine/inngest/execute-run'
 import { recordDecision } from '@/engine/approvals'
 import { decidePlan } from '@/engine/plan'
 import { createProject } from '@/engine/projects'
@@ -29,7 +29,19 @@ import { strings } from '@/ui/strings'
 beforeAll(() => migrateDb())
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
 
-type Origin = 'bare' | 'missing' | 'none'
+/**
+ * `github`: an origin that reads as GitHub when the app judges it, while every push lands in a bare repository in a
+ * temporary folder (its pushurl), and this repository may use no network protocol at all, so nothing can reach a real
+ * host. `plain`: that bare repository as the origin itself, which is not GitHub. `missing`: GitHub-looking, but pushes
+ * go to a folder that does not exist. `none`: no origin.
+ */
+type Origin = 'github' | 'plain' | 'missing' | 'none'
+const NEVER_REAL = 'https://github.com/ai-factory-test/never-real.git'
+function githubLooking(dir: string, pushTo: string) {
+  git(dir, 'remote', 'add', 'origin', NEVER_REAL)
+  git(dir, 'config', 'remote.origin.pushurl', pushTo)
+  for (const p of ['https', 'http', 'ssh', 'git']) git(dir, 'config', `protocol.${p}.allow`, 'never')
+}
 /** A project made the way the app makes one, on a real folder with one commit, and where its origin points. */
 async function project(origin: Origin, askMode: AskMode = 'everything') {
   const dir = mkdtempSync(join(tmpdir(), 'factory-auto-'))
@@ -39,17 +51,16 @@ async function project(origin: Origin, askMode: AskMode = 'everything') {
   writeFileSync(join(dir, 'README.md'), 'shop\n')
   git(dir, 'add', '.')
   git(dir, 'commit', '-q', '-m', 'mine')
-  let bare: string | null = null
-  if (origin === 'bare') {
-    bare = mkdtempSync(join(tmpdir(), 'factory-auto-origin-'))
-    git(bare, 'init', '-q', '--bare', '-b', 'main')
-    git(dir, 'remote', 'add', 'origin', bare)
-  } else if (origin === 'missing') {
-    git(dir, 'remote', 'add', 'origin', join(mkdtempSync(join(tmpdir(), 'factory-auto-gone-')), 'not-here.git'))
-  }
+  const bare = mkdtempSync(join(tmpdir(), 'factory-auto-origin-'))
+  git(bare, 'init', '-q', '--bare', '-b', 'main')
+  if (origin === 'github') githubLooking(dir, bare)
+  else if (origin === 'plain') git(dir, 'remote', 'add', 'origin', bare)
+  else if (origin === 'missing') githubLooking(dir, join(mkdtempSync(join(tmpdir(), 'factory-auto-gone-')), 'not-here.git'))
   const { projectId, workflowId } = await createProject({ path: dir, name: 'Shop', testCommand: 'npm test', checks: [], askMode })
   return { dir, bare, projectId, workflowId }
 }
+/** Every branch the bare repository received. */
+const branchesIn = (bare: string) => git(bare, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')
 
 const passing: TestRun = { command: 'npm test', exitCode: 0, signal: null, started: true, durationMs: 10, counts: { passed: 4, failed: 0, total: 4 }, outputTail: '', changedTestFiles: [] }
 const failing: TestRun = { ...passing, exitCode: 1, counts: { passed: 3, failed: 1, total: 4 }, outputTail: 'FAIL' }
@@ -111,12 +122,12 @@ async function approvedRun(origin: Origin, provider: AgentProvider = builder()) 
 }
 
 /** A gh that records what it is asked, and answers like GitHub once a pull request was created. */
-function fakeGh(fail?: string): Gh & { calls: string[][] } {
+function fakeGh(fail?: string | Error): Gh & { calls: string[][] } {
   const calls: string[][] = []
   let opened = false
   const gh: Gh = async (args: string[]) => {
     calls.push(args)
-    if (fail) throw new Error(fail)
+    if (fail) throw typeof fail === 'string' ? new Error(fail) : fail
     if (args[0] === 'pr' && args[1] === 'create') return ((opened = true), '')
     if (args[0] === 'pr' && args[1] === 'view') {
       if (!opened) throw new Error('no pull requests found for branch')
@@ -133,48 +144,48 @@ const autoShips = async (runId: string) => (await eventsSince(runId, 0)).filter(
 const statusOf = async (runId: string) => (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status
 
 test('kept, sent and opened, once each', async () => {
-  const { runId, bare } = await approvedRun('bare')
+  const { runId, bare } = await approvedRun('github')
   const gh = fakeGh()
   const deps = { gh, ask: fakeAsk }
   expect(await autoKeep(runId, deps)).toEqual({ ok: true })
-  expect(await autoSend(runId)).toEqual({ ok: true })
+  expect(await autoSend(runId, deps)).toEqual({ ok: true })
   expect(await autoOpen(runId, deps)).toEqual({ ok: true })
   const types = (await typesOf(runId)).filter(t => ['run.kept', 'run.pushed', 'run.pr_opened'].includes(t))
   expect(types).toEqual(['run.kept', 'run.pushed', 'run.pr_opened'])
   expect((await autoShips(runId)).map(a => a.state)).toEqual(['started', 'opened'])
   const state = await deliveryState(runId)
   expect(state.branch).toMatch(/^ai\/footer-year-/)
-  expect(git(bare!, 'rev-parse', state.branch!)).toBe(state.commit)
-  expect(git(bare!, 'log', '-1', '--format=%s', state.branch!)).toBe('Add a footer with the year')
-  expect(git(bare!, 'branch', '--list', 'main')).toBe('') // their main was not sent
+  expect(git(bare, 'rev-parse', state.branch!)).toBe(state.commit)
+  expect(git(bare, 'log', '-1', '--format=%s', state.branch!)).toBe('Add a footer with the year')
+  expect(git(bare, 'branch', '--list', 'main')).toBe('') // their main was not sent
   expect(gh.calls).toContainEqual(['pr', 'create', '--base', 'main', '--head', state.branch, '--fill-first'])
   expect(state.autoShip).toEqual({ state: 'opened', step: null, reason: null, message: null })
   expect(gh.calls.some(c => c.includes('merge'))).toBe(false)
 })
 
 test('each step is safe to run twice', async () => {
-  const { runId } = await approvedRun('bare')
+  const { runId } = await approvedRun('github')
   const gh = fakeGh()
   const deps = { gh, ask: fakeAsk }
   await autoKeep(runId, deps)
-  await autoSend(runId)
+  await autoSend(runId, deps)
   await autoOpen(runId, deps)
   const before = (await eventsSince(runId, 0)).length
   expect(await autoKeep(runId, deps)).toEqual({ ok: true })
-  expect(await autoSend(runId)).toEqual({ ok: true })
+  expect(await autoSend(runId, deps)).toEqual({ ok: true })
   expect(await autoOpen(runId, deps)).toEqual({ ok: true })
   expect((await eventsSince(runId, 0)).length).toBe(before)
   expect(gh.calls.filter(c => c[1] === 'create')).toHaveLength(1)
 })
 
 test('a branch the person already kept and sent is not kept or sent again', async () => {
-  const { runId } = await approvedRun('bare')
+  const { runId } = await approvedRun('github')
   const { keepOnBranch, pushBranch } = await import('@/engine/delivery')
   await keepOnBranch(runId, { name: 'ai/my-footer' })
   await pushBranch(runId)
   const gh = fakeGh()
   expect(await autoKeep(runId, { gh, ask: fakeAsk })).toEqual({ ok: true })
-  expect(await autoSend(runId)).toEqual({ ok: true })
+  expect(await autoSend(runId, { gh })).toEqual({ ok: true })
   expect(await autoOpen(runId, { gh, ask: fakeAsk })).toEqual({ ok: true })
   const types = await typesOf(runId)
   expect(types.filter(t => t === 'run.kept')).toHaveLength(1)
@@ -186,7 +197,7 @@ test('a branch the person already kept and sent is not kept or sent again', asyn
 test('no origin: it is kept, nothing is sent, and the run is still completed', async () => {
   const { runId } = await approvedRun('none')
   expect(await autoKeep(runId, { ask: fakeAsk })).toEqual({ ok: true })
-  expect(await autoSend(runId)).toEqual({ ok: false })
+  expect(await autoSend(runId, { gh: fakeGh() })).toEqual({ ok: false })
   expect((await autoShips(runId)).at(-1)).toEqual({ state: 'stopped', step: 'send', reason: 'no_connection', message: strings.delivery.noRemote })
   const state = await deliveryState(runId)
   expect(state.kept).toBe(true)
@@ -195,21 +206,54 @@ test('no origin: it is kept, nothing is sent, and the run is still completed', a
   expect(await statusOf(runId)).toBe('completed')
 })
 
-test('gh not signed in is said, and the branch is still sent', async () => {
-  const { runId } = await approvedRun('bare')
-  const gh = fakeGh('To get started with GitHub CLI, please run:  gh auth login')
-  await autoKeep(runId, { gh, ask: fakeAsk })
-  await autoSend(runId)
-  expect(await autoOpen(runId, { gh, ask: fakeAsk })).toEqual({ ok: false })
-  expect((await autoShips(runId)).at(-1)).toEqual({ state: 'stopped', step: 'open', reason: 'no_connection', message: strings.ship.notLoggedIn })
-  expect((await deliveryState(runId)).pushed).toBe(true)
-  expect(await statusOf(runId)).toBe('completed')
+test('the test origin cannot reach any network host', async () => {
+  const { dir } = await project('github')
+  expect(() => execFileSync('git', ['ls-remote', 'origin'], { cwd: dir, stdio: 'pipe' })).toThrow()
+})
+
+describe('nothing is sent without the whole way to a pull request', () => {
+  const sentNothing = async (origin: Origin, gh: Gh, message: string) => {
+    const { runId, bare } = await approvedRun(origin)
+    await autoKeep(runId, { gh, ask: fakeAsk })
+    expect(await autoSend(runId, { gh })).toEqual({ ok: false })
+    expect((await autoShips(runId)).at(-1)).toEqual({ state: 'stopped', step: 'send', reason: 'no_connection', message })
+    expect(branchesIn(bare)).toBe('')
+    const state = await deliveryState(runId)
+    expect([state.kept, state.pushed]).toEqual([true, false])
+    expect(await statusOf(runId)).toBe('completed')
+  }
+
+  test('an origin that is not on GitHub', async () => {
+    const gh = fakeGh()
+    await sentNothing('plain', gh, strings.ship.notGitHub)
+    expect(gh.calls).toEqual([])
+  })
+
+  test('gh not installed', async () => {
+    await sentNothing('github', fakeGh(Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' })), strings.ship.noGh)
+  })
+
+  test('gh not signed in', async () => {
+    const gh = fakeGh('You are not logged into any GitHub hosts. To log in, run: gh auth login')
+    await sentNothing('github', gh, strings.ship.notLoggedIn)
+    expect(gh.calls).toEqual([['auth', 'status', '--hostname', 'github.com']])
+  })
+})
+
+test('a kept branch named like the project\'s main branch is not sent on its own', async () => {
+  const { runId, dir, bare } = await approvedRun('github')
+  git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk')
+  const { keepOnBranch } = await import('@/engine/delivery')
+  await keepOnBranch(runId, { name: 'trunk' })
+  expect(await autoSend(runId, { gh: fakeGh() })).toEqual({ ok: false })
+  expect((await autoShips(runId)).at(-1)).toEqual({ state: 'stopped', step: 'send', reason: 'failed', message: strings.delivery.auto.mainBranch })
+  expect(branchesIn(bare)).toBe('')
 })
 
 test('a refused push is said, nothing is forced, and the change stays kept', async () => {
   const { runId } = await approvedRun('missing')
   await autoKeep(runId, { ask: fakeAsk })
-  expect(await autoSend(runId)).toEqual({ ok: false })
+  expect(await autoSend(runId, { gh: fakeGh() })).toEqual({ ok: false })
   const last = (await autoShips(runId)).at(-1)!
   expect(last).toMatchObject({ state: 'stopped', step: 'send', reason: 'failed' })
   expect(String(last.message)).toMatch(/^Git could not push the branch\./)
@@ -220,7 +264,7 @@ test('a refused push is said, nothing is forced, and the change stays kept', asy
 
 describe('whether a change ships on its own', () => {
   test('only in "only what matters", without "stop for me"', async () => {
-    const { runId } = await approvedRun('bare')
+    const { runId } = await approvedRun('github')
     expect(await shouldShipOnItsOwn(runId, 'everything', false)).toBe(false)
     expect(await shouldShipOnItsOwn(runId, 'small_changes', false)).toBe(false)
     expect(await shouldShipOnItsOwn(runId, 'what_matters', true)).toBe(false)
@@ -229,13 +273,13 @@ describe('whether a change ships on its own', () => {
   })
 
   test('not for a failed run', async () => {
-    const { runId } = await approvedRun('bare', builder('src/ui/footer/Footer.tsx', failing))
+    const { runId } = await approvedRun('github', builder('src/ui/footer/Footer.tsx', failing))
     expect(await statusOf(runId)).toBe('failed')
     expect(await shouldShipOnItsOwn(runId, 'what_matters', false)).toBe(false)
   })
 
   test('not for the demo', async () => {
-    const { runId } = await approvedRun('bare', createDemoProvider({ stepDelayMs: 0 }))
+    const { runId } = await approvedRun('github', createDemoProvider({ stepDelayMs: 0 }))
     expect(await statusOf(runId)).toBe('completed')
     expect(await shouldShipOnItsOwn(runId, 'what_matters', false)).toBe(false)
   })
@@ -243,7 +287,72 @@ describe('whether a change ships on its own', () => {
   test('not again after it stopped', async () => {
     const { runId } = await approvedRun('none')
     await autoKeep(runId, { ask: fakeAsk })
-    await autoSend(runId)
+    await autoSend(runId, { gh: fakeGh() })
     expect(await shouldShipOnItsOwn(runId, 'what_matters', false)).toBe(false)
+  })
+
+  test('not again after it opened', async () => {
+    const { runId } = await approvedRun('github')
+    const deps = { gh: fakeGh(), ask: fakeAsk }
+    await autoKeep(runId, deps)
+    await autoSend(runId, deps)
+    await autoOpen(runId, deps)
+    expect(await shouldShipOnItsOwn(runId, 'what_matters', false)).toBe(false)
+  })
+
+  test('not for a passed run that changed nothing: there is nothing to send', async () => {
+    const quiet: AgentProvider = { ...builder(), async *execute(input) {
+      if (input.blockKind === 'tests') yield { type: 'evidence', kind: 'test_run', data: passing }
+      if (input.blockKind === 'review') {
+        yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+        return
+      }
+      yield { type: 'done', summary: 'ok', source: 'system' }
+    } }
+    const { runId } = await approvedRun('github', quiet)
+    expect(await statusOf(runId)).toBe('completed')
+    expect(await shouldShipOnItsOwn(runId, 'what_matters', false)).toBe(false)
+  })
+})
+
+describe('when a step keeps failing until the run gives up', () => {
+  test('a started send is ended where it got to, and the run stays completed', async () => {
+    const { runId, bare } = await approvedRun('github')
+    await autoKeep(runId, { ask: fakeAsk })
+    // The send step threw something that is not a refusal, again and again, until Inngest gave up.
+    await afterRunGaveUp(runId)
+    expect((await autoShips(runId)).at(-1)).toEqual({ state: 'stopped', step: 'send', reason: 'failed', message: strings.run.internalFailure })
+    expect(await statusOf(runId)).toBe('completed')
+    expect(branchesIn(bare)).toBe('')
+    // Once ended, giving up again adds nothing.
+    const before = (await eventsSince(runId, 0)).length
+    await afterRunGaveUp(runId)
+    expect((await eventsSince(runId, 0)).length).toBe(before)
+  })
+
+  test('a keep that never finished is ended at the keep', async () => {
+    const { runId } = await approvedRun('github')
+    const { appendEvent } = await import('@/engine/events')
+    await appendEvent({ runId, type: 'run.auto_ship', payload: { state: 'started', step: null, reason: null, message: null } })
+    await afterRunGaveUp(runId)
+    expect((await autoShips(runId)).at(-1)).toMatchObject({ state: 'stopped', step: 'keep', reason: 'failed' })
+  })
+
+  test('a run that failed before it completed gets no automatic-pull-request record, and stays failed', async () => {
+    const { runId } = await approvedRun('github', builder('src/ui/footer/Footer.tsx', failing))
+    await afterRunGaveUp(runId)
+    expect(await autoShips(runId)).toEqual([])
+    expect(await statusOf(runId)).toBe('failed')
+  })
+
+  test('a run that was opened is left as it is', async () => {
+    const { runId } = await approvedRun('github')
+    const deps = { gh: fakeGh(), ask: fakeAsk }
+    await autoKeep(runId, deps)
+    await autoSend(runId, deps)
+    await autoOpen(runId, deps)
+    await afterRunGaveUp(runId)
+    expect((await autoShips(runId)).map(a => a.state)).toEqual(['started', 'opened'])
+    expect(await statusOf(runId)).toBe('completed')
   })
 })

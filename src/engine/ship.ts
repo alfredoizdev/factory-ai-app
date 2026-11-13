@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { events, projects, runs } from '@/db/schema'
 import { defaultBranch } from '@/engine/branches'
-import { DeliveryError, deliveryState, pushBranch } from '@/engine/delivery'
+import { DeliveryError, deliveryState, githubPullUrl, originUrl, pushBranch } from '@/engine/delivery'
 import { appendEventSync } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
@@ -96,6 +96,22 @@ function ghFailure(e: unknown): ShipError {
   if (/auth login|not logged|authentication/i.test(said)) return new ShipError(strings.ship.notLoggedIn, 409, 'no_connection')
   if (/no git remotes|not a github|none of the git remotes/i.test(said)) return new ShipError(strings.ship.notGitHub, 409, 'no_connection')
   return new ShipError(strings.ship.ghSaid(clip(said.trim().split('\n').filter(Boolean).slice(-2).join(' '), 300)))
+}
+
+/**
+ * What stands between this project and a pull request on GitHub, read before anything is sent: an origin, on
+ * github.com, and gh installed and signed in. Null when all are there; otherwise the refusal that says which is missing.
+ */
+export async function gitHubConnectionProblem(repo: string, gh: Gh = defaultGh): Promise<ShipError | null> {
+  const remote = originUrl(repo)
+  if (remote === null) return new ShipError(strings.delivery.noRemote, 409, 'no_connection')
+  if (githubPullUrl(remote, 'x') === null) return new ShipError(strings.ship.notGitHub, 409, 'no_connection')
+  try {
+    await gh(['auth', 'status', '--hostname', 'github.com'], repo)
+  } catch (e) {
+    return ghFailure(e)
+  }
+  return null
 }
 
 /**

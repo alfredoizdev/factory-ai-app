@@ -1045,7 +1045,7 @@ describe('the plan follows the project\'s ask mode', () => {
 
 describe('after a change passes in "only what matters"', () => {
   const g = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
-  /** A project made the way the app makes one, with an origin that is a bare repository in a temporary folder. */
+  /** A project made the way the app makes one, with a GitHub-looking origin whose pushes land in a bare temporary folder. */
   async function shippingRun(askMode: AskMode, origin = true) {
     const dir = mkdtempSync(join(tmpdir(), 'factory-ship-'))
     g(dir, 'init', '-q', '-b', 'main')
@@ -1056,7 +1056,12 @@ describe('after a change passes in "only what matters"', () => {
     g(dir, 'commit', '-q', '-m', 'mine')
     const bare = mkdtempSync(join(tmpdir(), 'factory-ship-origin-'))
     g(bare, 'init', '-q', '--bare', '-b', 'main')
-    if (origin) g(dir, 'remote', 'add', 'origin', bare)
+    if (origin) {
+      // Reads as GitHub when the app judges it; every push lands in the bare folder, and no network protocol is allowed.
+      g(dir, 'remote', 'add', 'origin', 'https://github.com/ai-factory-test/never-real.git')
+      g(dir, 'config', 'remote.origin.pushurl', bare)
+      for (const p of ['https', 'http', 'ssh', 'git']) g(dir, 'config', `protocol.${p}.allow`, 'never')
+    }
     const { workflowId } = await createProject({ path: dir, name: 'Shop', testCommand: 'npm test', checks: [], askMode })
     const { runId } = await createRun({ workflowId, request: 'add a footer' })
     await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))

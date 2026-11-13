@@ -75,7 +75,7 @@ async function approvedAndFinished(runId: string) {
 type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string; pullRequestUrl?: string | null }
 
 /** The latest record of this kind for this run, if there was one. A keep or a delivery happens once; a switch may repeat. */
-async function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed' | 'run.auto_ship'): Promise<Record_ | null> {
+async function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed'): Promise<Record_ | null> {
   const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)))[0]
   return row ? (JSON.parse(row.payloadJson) as Record_) : null
 }
@@ -93,14 +93,17 @@ function currentBranch(repo: string | null): string | null {
     return null
   }
 }
+/** The address of the repository's origin as git reads it, or null when it has none. */
+export function originUrl(repo: string): string | null {
+  try {
+    return git(repo, ['remote', 'get-url', 'origin']).trim() || null
+  } catch {
+    return null
+  }
+}
 /** Whether the repository has a remote called origin; null when there is no repository here to ask. */
 function hasOrigin(repo: string | null): boolean | null {
-  if (!repo) return null
-  try {
-    return git(repo, ['remote', 'get-url', 'origin']).trim() !== ''
-  } catch {
-    return false
-  }
+  return repo ? originUrl(repo) !== null : null
 }
 const deliveredRecord = (runId: string) => recordOf(runId, 'run.delivered')
 
@@ -128,12 +131,18 @@ export async function deliveryState(runId: string): Promise<Delivery> {
     returnTo: (await recordOf(runId, 'run.switched'))?.from ?? null,
     pushed: pushedRecord !== null && pushedRecord.branch === (kept?.branch ?? found.run.branch),
     pullRequestUrl: pushedRecord?.pullRequestUrl ?? null,
-    autoShip: autoShipOf((await recordOf(runId, 'run.auto_ship')) as unknown as Partial<AutoShip> | null),
+    autoShip: await autoShipRecord(runId),
   }
 }
 
-function autoShipOf(p: Partial<AutoShip> | null): AutoShip | null {
-  if (!p) return null
+/**
+ * The latest word of the automatic keep, send and open, as recorded. A stop stays the latest word after the person
+ * finishes that step by hand: the card weighs it against `kept`, `pushed` and the pull request.
+ */
+export async function autoShipRecord(runId: string): Promise<AutoShip | null> {
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.auto_ship'))).orderBy(desc(events.sequence)))[0]
+  if (!row) return null
+  const p = JSON.parse(row.payloadJson) as Partial<AutoShip>
   return { state: p.state ?? 'started', step: p.step ?? null, reason: p.reason ?? null, message: p.message ?? null }
 }
 
@@ -429,12 +438,8 @@ export async function pushBranch(runId: string): Promise<Delivery> {
     const branch = kept.branch
     const repo = (await repoOf(found.run.projectId))
     if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
-    let remote: string
-    try {
-      remote = git(repo, ['remote', 'get-url', 'origin'])
-    } catch {
-      throw new DeliveryError(strings.delivery.noRemote, 409, 'no_connection')
-    }
+    const remote = originUrl(repo)
+    if (remote === null) throw new DeliveryError(strings.delivery.noRemote, 409, 'no_connection')
     try {
       await gitAsync(repo, ['push', '--porcelain', 'origin', `refs/heads/${branch}:refs/heads/${branch}`])
     } catch (e) {

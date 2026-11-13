@@ -1330,7 +1330,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
   const ship = await step.run('auto-ship-check', () => shouldShipOnItsOwn(runId, askMode, stopsForMe))
   if (ship) {
     const auto = deps.autoShip ?? {}
-    if ((await step.run('auto-ship-keep', () => autoKeep(runId, auto))).ok && (await step.run('auto-ship-send', () => autoSend(runId))).ok) {
+    if ((await step.run('auto-ship-keep', () => autoKeep(runId, auto))).ok && (await step.run('auto-ship-send', () => autoSend(runId, auto))).ok) {
       await step.run('auto-ship-open', () => autoOpen(runId, auto))
     }
   }
@@ -1358,16 +1358,33 @@ export async function failRunAfterError(runId: string): Promise<void> {
   })
 }
 
+/**
+ * When the function failed for good: the run is failed if it had not finished, and an automatic pull request left
+ * saying "sending" is ended where it got to. Both are tried; an error in either is logged and thrown, for Inngest.
+ */
+export async function afterRunGaveUp(runId: string): Promise<void> {
+  let first: unknown = null
+  try {
+    await failRunAfterError(runId)
+  } catch (e) {
+    first = e
+  }
+  try {
+    await endAutoShipAfterError(runId)
+  } catch (e) {
+    console.error(`Run ${runId}: the automatic pull request could not be ended after the run gave up:`, redact(e instanceof Error ? e.message : String(e)))
+    throw e
+  }
+  if (first) throw first
+}
+
 export const executeRun = inngest.createFunction(
   {
     id: 'execute-run',
     triggers: [{ event: RUN_REQUESTED }],
     onFailure: async ({ event }) => {
       const runId = (event.data.event.data as { runId?: unknown }).runId
-      if (typeof runId === 'string') {
-        (await failRunAfterError(runId))
-        await endAutoShipAfterError(runId).catch(() => undefined)
-      }
+      if (typeof runId === 'string') (await afterRunGaveUp(runId))
     },
   },
   async ({ event, step }) => {
