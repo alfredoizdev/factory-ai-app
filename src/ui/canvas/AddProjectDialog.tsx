@@ -6,6 +6,7 @@ import { DEFAULT_MODELS, MODEL_STEPS, presetOf, type StepModels } from '@/domain
 import { listed, NO_STACK, stackNames, type Stack } from '@/domain/stack'
 import type { ProjectAnalysis } from '@/engine/project-setup'
 import { strings } from '@/ui/strings'
+import { brand } from '@/ui/brand'
 import { theme } from '@/ui/theme'
 import { AskModeChoice } from './AskModeChoice'
 import { WorkingSpinner } from './BlockCard'
@@ -190,10 +191,10 @@ export function AddProjectDialog({
         aria-label={w.title}
         tabIndex={-1}
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(760px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', overflowY: 'auto', display: 'grid', gap: 18, padding: 28, fontSize: 14, background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.55)', outline: 'none' }}
+        style={{ width: 'min(760px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', overflowY: 'auto', display: 'grid', gap: 18, padding: 28, fontSize: 14, background: brand.card, border: `1px solid ${brand.line}`, borderRadius: 16, boxShadow: '0 24px 60px rgba(0,0,0,0.55)', outline: 'none', color: brand.text, fontFamily: brand.sans, accentColor: brand.green }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 className="factory-display" style={{ margin: 0, fontSize: 22 }}>{w.title}</h2>
+          <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: '-0.03em' }}>{w.title}</h2>
           <button type="button" aria-label={s.close} onClick={onClose} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 16 }}>
             ✕
           </button>
@@ -209,7 +210,7 @@ export function AddProjectDialog({
               {(['scratch', 'existing'] as const).map(k => (
                 <button key={k} type="button" data-testid={`way-${k}`} aria-pressed={way === k} onClick={() => setWay(k)} style={{ ...choice(way === k), padding: '18px 16px', display: 'grid', gap: 6, textAlign: 'left' }}>
                   <strong style={{ fontSize: 16 }}>{k === 'scratch' ? w.start.scratch : w.start.existing}</strong>
-                  <span style={{ fontSize: 13.5, lineHeight: 1.45, color: theme.dim }}>{k === 'scratch' ? w.start.scratchHint : w.start.existingHint}</span>
+                  <span style={{ fontSize: 13.5, lineHeight: 1.45, color: brand.quiet }}>{k === 'scratch' ? w.start.scratchHint : w.start.existingHint}</span>
                 </button>
               ))}
             </div>
@@ -222,7 +223,7 @@ export function AddProjectDialog({
         {step === 'review' && (
           <div style={{ display: 'grid', gap: 14 }}>
             <h3 style={lead}>{w.review.lead}</h3>
-            <div data-testid="wizard-summary" style={{ display: 'grid', gap: 8, padding: 16, background: '#0f141c', border: `1px solid ${theme.border}`, borderRadius: 10 }}>
+            <div data-testid="wizard-summary" style={{ display: 'grid', gap: 8, padding: 16, background: brand.bg, border: `1px solid ${brand.line}`, borderRadius: 10 }}>
               <SummaryRow label={w.review.start} value={way === 'scratch' ? w.review.fromScratch : w.review.fromCode} />
               <SummaryRow label={s.name} value={way === 'scratch' ? where.name.trim() : existing.name.trim()} />
               {way === 'scratch' ? (

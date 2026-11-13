@@ -2,6 +2,7 @@
 
 import type { CheckName, ProjectAnalysis } from '@/engine/project-setup'
 import { strings } from '@/ui/strings'
+import { brand } from '@/ui/brand'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from '../BlockCard'
 import { button, field, hint, LevelIcon, mono, Row } from './parts'
@@ -42,7 +43,7 @@ export function ExistingStep({
   return (
     <div style={{ display: 'grid', gap: 18 }}>
       <div style={{ display: 'grid', gap: 6 }}>
-        <span style={{ fontSize: 14.5, color: theme.dim }}>{s.folderHint}</span>
+        <span style={{ fontSize: 14.5, color: brand.quiet }}>{s.folderHint}</span>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input aria-label={s.folder} value={value.path} onChange={e => onChange({ ...value, path: e.target.value })} placeholder="/Users/you/projects/my-app" spellCheck={false} style={{ ...field, ...mono, flex: '1 1 240px' }} />
           <button type="button" disabled={busy !== null} onClick={onPick} style={button(false, busy !== null)}>
@@ -64,12 +65,12 @@ export function ExistingStep({
 
       {analysis && (
         <>
-          <label style={{ display: 'grid', gap: 6, fontSize: 14.5, color: theme.dim }}>
+          <label style={{ display: 'grid', gap: 6, fontSize: 14.5, color: brand.quiet }}>
             {s.name}
             <input value={value.name} onChange={e => onChange({ ...value, name: e.target.value })} style={field} />
           </label>
-          <div data-testid="setup-found" style={{ display: 'grid', gap: 9, padding: 16, background: '#0f141c', border: `1px solid ${theme.border}`, borderRadius: 10, fontSize: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: theme.dim }}>{s.found}</div>
+          <div data-testid="setup-found" style={{ display: 'grid', gap: 9, padding: 16, background: brand.bg, border: `1px solid ${brand.line}`, borderRadius: 10, fontSize: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: brand.quiet }}>{s.found}</div>
             <Row level="ok" label={s.gitRepo} value={s.gitRepoFound} />
             <Row level={analysis.defaultBranch !== null ? 'ok' : 'required'} label={s.mainBranch} value={analysis.defaultBranch ?? s.noMainBranch} />
             <Row level={analysis.packageManager !== null ? 'ok' : 'optional'} label={s.packageManager} value={analysis.packageManager ?? s.noPackageJson} />
@@ -77,7 +78,7 @@ export function ExistingStep({
             <Row level={analysis.commands.test ? 'ok' : 'optional'} label={s.tests} value={analysis.commands.test ? s.testsFound(analysis.commands.test) : s.testsNone} />
             <Row level={analysis.github.gh === 'ready' ? 'ok' : 'optional'} label={s.github} value={s.gh[analysis.github.gh](analysis.github.repo)} />
             <Row level={analysis.deploy.length > 0 ? 'ok' : 'optional'} label={s.deploy} value={analysis.deploy.length > 0 ? analysis.deploy.join(', ') : s.noDeploy} />
-            <div data-testid="setup-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', marginTop: 6, paddingTop: 10, borderTop: `1px solid ${theme.border}`, fontSize: 12.5, color: theme.dim }}>
+            <div data-testid="setup-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', marginTop: 6, paddingTop: 10, borderTop: `1px solid ${brand.line}`, fontSize: 12.5, color: brand.quiet }}>
               {(['ok', 'optional', 'required'] as const).map(l => (
                 <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <LevelIcon level={l} /> {s.legend[l]}
@@ -85,7 +86,7 @@ export function ExistingStep({
               ))}
             </div>
           </div>
-          <label style={{ display: 'grid', gap: 6, fontSize: 14.5, color: theme.dim }}>
+          <label style={{ display: 'grid', gap: 6, fontSize: 14.5, color: brand.quiet }}>
             {s.testCommand}
             <input value={value.testCommand} onChange={e => onChange({ ...value, testCommand: e.target.value })} placeholder={s.noTests} spellCheck={false} style={{ ...field, ...mono, fontSize: 12 }} />
             {!analysis.commands.test && value.testCommand.trim() === '' && (
@@ -96,18 +97,18 @@ export function ExistingStep({
           </label>
           {EXTRA.some(c => analysis.commands[c]) && (
             <div style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: 14.5, color: theme.dim }}>{s.extraChecks}</span>
+              <span style={{ fontSize: 14.5, color: brand.quiet }}>{s.extraChecks}</span>
               {EXTRA.filter(c => analysis.commands[c]).map(c => (
                 <label key={c} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
                   <input type="checkbox" checked={value.checks.has(c)} onChange={e => onChange({ ...value, checks: toggle(value.checks, c, e.target.checked) })} />
-                  {s.checkLabel[c]} <code style={{ fontSize: 11.5, color: theme.dim }}>{analysis.commands[c]}</code>
+                  {s.checkLabel[c]} <code style={{ fontSize: 11.5, color: brand.quiet }}>{analysis.commands[c]}</code>
                 </label>
               ))}
             </div>
           )}
           {folders.length > 0 && (
             <div data-testid="ask-before" role="group" aria-label={strings.wizard.found.askBefore} style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: 14.5, color: theme.dim }}>{strings.wizard.found.askBefore}</span>
+              <span style={{ fontSize: 14.5, color: brand.quiet }}>{strings.wizard.found.askBefore}</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
                 {folders.map(f => (
                   <label key={f} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13.5 }}>
@@ -119,7 +120,7 @@ export function ExistingStep({
               <span style={hint}>{strings.wizard.found.askBeforeHint}</span>
             </div>
           )}
-          <span style={{ fontSize: 12, color: theme.dim, lineHeight: 1.45 }}>{s.installNote(analysis.packageManager)}</span>
+          <span style={{ fontSize: 12, color: brand.quiet, lineHeight: 1.45 }}>{s.installNote(analysis.packageManager)}</span>
           {analysis.defaultBranch === null && (
             <div role="alert" data-testid="fix-required" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14.5, color: theme.failed }}>
               <LevelIcon level="required" /> {s.fixRequired}

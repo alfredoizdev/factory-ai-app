@@ -2,6 +2,7 @@
 
 import { useState, type CSSProperties } from 'react'
 import { AddProjectDialog } from '@/ui/canvas/AddProjectDialog'
+import { brand } from '@/ui/brand'
 import { Logo } from '@/ui/Logo'
 import { strings } from '@/ui/strings'
 
@@ -9,9 +10,9 @@ const w = strings.welcome
 
 // This page's own palette: near-black, one green accent, quiet greys. It is the first thing a person sees, before any
 // canvas, so it is plainer and larger than the working screens.
-const c = { bg: '#111111', text: '#e8eaf0', quiet: '#a3a3a3', faint: '#8a8a8a', line: '#2a2a2a', card: '#181818', green: '#79dc8b', onGreen: '#0d1f12' }
-const mono = 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace'
-const sans = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+const c = brand
+const mono = brand.mono
+const sans = brand.sans
 const label: CSSProperties = { margin: 0, fontFamily: mono, fontSize: 12.5, fontWeight: 500, letterSpacing: '0.2em', textTransform: 'uppercase', color: c.faint }
 
 /**

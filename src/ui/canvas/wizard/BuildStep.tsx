@@ -2,7 +2,7 @@
 
 import { BACK_ENDS, FRONT_ENDS, type Stack, type StackOption } from '@/domain/stack'
 import { strings } from '@/ui/strings'
-import { theme } from '@/ui/theme'
+import { brand } from '@/ui/brand'
 import { choice, hint, lead } from './parts'
 import { STACK_ICONS } from './stackIcons'
 
@@ -26,7 +26,7 @@ export function BuildStep({ stack, onChange }: { stack: Stack; onChange: (next: 
     )
   }
   const grid = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: 8 } as const
-  const label = { fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: theme.dim } as const
+  const label = { fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: brand.quiet } as const
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <h3 style={lead}>{w.lead}</h3>

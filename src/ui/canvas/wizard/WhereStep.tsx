@@ -1,7 +1,7 @@
 'use client'
 
 import { strings } from '@/ui/strings'
-import { theme } from '@/ui/theme'
+import { brand } from '@/ui/brand'
 import { WorkingSpinner } from '../BlockCard'
 import { button, field, hint, lead, mono } from './parts'
 
@@ -23,7 +23,7 @@ export function folderName(name: string): string {
 
 /** The essentials of a project from scratch: its name, its folder, its GitHub repository if any, and tests or not. */
 export function WhereStep({ value, onChange, onChooseParent, picking }: { value: Where; onChange: (next: Where) => void; onChooseParent: () => void; picking: boolean }) {
-  const label = { display: 'grid', gap: 6, fontSize: 14.5, color: theme.dim } as const
+  const label = { display: 'grid', gap: 6, fontSize: 14.5, color: brand.quiet } as const
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <h3 style={lead}>{w.lead}</h3>
@@ -32,7 +32,7 @@ export function WhereStep({ value, onChange, onChooseParent, picking }: { value:
         <input value={value.name} onChange={e => onChange({ ...value, name: e.target.value })} placeholder="My landing page" style={field} />
       </label>
       <div style={{ display: 'grid', gap: 6 }}>
-        <label htmlFor="wizard-folder" style={{ fontSize: 14.5, color: theme.dim }}>
+        <label htmlFor="wizard-folder" style={{ fontSize: 14.5, color: brand.quiet }}>
           {w.folder}
         </label>
         <div style={{ display: 'flex', gap: 8 }}>
