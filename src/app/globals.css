@@ -114,3 +114,39 @@ select {
   outline: 2px solid #93c5fd;
   outline-offset: 2px;
 }
+
+/* Motion that says where things come from. A pop-up fades in over its dimmed backdrop and rises a little; a page
+   fades in when the person arrives on it; a wizard step slides in from the side. All short, and all off under
+   reduced motion. */
+@keyframes factory-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.975);
+  }
+}
+@keyframes factory-step {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+[role='dialog'][aria-modal='true'] {
+  animation: factory-pop 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+*:not(body):has(> [role='dialog'][aria-modal='true']) {
+  animation: factory-fade 180ms ease-out;
+}
+.factory-page-in {
+  animation: factory-fade 320ms ease-out;
+}
+.factory-step-in {
+  animation: factory-step 240ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  [role='dialog'][aria-modal='true'],
+  *:not(body):has(> [role='dialog'][aria-modal='true']),
+  .factory-page-in,
+  .factory-step-in {
+    animation: none;
+  }
+}

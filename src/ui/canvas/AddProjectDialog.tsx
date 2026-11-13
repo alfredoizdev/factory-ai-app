@@ -200,6 +200,8 @@ export function AddProjectDialog({
         </div>
         <StepBar steps={steps.map(k => STEP_NAME[k])} current={at} />
 
+        {/* Each step slides in when the person moves to it. */}
+        <div key={step} className="factory-step-in">
         {step === 'start' && (
           <div style={{ display: 'grid', gap: 12 }}>
             <h3 style={lead}>{w.start.lead}</h3>
@@ -245,6 +247,7 @@ export function AddProjectDialog({
             {way === 'scratch' && <p style={hint}>{w.review.scratchNote}</p>}
           </div>
         )}
+        </div>
 
         {error && (
           <div role="alert" style={{ fontSize: 13.5, lineHeight: 1.45, color: theme.failed }}>
