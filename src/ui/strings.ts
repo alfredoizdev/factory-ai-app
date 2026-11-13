@@ -234,14 +234,14 @@ export const strings = {
     title: 'Add a project',
     close: 'Close',
     folder: 'Project folder',
-    folderHint: "The project's folder: the top folder of its git repository.",
+    folderHint: 'The folder where your project lives on this computer.',
     choose: 'Choose folder…',
     read: 'Check this folder',
     readHint: 'Looks inside the folder written on the left and shows what the app found there: how it installs, its framework, its branch, GitHub and its test commands. Use it after typing or changing the folder by hand.',
     checked: 'Folder checked',
     checkedHint: 'This folder was read and the results are below. Press it to read the folder again.',
-    gitRepo: 'Git repository',
-    gitRepoFound: 'found, with commits',
+    gitRepo: 'Saved history (git)',
+    gitRepoFound: 'found, with changes already saved',
     tests: 'Tests',
     testsFound: (command: string) => command,
     testsNone: 'none found: lint and build can still check each change',
@@ -266,7 +266,7 @@ export const strings = {
       'not-github': () => 'origin is not on GitHub: changes can be pushed, not opened as pull requests',
       'no-remote': () => 'no origin: changes stay on this computer',
     },
-    deploy: 'Deploys / CI',
+    deploy: 'Publishing and checks',
     noDeploy: 'nothing found in the repository',
     testCommand: 'Test command',
     noTests: 'none: no tests will run',
@@ -278,7 +278,7 @@ export const strings = {
     checkLabel: { test: 'Tests', lint: 'Lint', build: 'Build', typecheck: 'Type check' },
     installNote: (pm: string | null) =>
       pm
-        ? `After it is created, its dependencies are installed once with ${pm} in a prepared copy. Every task then starts from that copy instead of installing again.`
+        ? `After it is created, the libraries this project needs are installed once (with ${pm}), so every task starts right away instead of installing them again.`
         : 'This project has nothing to install.',
     create: 'Create project',
   },
