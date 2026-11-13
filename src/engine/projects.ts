@@ -2,11 +2,14 @@ import { and, asc, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
 import type { AskMode } from '@/domain/ask-mode'
+import { MODEL_STEPS, modelName, type StepModels } from '@/domain/models'
 import { projectMachines, projects, workflows } from '@/db/schema'
 import { defaultGraph, LANE_SPACING, STAGE_ORDER, type Block } from '@/domain/graph'
 import { ProjectSettingsError, validRepoRoot } from '@/engine/project-settings'
 import { publishVersion, saveDraft } from '@/engine/run'
 import { projectHere, setLocal, thisMachine } from '@/engine/machine'
+import { addNote } from '@/engine/memory'
+import { addCoreArea, CoreError } from '@/engine/register'
 import { strings } from '@/ui/strings'
 
 // Projects: one repository each, with its own flow and its own tasks.
@@ -48,6 +51,12 @@ export async function createProject(input: {
   checks: readonly ExtraCheck[]
   /** When the app stops for the person. Absent: only about what matters. */
   askMode?: AskMode
+  /** The model each step uses. Absent, or "default" for a step: the agent's own default. */
+  models?: Partial<StepModels>
+  /** Folders the person wants to be asked about before they change. One the app cannot take is left out, not fatal. */
+  coreAreas?: readonly string[]
+  /** Standing rules every task of the project starts with. */
+  rules?: readonly string[]
 }): Promise<{ projectId: string; workflowId: string }> {
   const repoPath = validRepoRoot(input.path.trim())
   const name = input.name.trim()
@@ -64,7 +73,14 @@ export async function createProject(input: {
   const projectId = ulid()
   const workflowId = ulid()
   const now = new Date().toISOString()
-  const graph = defaultGraph()
+  const base = defaultGraph()
+  // The step's model is kept on its block, where the block's own settings show and change it.
+  const graph = {
+    blocks: base.blocks.map(b => {
+      const model = (MODEL_STEPS as readonly string[]).includes(b.kind) ? modelName(input.models?.[b.kind as keyof StepModels]) : null
+      return model ? { ...b, config: { ...b.config, model } } : b
+    }),
+  }
   const testsColumn = STAGE_ORDER.indexOf('tests') * LANE_SPACING
   const extra: Block[] = input.checks.map((c, i) => ({
     id: `tests-${i + 1}`,
@@ -81,5 +97,14 @@ export async function createProject(input: {
   })
   await saveDraft(workflowId, { blocks: [...graph.blocks, ...extra] })
   await publishVersion(workflowId)
+  for (const rule of input.rules ?? []) await addNote(projectId, rule)
+  for (const path of input.coreAreas ?? []) {
+    try {
+      await addCoreArea(projectId, { path })
+    } catch (e) {
+      // A folder that is gone or repeated is not a reason to lose the project: it can be marked later.
+      if (!(e instanceof CoreError)) throw e
+    }
+  }
   return { projectId, workflowId }
 }
