@@ -746,3 +746,10 @@ describe('the pieces the automatic pull request reuses', () => {
     }
   })
 })
+
+test('the "not eligible" messages are true for a change the app passed on its own as well as for one a person approved', () => {
+  for (const message of [strings.delivery.notEligible, strings.followUp.notEligible]) {
+    expect(message).not.toMatch(/a person approved/)
+    expect(message).toMatch(/by you or on its own/)
+  }
+})

@@ -204,6 +204,7 @@ export function ProjectMemory({ projectId }: { projectId: string }) {
       <div style={{ display: 'grid', gap: 6 }}>
         <h4 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#d6dce6' }}>{strings.memory.groups[kind]}</h4>
         {kind === 'core' && <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.memory.coreWhat}</span>}
+        {kind === 'decision' && <span style={{ fontSize: 12.5, color: theme.dim, lineHeight: 1.45 }}>{strings.memory.decisionsLimit}</span>}
         {entries !== null && rows.length === 0 && kind === 'rule' && <span style={{ fontSize: 12.5, color: theme.skipped }}>{strings.memory.none}</span>}
         {entries !== null && rows.length === 0 && kind !== 'rule' && <span style={{ fontSize: 12.5, color: theme.skipped }}>{strings.memory.groupNone[kind]}</span>}
         {rows.length > 0 && <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 6 }}>{rows.map(row)}</ul>}

@@ -43,6 +43,10 @@ type RawNode = {
   asking?: true
   /** From node.assessed: the measured risk of the run's change. */
   risk?: NodeRunView['risk']
+  /** From node.plan_measured: what the app made of the planner's plan, and why it stopped or started. */
+  planMeasure?: NonNullable<NodeRunView['planMeasure']>
+  /** From node.completed: the plan started on its own. */
+  autoStarted?: true
   /** From node.completed: tokens the provider reported. Undefined: it said nothing; null: it said "unknown". */
   tokens?: number | null
 }
@@ -111,6 +115,12 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
     return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, risk: { level, reasons } } }, lastSequence: event.sequence }
   }
 
+  if (event.type === 'node.plan_measured') {
+    if (!node) return moved
+    const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, planMeasure: { simple: payload.simple === true, reasons: strs(payload.reasons), entries: strs(payload.entries) } } }, lastSequence: event.sequence }
+  }
+
   const state = NODE_EVENT_STATE[event.type]
   if (state === undefined) return moved
   // First sight of a block takes whatever the log says (a run may lack node.queued). After that the state
@@ -121,6 +131,8 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
   const updated: RawNode = { ...node, state, steps: node?.steps ?? [] }
   if (event.type === 'node.question_asked') updated.asking = true
   else delete updated.asking
+  delete updated.autoStarted
+  if (event.type === 'node.completed' && payload.autoStarted === true) updated.autoStarted = true
   // A planner's proposal waits for the person with its own words (how many jobs), marked as whose they are.
   if (event.type === 'node.waiting_approval' && typeof payload.summary === 'string') {
     updated.reportedSummary = text(payload.summary)
@@ -166,10 +178,12 @@ function evidenceOf(payload: Record<string, unknown>): RawNode['evidence'] {
 const KINDS: ReadonlySet<string> = new Set<BlockKind>(['input', 'plan', 'build', 'tests', 'review', 'approve', 'human', 'ship'])
 
 // Evidence and usage travel to the card as they were recorded; usage cost is never reported for a real builder.
-function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk' | 'round' | 'asking'> {
+function facts(n: RawNode): Pick<NodeRunView, 'evidence' | 'usage' | 'risk' | 'round' | 'asking' | 'planMeasure' | 'autoStarted'> {
   return {
     ...(n.round ? { round: n.round } : {}),
     ...(n.asking ? { asking: true as const } : {}),
+    ...(n.planMeasure ? { planMeasure: n.planMeasure } : {}),
+    ...(n.autoStarted ? { autoStarted: true as const } : {}),
     ...(n.evidence ? { evidence: n.evidence } : {}),
     ...(n.risk ? { risk: n.risk } : {}),
     ...(n.tokens !== undefined ? { usage: { tokens: n.tokens, costCents: null } } : {}),

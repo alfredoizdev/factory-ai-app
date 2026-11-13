@@ -1,7 +1,7 @@
 'use client'
 
 import { FailedSection, type FailureActions } from './FailurePanel'
-import { forwardRef } from 'react'
+import { forwardRef, useId, useState } from 'react'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { RUN_INPUT_ID } from './Canvas'
@@ -43,6 +43,11 @@ export const CommandCard = forwardRef<
     onText: (v: string) => void
     images: ComposerImage[]
     onImages: (update: (prev: ComposerImage[]) => ComposerImage[]) => void
+    /** What the app made of the plan on screen: its reasons, one sentence first. */
+    planMeasure?: { reasons: string[] }
+    /** The per-task box on a fresh task: stop for the person at the plan and before the change is kept. */
+    stopForMe?: boolean
+    onStopForMe?: (v: boolean) => void
     /** Starts a fresh run from the composer (the same as Run in the top bar). */
     onRun: () => void
     canRun: boolean
@@ -81,7 +86,7 @@ export const CommandCard = forwardRef<
     /** The reviewers ran on this task: the human check lists what they found. */
     showFindings?: boolean
   }
->(function CommandCard({ onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
+>(function CommandCard({ planMeasure, stopForMe = false, onStopForMe, onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : mode === 'failed' ? strings.failure.label : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : mode === 'failed' ? strings.failure.placeholder : strings.run.requestPlaceholder
@@ -169,6 +174,7 @@ export const CommandCard = forwardRef<
               />
             </label>
           )}
+          {onStopForMe && <StopForMe checked={stopForMe} onChange={onStopForMe} />}
           {/* Sent like every other message in this card: the arrow inside the box, or Enter. */}
           {withSend({ label: strings.run.send, onSend: onRun, enabled: canRun })}
         </>
@@ -179,7 +185,7 @@ export const CommandCard = forwardRef<
           {strings.card.working}
         </div>
       )}
-      {!loading && mode === 'plan' && runId && <PlanSection away={away} runId={runId} note={text} composer={withSend} onSent={onSent} />}
+      {!loading && mode === 'plan' && runId && <PlanSection measure={planMeasure} away={away} runId={runId} note={text} composer={withSend} onSent={onSent} />}
       {!loading && mode === 'question' && runId && <QuestionSection runId={runId} record={record} failed={recordFailed} mark={recordMark} readMark={recordReadMark} askedId={askedId} onChanged={() => onRecordChanged?.()} />}
       {!loading && mode === 'waiting' && runId && (
         <GateSection findings={showFindings ? record?.findings : undefined} touched={record?.touched} away={away} runId={runId} risk={risk} note={text} imageIds={readyImageIds(images)} imagesBusy={imagesBusy(images)} composer={withSend} onSent={onSent} onSeeChanges={onSeeChanges} />
@@ -219,3 +225,27 @@ export const CommandCard = forwardRef<
     </section>
   )
 })
+
+/** The per-task box. "What is this?" opens its explanation right here, one click away and reachable by keyboard. */
+function StopForMe({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  const [open, setOpen] = useState(false)
+  const why = useId()
+  return (
+    <div data-testid="stop-for-me" style={{ display: 'grid', gap: 4, minWidth: 0 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 12px' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#d6dce6', cursor: 'pointer' }}>
+          <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} />
+          {strings.composer.stopForMe}
+        </label>
+        <button type="button" aria-expanded={open} aria-controls={why} onClick={() => setOpen(o => !o)} style={{ padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline' }}>
+          {strings.composer.stopForMeWhat}
+        </button>
+      </div>
+      {open && (
+        <span id={why} style={{ fontSize: 12.5, lineHeight: 1.45, color: theme.dim, overflowWrap: 'anywhere' }}>
+          {strings.composer.stopForMeWhy}
+        </span>
+      )}
+    </div>
+  )
+}

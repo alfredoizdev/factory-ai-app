@@ -42,7 +42,7 @@ test('reads the folder, shows what it found, and creates the project with the ch
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.setup.create) }))
   await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith('w9'))
   const sent = JSON.parse(String(fetchMock.mock.calls.find(([u, i]) => u === '/api/projects' && i?.method === 'POST')![1]!.body))
-  expect(sent).toEqual({ path: '/Users/me/shop', name: 'shop', testCommand: 'pnpm test', checks: [{ label: 'Lint', command: 'pnpm lint' }], askMode: 'everything' })
+  expect(sent).toEqual({ path: '/Users/me/shop', name: 'shop', testCommand: 'pnpm test', checks: [{ label: 'Lint', command: 'pnpm lint' }], askMode: 'what_matters' })
 })
 
 test('a folder that is not a repository says why', async () => {
@@ -70,4 +70,26 @@ test('what is missing is told apart: optional things in yellow never block, a mi
   // Changing the folder by hand: the button asks to check it again.
   fireEvent.change(screen.getByLabelText(strings.setup.folder), { target: { value: '/Users/me/other' } })
   expect(screen.getByTestId('check-folder')).toHaveAttribute('data-checked', 'false')
+})
+
+test('the dialog offers the same two plain choices, starts on "what matters", and sends the one picked', async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/projects/analyze') return new Response(JSON.stringify(analysis))
+    if (url === '/api/projects' && init?.method === 'POST') return new Response(JSON.stringify({ projectId: 'p', workflowId: 'w9' }), { status: 201 })
+    return new Response('{}')
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  render(<AddProjectDialog onClose={() => {}} onCreated={() => {}} />)
+  fireEvent.change(screen.getByLabelText(strings.setup.folder), { target: { value: '/Users/me/shop' } })
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.setup.read) }))
+  await screen.findByTestId('setup-found')
+  const a = strings.settings.ask
+  expect(screen.getAllByRole('radio')).toHaveLength(2)
+  expect(screen.getByRole('radio', { name: new RegExp(a.whatMatters) })).toBeChecked()
+  expect(screen.queryByText(a.smallChanges)).toBeNull()
+  fireEvent.click(screen.getByRole('radio', { name: new RegExp(a.everything) }))
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.setup.create) }))
+  await vi.waitFor(() => expect(fetchMock.mock.calls.some(([u, i]) => u === '/api/projects' && i?.method === 'POST')).toBe(true))
+  const sent = JSON.parse(String(fetchMock.mock.calls.find(([u, i]) => u === '/api/projects' && i?.method === 'POST')![1]!.body))
+  expect(sent.askMode).toBe('everything')
 })

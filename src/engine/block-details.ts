@@ -28,7 +28,9 @@ export type BlockDetails = {
   /** Every step it took, in order, with when. */
   steps: { text: string; at: string }[]
   /** The jobs of the plan, on the Plan block. */
-  jobs: { title: string; done: string[] }[]
+  jobs: { title: string; done: string[]; paths?: string[] }[]
+  /** Why the plan stopped for the person or started on its own, and the files or folders it expects to change. Plan block only. */
+  planMeasure?: { simple: boolean; reasons: string[]; entries: string[] }
   commands: BlockCommand[]
 }
 
@@ -46,6 +48,8 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
   const steps: BlockDetails['steps'] = []
   let summary: string | null = node.summary
   let jobs: BlockDetails['jobs'] = []
+  let planMeasure: BlockDetails['planMeasure']
+  const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
   for (const e of log) {
     const p = JSON.parse(e.payloadJson) as Record<string, unknown>
     // A new round starts the block over: what it did before no longer describes it.
@@ -56,9 +60,10 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
     if (e.type === 'node.skipped') summary = text(p.reason) ?? summary
     if (e.type === 'node.planned' && Array.isArray(p.jobs)) {
       jobs = p.jobs
-        .filter((j): j is { title: string; done?: unknown } => typeof (j as { title?: unknown })?.title === 'string')
-        .map(j => ({ title: j.title, done: Array.isArray(j.done) ? j.done.filter((d): d is string => typeof d === 'string') : [] }))
+        .filter((j): j is { title: string; done?: unknown; paths?: unknown } => typeof (j as { title?: unknown })?.title === 'string')
+        .map(j => (Array.isArray(j.paths) ? { title: j.title, done: strs(j.done), paths: strs(j.paths) } : { title: j.title, done: strs(j.done) }))
     }
+    if (e.type === 'node.plan_measured') planMeasure = { simple: p.simple === true, reasons: strs(p.reasons), entries: strs(p.entries) }
   }
 
   const used = await db.select().from(usageRecords).where(eq(usageRecords.nodeRunId, node.id))
@@ -85,6 +90,7 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
     summary,
     steps,
     jobs,
+    ...(planMeasure ? { planMeasure } : {}),
     commands,
   }
 }

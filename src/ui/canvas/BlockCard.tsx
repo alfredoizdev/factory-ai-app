@@ -21,6 +21,10 @@ export type NodeRunView = {
   evidence?: RunEvidence
   /** The measured risk of the run's change, on the human check. Absent: not measured (a demo run). */
   risk?: { level: 'low' | 'high'; reasons: string[] }
+  /** The plan block: what the app made of the planner's plan, and why it stopped for the person or started on its own. */
+  planMeasure?: { simple: boolean; reasons: string[]; entries: string[] }
+  /** The plan block: it started on its own, without the person. */
+  autoStarted?: true
   /** Which round of the run this block is on, from the second on: the person asked for changes. */
   round?: number
   /** Waiting on a question for the person (not on a decision): the card says so, in the same waiting colour as the human check. */
@@ -50,7 +54,7 @@ export type RunEvidence = {
 
 /** What a card needs to render. Provenance is required so it cannot be forgotten; steps are optional. */
 export type CardView = Pick<NodeRunView, 'state' | 'summary' | 'summaryIsClaim' | 'usage'> &
-  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round' | 'asking' | 'notBuilt' | 'results' | 'asked'>>
+  Partial<Pick<NodeRunView, 'steps' | 'evidence' | 'risk' | 'round' | 'asking' | 'notBuilt' | 'results' | 'asked' | 'planMeasure' | 'autoStarted'>>
 
 // The domain and visual vocabularies are separate on purpose.
 const VISUAL: Record<NodeState, VisualState> = {
@@ -408,7 +412,7 @@ export function BlockCard({
               <circle cx="12" cy="12" r="9" />
               <path d="M12 11v5.5M12 7.6v.1" />
             </svg>
-            {strings.details.see}
+            {view.autoStarted ? strings.plan.seePlan : strings.details.see}
           </button>
         </div>
       )}

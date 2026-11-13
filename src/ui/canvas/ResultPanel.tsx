@@ -15,6 +15,9 @@ import type { ComposerSend } from './Composer'
  * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
  * on top of it. Bringing it over writes into the person's folder, so the button says exactly what it will do.
  */
+/** How often the card asks again while the app is sending the change on its own. */
+const AUTO_POLL_MS = 3000
+
 type Mode = 'branch' | 'apply' | 'switch' | 'back' | 'push'
 
 export function ResultSection({
@@ -91,6 +94,20 @@ export function ResultSection({
     }
   }, [runId])
 
+  // The app is keeping, sending and opening it on its own: read again until it says where it got to.
+  const autoWorking = delivery?.autoShip?.state === 'started'
+  useEffect(() => {
+    if (!autoWorking) return
+    const t = setInterval(() => {
+      void fetch(`/api/runs/${runId}/delivery`)
+        .then(r => (r.ok ? (r.json() as Promise<Delivery>) : null))
+        .then(next => next && setDelivery(next))
+        .catch(() => undefined)
+    }, AUTO_POLL_MS)
+    return () => clearInterval(t)
+  }, [autoWorking, runId])
+  const [whatHappened, setWhatHappened] = useState(false)
+
   // Before it is saved, a name is suggested from what changed, so saving is one click. It is only used when the person
   // presses Save; they can open the name and change it first. If no suggestion arrives, the server suggests on save.
   const needsName = delivery?.eligible === true && !delivery.kept
@@ -163,7 +180,24 @@ export function ResultSection({
   const notConnected = kept && !shipped && !away && delivery.hasRemote === false
   const step: Step = merged && !publishing ? 4 : merged || checksOk ? 3 : kept ? 2 : 1
   const d = strings.delivery
-  const headline = publishing
+  // What the app did on its own, in one sentence: where it got to, and who passed the change.
+  const auto = delivery.autoShip
+  const stoppedStale = auto?.state === 'stopped' && ((auto.step === 'keep' && kept) || (auto.step === 'send' && (shipped || delivery.pushed)) || (auto.step === 'open' && shipped))
+  const autoLine =
+    auto?.state === 'opened'
+      ? delivery.passedBy === 'app'
+        ? d.auto.openedByApp
+        : d.auto.openedAfterYes
+      : auto?.state === 'stopped' && !stoppedStale
+        ? auto.reason === 'no_connection'
+          ? d.auto.stopped.noConnection
+          : d.auto.stopped[auto.step ?? 'send']
+        : !auto && delivery.passedBy === 'app'
+          ? d.auto.passedReady
+          : null
+  const headline = autoWorking
+    ? d.auto.working
+    : publishing
     ? d.nowPublishing
     : merged
     ? d.finished
@@ -189,9 +223,28 @@ export function ResultSection({
   return (
     <>
       <Steps current={step} />
-      <div data-testid="next-step" style={{ fontSize: 13.5, color: '#d6dce6', lineHeight: 1.45 }}>
-        {headline}
+      <div data-testid="next-step" role={autoWorking ? 'status' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: '#d6dce6', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
+        {autoWorking && <WorkingSpinner blockId="auto-ship" size={16} />}
+        <span style={{ minWidth: 0 }}>{headline}</span>
       </div>
+      {autoLine && (
+        <div data-testid="auto-line" style={{ display: 'grid', gap: 6, fontSize: 12.5, lineHeight: 1.45, color: auto?.state === 'stopped' ? theme.waiting : '#b9dcc5', overflowWrap: 'anywhere' }}>
+          <span>{autoLine}</span>
+          {auto?.state === 'stopped' && !stoppedStale && (
+            <>
+              <span style={{ color: theme.dim }}>{d.auto.tryAgain}</span>
+              {auto.message && (
+                <>
+                  <button type="button" aria-expanded={whatHappened} onClick={() => setWhatHappened(o => !o)} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline' }}>
+                    {d.auto.whatHappened}
+                  </button>
+                  {whatHappened && <span data-testid="auto-message" style={{ color: theme.dim }}>{auto.message}</span>}
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
         {away && !merged && (
@@ -199,7 +252,7 @@ export function ResultSection({
             {strings.machine.elsewhere(away.machine)}
           </div>
         )}
-        {!kept && !away && (
+        {!kept && !away && !autoWorking && (
           <>
             <div style={{ display: 'grid', gap: 4, fontSize: 12, color: theme.dim }}>
               <label htmlFor={`branch-name-${runId}`}>{d.branchName}</label>
@@ -230,7 +283,7 @@ export function ResultSection({
           </>
         )}
 
-        {kept && (
+        {kept && !autoWorking && (
           <div data-testid="kept" style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(0, 1fr)' }}>
             {/* Sending, checking and publishing: GitHub's pull request, its checks and a merge the person confirms. */}
             {notConnected ? (
@@ -279,7 +332,7 @@ export function ResultSection({
         {delivery.delivered && <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{d.done(delivery.files.length)}</div>}
 
         {/* Everything a developer may want and nobody else needs: names, hashes, and the less common moves. Closed. */}
-        {(kept || canApply) && !waitingOnGithub && (
+        {(kept || canApply) && !waitingOnGithub && !autoWorking && (
           <div style={{ display: 'grid', gap: 8 }}>
             <button
               type="button"

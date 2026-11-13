@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { CheckName, ProjectAnalysis } from '@/engine/project-setup'
+import type { AskMode } from '@/domain/ask-mode'
 import { strings } from '@/ui/strings'
+import { AskModeChoice } from './AskModeChoice'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
 
@@ -19,7 +21,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const [name, setName] = useState('')
   const [testCommand, setTestCommand] = useState('')
   const [checks, setChecks] = useState<Set<CheckName>>(new Set())
-  const [autoLow, setAutoLow] = useState(false)
+  const [askMode, setAskMode] = useState<AskMode>('what_matters')
   const [busy, setBusy] = useState<'pick' | 'read' | 'create' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const panel = useRef<HTMLDivElement>(null)
@@ -81,7 +83,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
           name,
           testCommand: testCommand.trim() || null,
           checks: EXTRA.filter(c => checks.has(c) && analysis.commands[c]).map(c => ({ label: s.checkLabel[c], command: analysis.commands[c]! })),
-          askMode: autoLow ? 'small_changes' : 'everything',
+          askMode,
         }),
       })
       const body = (await res.json().catch(() => null)) as { workflowId?: string; error?: string } | null
@@ -206,13 +208,7 @@ export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; 
                 ))}
               </div>
             )}
-            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 14 }}>
-              <input type="checkbox" checked={autoLow} onChange={e => setAutoLow(e.target.checked)} style={{ marginTop: 3 }} />
-              <span>
-                {strings.settings.autoLowLabel}
-                <span style={{ display: 'block', fontSize: 12, color: theme.dim, lineHeight: 1.4 }}>{strings.settings.autoLowHelp}</span>
-              </span>
-            </label>
+            <AskModeChoice value={askMode} onChange={setAskMode} showSmallChanges={false} fontSize={14} />
             <span style={{ fontSize: 12, color: theme.dim, lineHeight: 1.45 }}>{s.installNote(analysis.packageManager)}</span>
             {missingRequired && (
               <div role="alert" data-testid="fix-required" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14.5, color: theme.failed }}>

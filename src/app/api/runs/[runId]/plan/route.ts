@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { inngest, PLAN_DECIDED } from '@/engine/inngest/client'
-import { currentPlan, decidePlan, MAX_JOBS, PlanError } from '@/engine/plan'
+import { currentPlan, decidePlan, MAX_JOBS, MAX_PATHS_PER_JOB, PlanError } from '@/engine/plan'
 import { learnFrom } from '@/engine/memory'
 import { runPlace } from '@/engine/machine'
 import { markPlanDecisionsUndelivered } from '@/engine/relay'
@@ -16,7 +16,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 }
 
 const bodySchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('build'), jobs: z.array(z.object({ title: z.string().max(400), done: z.array(z.string().max(400)).max(10) })).min(1).max(MAX_JOBS) }),
+  z.object({ action: z.literal('build'), jobs: z.array(z.object({ title: z.string().max(400), done: z.array(z.string().max(400)).max(10), paths: z.array(z.string().max(400)).max(MAX_PATHS_PER_JOB).optional() })).min(1).max(MAX_JOBS) }),
   z.object({ action: z.literal('replan'), note: z.string().min(1).max(2000) }),
 ])
 

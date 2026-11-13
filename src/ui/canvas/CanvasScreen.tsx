@@ -86,6 +86,8 @@ export function CanvasScreen({
   const claudeBlocked = agent === CLAUDE_PROVIDER_ID && !settings?.repoPath
   const [request, setRequest] = useState('')
   const [images, setImages] = useState<ComposerImage[]>([])
+  // The box on a fresh task: stop for the person on this one. It clears once a run starts.
+  const [stopForMe, setStopForMe] = useState(false)
   // The name the person gives a new task, if any; empty, the app names it from the request.
   const [taskName, setTaskName] = useState('')
   const clearComposer = () => {
@@ -217,6 +219,7 @@ export function CanvasScreen({
           request,
           provider: agent,
           attachments: readyImageIds(images),
+          ...(stopForMe ? { stopForMe: true } : {}),
           ...(taskName.trim() ? { title: taskName.trim() } : {}),
           ...(agent === CLAUDE_PROVIDER_ID && chosenStart ? { startFrom: chosenStart } : {}),
         }),
@@ -228,6 +231,7 @@ export function CanvasScreen({
       setHighlightedId(null)
       setRun((await detail.json()) as RunInfo)
       clearComposer()
+      setStopForMe(false)
       setTaskName('')
     } catch {
       setMessage(strings.run.startFailed)
@@ -358,15 +362,16 @@ export function CanvasScreen({
   // The run waits on the person at its plan, or at the human check: the card shows the one it waits at.
   // The change a person decides on is shown in the Human check window; the side card keeps the decision.
   const humanBlock = run?.blocks.find(b => b.kind === 'human')
+  const planBlock = run?.blocks.find(b => b.kind === 'plan')
   // A plan node that waits on the planner's question waits on an answer, not on the plan: the question card shows it.
   const planWaiting = !!run && run.blocks.some(b => b.kind === 'plan' && views[b.id]?.state === 'waiting_approval' && views[b.id]?.asking !== true)
   // A question from the review (or from the planner) is the person's to answer, in the same place; it is not the human check.
   const reviewRan = !!run && run.providerId !== DEMO_PROVIDER_ID && run.blocks.some(b => b.kind === 'review' && b.enabled && views[b.id]?.state === 'passed')
   const mode: CardMode =
-    run && runStatus === 'waiting_approval' && planWaiting
-      ? 'plan'
-      : run && runStatus === 'waiting_approval' && asking
+    run && runStatus === 'waiting_approval' && asking
       ? 'question'
+      : run && runStatus === 'waiting_approval' && planWaiting
+      ? 'plan'
       : run && runStatus === 'waiting_approval'
       ? 'waiting'
       : run && (runStatus === 'running' || runStatus === 'queued')
@@ -655,6 +660,9 @@ export function CanvasScreen({
           mode={mode}
           runId={run?.runId ?? null}
           risk={Object.values(views).find(v => v.state === 'waiting_approval')?.risk}
+          planMeasure={planBlock ? views[planBlock.id]?.planMeasure : undefined}
+          stopForMe={stopForMe}
+          onStopForMe={setStopForMe}
           text={request}
           onText={setRequest}
           images={images}
