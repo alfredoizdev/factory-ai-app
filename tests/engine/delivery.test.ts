@@ -195,6 +195,27 @@ test('bringing a follow-up over carries its parent along when the parent was nev
   expect(existsSync(join(repo, 'Button.tsx'))).toBe(true)
 })
 
+test('a follow-up on a change that is saved but not published joins its branch, so it lands in the same pull request', async () => {
+  const { runId: parentId, repo } = await finishedRun()
+  const parentKept = await keepOnBranch(parentId, { name: 'ai/outline-buttons-x1' })
+  const { runId } = await startFollowUp(parentId, 'uppercase')
+  const { provider } = lineWriter('text: uppercase')
+  await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, runId))
+  try {
+    await orchestrateRun(runId, parkStep, { resolveProvider: () => provider })
+  } catch (e) {
+    if (!(e instanceof Parked)) throw e
+  }
+  await approveAndFinish(runId)
+  const kept = await keepOnBranch(runId)
+  // Same branch as the change it continues, one commit further on.
+  expect(kept.branch).toBe('ai/outline-buttons-x1')
+  expect(git(repo, 'rev-parse', 'ai/outline-buttons-x1')).toBe(kept.commit)
+  expect(git(repo, 'rev-parse', 'ai/outline-buttons-x1~1')).toBe(parentKept.commit)
+  // The branch holds both: what was approved before and what was added.
+  expect(kept.files).toEqual(['Button.tsx', 'page.tsx'])
+})
+
 test('when the parent was already brought over, the follow-up brings only its own change', async () => {
   const { runId: parentId, repo } = await finishedRun()
   await deliverToProject(parentId)

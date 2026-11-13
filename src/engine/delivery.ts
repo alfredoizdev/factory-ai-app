@@ -76,7 +76,7 @@ async function approvedAndFinished(runId: string) {
 type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string; pullRequestUrl?: string | null }
 
 /** The latest record of this kind for this run, if there was one. A keep or a delivery happens once; a switch may repeat. */
-async function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed'): Promise<Record_ | null> {
+async function recordOf(runId: string, type: 'run.kept' | 'run.delivered' | 'run.switched' | 'run.pushed' | 'run.merged'): Promise<Record_ | null> {
   const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, type))).orderBy(desc(events.sequence)))[0]
   return row ? (JSON.parse(row.payloadJson) as Record_) : null
 }
@@ -282,8 +282,14 @@ export async function keepOnBranch(runId: string, options: KeepOptions = {}): Pr
     const from = run.deliveryBase ?? run.baseCommit!
     const files = git(wt, ['diff', '--name-only', from, commit]).split('\n').filter(Boolean)
     if (files.length === 0) throw new DeliveryError(strings.delivery.nothing, 409)
+    // Something added to a change that is not published yet joins it: same branch, so the same pull request.
+    const joined = own === null ? await joinParentBranch(run, wt, commit) : null
+    if (joined) {
+      await db.update(runs).set({ branch: joined }).where(eq(runs.id, run.id))
+      branch = joined
+    }
     // Only a name the app made up is replaced; a branch the person named is theirs.
-    const automatic = branch.startsWith('factory/') || branch === branchNameFor(run.id, run.request)
+    const automatic = joined !== null ? false : branch.startsWith('factory/') || branch === branchNameFor(run.id, run.request)
     const wanted =
       own ?? (automatic ? (options.fallbackName ?? branchFromWords(run.id, fallbackWords(run.request) ?? 'change')) : branch)
     if (wanted !== branch && (own !== null || !exists(wanted))) {
@@ -298,6 +304,37 @@ export async function keepOnBranch(runId: string, options: KeepOptions = {}): Pr
     )
     return deliveryState(runId)
   })
+}
+
+/**
+ * For a run that continues an approved change: when that change is saved on its branch and not published yet, the
+ * run's worktree moves onto that branch, with its commit on top, and the branch's name is returned. People add what
+ * they forgot before publishing, and it belongs in the pull request they are looking at, not in a second one.
+ * Null (and nothing moved) when there is no such change, when it was published, when the branch has moved somewhere
+ * this commit does not continue from, or when the branch is in use where it cannot be taken from.
+ */
+async function joinParentBranch(run: typeof runs.$inferSelect, wt: string, commit: string): Promise<string | null> {
+  if (!run.parentRunId) return null
+  const parentKept = await recordOf(run.parentRunId, 'run.kept')
+  if (!parentKept?.branch || (await recordOf(run.parentRunId, 'run.merged'))) return null
+  const branch = parentKept.branch
+  try {
+    const tip = git(wt, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`])
+    git(wt, ['merge-base', '--is-ancestor', tip, commit])
+    // The parent's own working copy holds the branch: it lets go of it, keeping its files as they are.
+    const parent = (await db.select().from(runs).where(eq(runs.id, run.parentRunId)))[0]
+    if (parent?.worktreePath) {
+      try {
+        if (git(parent.worktreePath, ['symbolic-ref', '--quiet', '--short', 'HEAD']) === branch) git(parent.worktreePath, ['checkout', '-q', '--detach'])
+      } catch {
+        // Already detached, or gone.
+      }
+    }
+    git(wt, ['checkout', '-q', '-B', branch, commit])
+    return branch
+  } catch {
+    return null
+  }
 }
 
 /**

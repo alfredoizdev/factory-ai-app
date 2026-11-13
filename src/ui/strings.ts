@@ -923,7 +923,7 @@ export const strings = {
   },
   followUp: {
     title: 'Another change',
-    hint: 'Continue builds on this approved change. For something separate, use New task in the top bar.',
+    hint: 'Forgot something? Ask for it here: it is added to this same change, and to its pull request while it is not published yet. For something separate, use New task in the top bar.',
     placeholder: 'What to change next. Press Enter to send it (Shift+Enter for a new line).',
     start: 'Continue from this change',
     starting: 'Starting the follow-up…',
