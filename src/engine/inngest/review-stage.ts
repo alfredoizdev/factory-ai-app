@@ -538,7 +538,7 @@ export async function depthOf(runId: string, workspace: Workspace, since?: Since
   if (!workspace.workdir || !workspace.baseCommit) return 'high'
   const tests = await testFactsOf(runId)
   const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
-  const { core, decisions } = projectId ? await gateInputs(projectId) : { core: [], decisions: [] }
+  const { core, decisions } = projectId ? await gateInputs(projectId, db, runId) : { core: [], decisions: [] }
   // The same rules, on the files changed since the first review. More files than were carried is far past the limit already.
   if (since) return since.more > 0 ? 'high' : classifyChange(since.files, tests, core, decisions).level
   return assessRisk(workspace.workdir, workspace.baseCommit, tests, core, decisions).level

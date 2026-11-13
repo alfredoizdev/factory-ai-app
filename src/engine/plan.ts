@@ -136,6 +136,8 @@ export async function decidePlan(runId: string, decision: { action: 'build'; job
   await db.transaction(
     async tx => {
       await lockRun(tx, runId)
+      // While the planner's question waits, the node waits on that answer, not on a word about a plan.
+      if ((await tx.select({ id: questions.id }).from(questions).where(and(eq(questions.runId, runId), eq(questions.kind, 'plan'), eq(questions.state, 'open'))))[0]) throw new PlanError(strings.plan.answerFirst)
       let node: (typeof nodeRuns.$inferSelect) | undefined
       for (const n of await tx.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))) {
         if (n.state === 'waiting_approval' && (await isPlanNode(tx, runId, n.id))) {
@@ -144,8 +146,6 @@ export async function decidePlan(runId: string, decision: { action: 'build'; job
         }
       }
       if (!node) throw new PlanError(strings.plan.notWaiting)
-      // While the planner's question waits, the node waits on that answer, not on a word about an earlier plan.
-      if ((await tx.select({ id: questions.id }).from(questions).where(and(eq(questions.nodeRunId, node.id), eq(questions.state, 'open'))))[0]) throw new PlanError(strings.plan.notWaiting)
       if (decision.action === 'build') {
         const jobs = cleanJobs(decision.jobs)
         if (!jobs) throw new PlanError(strings.plan.needAJob)

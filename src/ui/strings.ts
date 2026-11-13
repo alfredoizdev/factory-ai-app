@@ -913,6 +913,7 @@ export const strings = {
   plan: {
     alreadyMade: 'You already checked the plan for this task, so the work carries on from where it stopped.',
     notWaiting: 'There is no plan waiting for you on this task.',
+    answerFirst: 'The planner asked you a question. Answer it first; the plan comes after.',
     needAJob: 'A plan needs at least one job with a name.',
     needANote: 'Say what the new plan should do differently.',
     title: 'Your plan',

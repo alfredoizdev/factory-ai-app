@@ -120,14 +120,17 @@ export async function corePaths(projectId: string, h: DbHandle = db): Promise<st
 }
 
 /**
- * What a finished change is measured against besides its size: the core areas and the decisions that name files. The one
- * place both the final check and the review depth read it from, so they cannot disagree about the same change.
+ * What a change is measured against besides its size: the core areas and the decisions that name files. The one place
+ * the plan's measure, the final check and the review depth read it from, so they cannot disagree about the same change.
+ * `run`: the run being measured. A decision the person made by answering a question on that very run settled the
+ * matter for it, so it does not stop that run again; it counts for every other run, follow-ups included.
  */
-export async function gateInputs(projectId: string, h: DbHandle = db): Promise<{ core: string[]; decisions: DecisionPaths[] }> {
-  const standing = await standingFor(projectId, h)
+export async function gateInputs(projectId: string, h: DbHandle = db, run?: string): Promise<{ core: string[]; decisions: DecisionPaths[] }> {
+  const standing = (await listRegister(projectId, h)).filter(e => e.enabled && e.kind !== 'finding')
+  const ownAnswer = (e: Entry) => run !== undefined && e.kind === 'decision' && e.source === 'question' && e.runId === run
   return {
-    core: standing.filter(s => s.kind === 'core').flatMap(s => s.paths),
-    decisions: standing.filter(s => s.kind === 'decision' && s.paths.length > 0).map(s => ({ text: s.text, paths: s.paths })),
+    core: standing.filter(e => e.kind === 'core').flatMap(e => e.paths),
+    decisions: standing.filter(e => e.kind === 'decision' && e.paths.length > 0 && !ownAnswer(e)).map(e => ({ text: e.text, paths: e.paths })),
   }
 }
 

@@ -16,7 +16,8 @@ import { PLAN_DECIDED, QUESTION_ANSWERED } from '@/engine/inngest/client'
 import { decidePlan, type Job, type PlanQuestion } from '@/engine/plan'
 import { answerQuestion, openQuestion, type Question } from '@/engine/questions'
 import { recordDecision } from '@/engine/approvals'
-import { addEntry } from '@/engine/register'
+import { addEntry, gateInputs, listRegister } from '@/engine/register'
+import { clip, redact } from '@/engine/redact'
 import { depthOf } from '@/engine/inngest/review-stage'
 import { createProject } from '@/engine/projects'
 import { createRunWorktree } from '@/engine/worktree'
@@ -907,7 +908,7 @@ describe('the plan follows the project\'s ask mode', () => {
       asked = await openQuestion(runId)
       expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('waiting_approval')
       // A word on a plan is not taken while the planner's question waits.
-      await expect(decidePlan(runId, { action: 'build', jobs: footer })).rejects.toThrow(strings.plan.notWaiting)
+      await expect(decidePlan(runId, { action: 'build', jobs: footer })).rejects.toThrow(strings.plan.answerFirst)
       await answerQuestion(asked!.id, { option: 'a' }, { send: async () => undefined })
       return true
     })
@@ -975,6 +976,102 @@ describe('the plan follows the project\'s ask mode', () => {
     expect((await node(runId, 'plan')).state).toBe('passed')
     expect(await measured(runId)).toEqual([])
     expect(await payloadOf(runId, 'node.completed', 'plan')).toMatchObject([{ summary: strings.plan.unreadable }])
+  })
+
+  describe('a decision the person made on this run does not stop it again', () => {
+    const rounding: Job[] = [{ title: 'Round the price', done: [], paths: ['src/rounding/round.ts'] }]
+    const roundQ: PlanQuestion = { text: 'Round up or down?', why: '', paths: ['src/rounding/'], options: [{ id: 'a', label: 'Up', means: 'Ceil.' }, { id: 'b', label: 'Down', means: 'Floor.' }] }
+    const authQ: PlanQuestion = { ...roundQ, text: 'Which sign-in?', paths: ['src/auth/'] }
+    const words = 'down, always, for every price'
+    /** The planner gives `answers`; the tests pass with their evidence, so a small change can pass the final check. */
+    function planned(answers: Planned[]): AgentProvider & { notes: (string | undefined)[] } {
+      const p = planner(answers)
+      const t = withTests()
+      return { ...p, execute: (input, c) => (input.blockKind === 'plan' ? p.execute(input, c) : t.execute(input, c)) }
+    }
+    /** Answers the planner's question in the person's own words, and builds a plan that stops. */
+    const person = (runId: string) =>
+      recordingStep(async event => {
+        if (event === QUESTION_ANSWERED) await answerQuestion((await openQuestion(runId))!.id, { option: 'other', text: words }, { send: async () => undefined })
+        else if (event === PLAN_DECIDED) await decidePlan(runId, { action: 'build', jobs: rounding })
+        else return false
+        return true
+      })
+    const decisionText = () => strings.question.decision({ about: strings.question.about('plan', undefined, roundQ.text), choice: null, words })
+
+    test('the next plan on those files starts on its own, and the change passes the final check; a new run on the project stops twice', async () => {
+      const { runId, projectId } = await projectRun()
+      await go(runId, planned([{ jobs: rounding, question: roundQ }, { jobs: rounding }]), person(runId), realWorktree({ 'src/rounding/round.ts': 'floor()\n' }))
+      const [decision] = (await listRegister(projectId)).filter(e => e.kind === 'decision')
+      expect(decision).toMatchObject({ text: decisionText(), paths: ['src/rounding/'], source: 'question', runId })
+      // (a) The plan after the answer is simple, and its reasons do not name the decision.
+      const second = (await measured(runId)).at(-1)!
+      expect(second.simple).toBe(true)
+      expect(JSON.stringify(second.reasons)).not.toContain(words)
+      expect((await payloadOf(runId, 'node.completed', 'plan')).at(-1)).toMatchObject({ autoStarted: true })
+      // (b) The finished change on that file passes on its own.
+      expect((await node(runId, 'human')).state).toBe('passed')
+      expect(await payloadOf(runId, 'node.completed', 'human')).toMatchObject([{ autoApproved: true }])
+
+      // (c) A new run on the same project: the decision is an earlier one now, so it stops at the plan and at the final check.
+      const workflowId = (await db.select().from(workflows).where(eq(workflows.projectId, projectId)))[0]!.id
+      const { runId: next } = await createRun({ workflowId, request: 'round the tax too' })
+      await db.update(runs).set({ providerId: 'files' }).where(eq(runs.id, next))
+      await go(next, planned([{ jobs: rounding }]), person(next), realWorktree({ 'src/rounding/round.ts': 'floor()\n' }))
+      const [m] = await measured(next)
+      expect(m!.simple).toBe(false)
+      expect(m!.reasons).toContain(strings.plan.reasons.decision(decisionText()))
+      expect((await node(next, 'human')).state).toBe('waiting_approval')
+      const [assessed] = await payloadOf(next, 'node.assessed', 'human')
+      expect(assessed!.level).toBe('high')
+      expect(assessed!.reasons).toContain(strings.risk.onDecision('src/rounding/round.ts', decisionText()))
+    })
+
+    test('a decision from an earlier run still counts for this run, and the three readers read the same', async () => {
+      const { runId, projectId } = await projectRun()
+      const workflowId = (await db.select().from(workflows).where(eq(workflows.projectId, projectId)))[0]!.id
+      const { runId: earlier } = await createRun({ workflowId, request: 'earlier' })
+      // Written the way answerQuestion writes it, once on the earlier run and once on this one.
+      await addEntry(projectId, { kind: 'decision', text: 'Prices round down', paths: ['src/rounding/'], source: 'question', runId: earlier })
+      await addEntry(projectId, { kind: 'decision', text: 'Taxes round up', paths: ['src/tax/'], source: 'question', runId })
+      expect((await gateInputs(projectId, db, runId)).decisions.map(d => d.text)).toEqual(['Prices round down'])
+      expect((await gateInputs(projectId)).decisions.map(d => d.text)).toEqual(['Prices round down', 'Taxes round up'])
+      await go(runId, planned([{ jobs: rounding }]), recordingStep())
+      expect((await measured(runId))[0]!.reasons).toContain(strings.plan.reasons.decision('Prices round down'))
+      expect((await node(runId, 'plan')).state).toBe('waiting_approval')
+      // The review's depth reads the same: this run's own decision does not make its change high.
+      const made = realWorktree({ 'src/tax/vat.ts': 'up()\n' })!('', runId)
+      const workspace = { workdir: made.path, baseCommit: made.baseCommit } as Parameters<typeof depthOf>[1]
+      await db.insert(evidence).values({ id: ulid(), projectId, runId, nodeRunId: (await node(runId, 'plan')).id, kind: 'test_run', source: 'test-runner', dataJson: JSON.stringify(passingTests), createdAt: new Date().toISOString() })
+      expect(await depthOf(runId, workspace)).toBe('low')
+    })
+
+    test('a sensitive path still stops even when this run\'s own decision covers it', async () => {
+      const { runId } = await projectRun()
+      await go(runId, planned([{ jobs: login, question: authQ }, { jobs: login }]), person(runId))
+      const second = (await measured(runId)).at(-1)!
+      expect(second.simple).toBe(false)
+      expect(second.reasons).toEqual([strings.plan.reasons.sensitive(strings.risk.areas.auth)])
+      // It stopped for the person (who then built it); it did not start on its own.
+      expect(await payloadOf(runId, 'node.plan_proposed', 'plan')).toHaveLength(1)
+      expect((await payloadOf(runId, 'node.completed', 'plan')).at(-1)).not.toHaveProperty('autoStarted')
+    })
+  })
+
+  test('the person\'s words go to the planner redacted and clipped, like a request for another plan', async () => {
+    const { runId } = await projectRun()
+    const secret = `API_KEY=supersecret123 ${'w'.repeat(900)}`
+    const s = recordingStep(async event => {
+      if (event !== QUESTION_ANSWERED) return false
+      await answerQuestion((await openQuestion(runId))!.id, { option: 'other', text: secret }, { send: async () => undefined })
+      return true
+    })
+    const provider = planner([{ jobs: footer, question }, { jobs: footer }])
+    await go(runId, provider, s)
+    const words = clip(redact(secret), 500)
+    expect(provider.notes[1]).toBe(strings.providers.claude.answerNote(question.text, { option: 'own' }, words))
+    expect(provider.notes[1]).not.toContain('supersecret123')
+    expect(words.length).toBeLessThanOrEqual(500)
   })
 
   describe('the final check follows the mode', () => {

@@ -537,7 +537,7 @@ async function runProviderNode(
         let startsOnItsOwn = false
         if (planning) {
           // The planner's own answer, against the register as it stands now (what the final check reads too).
-          const measured = measurePlan({ jobs, question: result.planQuestion ?? null }, await gateInputs(node.projectId, tx))
+          const measured = measurePlan({ jobs, question: result.planQuestion ?? null }, await gateInputs(node.projectId, tx, runId))
           const allowed = shipsOnItsOwn(mode, stopForMe)
           // When the setting stops every plan, that is said first; what was measured follows.
           const said = strings.plan.reasons
@@ -734,7 +734,7 @@ async function assessGate(runId: string, block: PlannedBlock, workspace: Workspa
   await changeUnderReview(runId).catch(() => null) // unreadable now: the gate reads it again when shown
   // The core areas the person marked, as they are now: a change inside one is never waved through.
   const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
-  const { core, decisions } = projectId ? await gateInputs(projectId) : { core: [], decisions: [] }
+  const { core, decisions } = projectId ? await gateInputs(projectId, db, runId) : { core: [], decisions: [] }
   const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)), core, decisions)
   await withTx(runId, async tx => {
     const node = (await openNodeIn(tx, runId, block.id))
@@ -1190,7 +1190,8 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           // Chosen (with or without words), left to the planner, or answered only in the person's own words.
           const label = answer.answerOption === OTHER || answer.answerOption === LEAVE ? undefined : answer.options.find(o => o.id === answer.answerOption)?.label
           const how = answer.answerOption === LEAVE ? { option: 'leave' as const } : label !== undefined ? { option: 'chosen' as const, label } : { option: 'own' as const }
-          note = strings.providers.claude.answerNote(q.text, how, answer.answerText)
+          // The person's words are cleaned as a request for another plan is, before they reach the planner.
+          note = strings.providers.claude.answerNote(q.text, how, answer.answerText ? clip(redact(answer.answerText), 500) : null)
           answered = true
           images = []
           continue
