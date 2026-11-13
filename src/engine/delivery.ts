@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { approvals, events, projects, runs } from '@/db/schema'
+import { events, projects, runs } from '@/db/schema'
 import { appendEventSync } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 import { branchFromWords, fallbackWords, type CommitMessage } from '@/engine/branch-name'
@@ -13,15 +13,18 @@ import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
 import { elsewhere, runPlace } from '@/engine/machine'
 import { serialized } from '@/engine/serial'
+import { humanCheckPassedBy } from '@/engine/passed-check'
 
-// Bringing an approved change into the person's own project. Two things, both local, nothing pushed anywhere:
+// Bringing a change that passed the human check (by the person's yes, or on its own) into the person's own project. Two things, both local, nothing pushed anywhere:
 // the change is committed on the run's own branch (factory/<run>), so it is kept and can be merged or pushed later;
 // and the same change is applied to the person's checkout, uncommitted, for them to look at and commit themselves.
 // Their checkout must be clean: their own unsaved work is never mixed with the agent's.
 
 export type Delivery = {
-  /** True once a person approved this run and it finished: only then can it be brought over. */
+  /** True once this run passed the human check (the person's yes, or on its own) and finished: only then can it be brought over. */
   eligible: boolean
+  /** Who opened the human check: the person, or the app on its own. Null while nobody has. */
+  passedBy: 'person' | 'app' | null
   /** Committed on its own branch in the person's repository. */
   kept: boolean
   /** Also applied to the person's checkout, uncommitted. */
@@ -44,10 +47,16 @@ export type Delivery = {
   here: boolean
   /** The name of the computer it is on, when known. */
   machine: string | null
+  /** Kept, sent and opened as a pull request on its own after it passed: how far that went. Null when it was not tried. */
+  autoShip: AutoShip | null
 }
 
+/** The latest word of the steps that keep, send and open a change on their own. The values are stored: never reword them. */
+export type AutoShip = { state: 'started' | 'opened' | 'stopped'; step: 'keep' | 'send' | 'open' | null; reason: 'no_connection' | 'failed' | null; message: string | null; /** When this word was recorded (read only; the card uses it to tell a send that was never ended). */ at?: string }
+
 export class DeliveryError extends Error {
-  constructor(message: string, readonly status: 400 | 404 | 409) {
+  /** `no_connection`: the project is not connected to GitHub (no origin), so there is nowhere to send it. */
+  constructor(message: string, readonly status: 400 | 404 | 409, readonly kind?: 'no_connection') {
     super(message)
     this.name = 'DeliveryError'
   }
@@ -59,8 +68,8 @@ const git = (cwd: string, args: string[], input?: string) =>
 async function approvedAndFinished(runId: string) {
   const run = (await db.select().from(runs).where(eq(runs.id, runId)))[0]
   if (!run) return null
-  const approved = (await db.select().from(approvals).where(and(eq(approvals.runId, runId), eq(approvals.decision, 'approved'))))[0]
-  return { run, eligible: run.status === 'completed' && !!approved && !!run.worktreePath && !!run.baseCommit }
+  const passedBy = await humanCheckPassedBy(runId)
+  return { run, passedBy, eligible: run.status === 'completed' && passedBy !== null && !!run.worktreePath && !!run.baseCommit }
 }
 
 type Record_ = { branch?: string; commit?: string; files?: string[]; appliedTo?: string; from?: string; pullRequestUrl?: string | null }
@@ -84,14 +93,25 @@ function currentBranch(repo: string | null): string | null {
     return null
   }
 }
+/** The address of the repository's origin as git reads it, or null when it has none. */
+export function originUrl(repo: string): string | null {
+  try {
+    return git(repo, ['remote', 'get-url', 'origin']).trim() || null
+  } catch {
+    return null
+  }
+}
+/** Where git really sends to origin: its push address, with any pushurl or insteadOf of the person's applied. */
+export function originPushUrl(repo: string): string | null {
+  try {
+    return git(repo, ['remote', 'get-url', '--push', 'origin']).trim() || null
+  } catch {
+    return null
+  }
+}
 /** Whether the repository has a remote called origin; null when there is no repository here to ask. */
 function hasOrigin(repo: string | null): boolean | null {
-  if (!repo) return null
-  try {
-    return git(repo, ['remote', 'get-url', 'origin']).trim() !== ''
-  } catch {
-    return false
-  }
+  return repo ? originUrl(repo) !== null : null
 }
 const deliveredRecord = (runId: string) => recordOf(runId, 'run.delivered')
 
@@ -108,6 +128,7 @@ export async function deliveryState(runId: string): Promise<Delivery> {
     here: place.here,
     machine: place.machine,
     eligible: found.eligible,
+    passedBy: found.passedBy,
     kept: !!kept,
     delivered: !!done,
     branch: kept?.branch ?? found.run.branch,
@@ -118,24 +139,46 @@ export async function deliveryState(runId: string): Promise<Delivery> {
     returnTo: (await recordOf(runId, 'run.switched'))?.from ?? null,
     pushed: pushedRecord !== null && pushedRecord.branch === (kept?.branch ?? found.run.branch),
     pullRequestUrl: pushedRecord?.pullRequestUrl ?? null,
+    autoShip: await autoShipRecord(runId),
   }
+}
+
+/**
+ * The latest word of the automatic keep, send and open, as recorded. A stop stays the latest word after the person
+ * finishes that step by hand: the card weighs it against `kept`, `pushed` and the pull request.
+ */
+export async function autoShipRecord(runId: string): Promise<AutoShip | null> {
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.auto_ship'))).orderBy(desc(events.sequence)))[0]
+  if (!row) return null
+  const p = JSON.parse(row.payloadJson) as Partial<AutoShip>
+  return { state: p.state ?? 'started', step: p.step ?? null, reason: p.reason ?? null, message: p.message ?? null, at: row.createdAt }
 }
 
 /**
  * Commits whatever the agent left uncommitted in the run's worktree, on the run's own branch, and returns the commit
  * the branch now points at. Used to keep an approved change before it is brought over or built upon.
  */
-export function keepCommit(run: { id: string; request: string; worktreePath: string | null }, described?: CommitMessage | null): string {
+export function keepCommit(
+  run: { id: string; request: string; worktreePath: string | null },
+  described?: CommitMessage | null,
+  passedBy: 'person' | 'app' = 'person',
+): string {
   const wt = run.worktreePath!
   git(wt, ['add', '-A'])
   if (git(wt, ['diff', '--cached', '--name-only']) !== '') {
     // Says what changed when a description was written from the diff; otherwise the request is the best summary there is.
     // Either way the request and the provenance are kept in the body.
     const asked = run.request.replace(/\s+/g, ' ').trim()
-    const provenance = `Made by an agent in AI Factory, run ${run.id}, and approved by a person.`
+    const provenance =
+      passedBy === 'app'
+        ? `Made by an agent in AI Factory, run ${run.id}. ${strings.delivery.passedOnItsOwn}`
+        : `Made by an agent in AI Factory, run ${run.id}, and approved by a person.`
+    // The request and the written description leave the computer with the commit (in the pull request, too):
+    // anything secret in them is taken out.
+    const said = redact(asked)
     const message = described
-      ? `${described.subject}\n\n${described.body ? `${described.body}\n\n` : ''}Asked for: ${clip(asked, 500)}\n\n${provenance}`
-      : `${clip(asked, 72)}\n\n${provenance}`
+      ? `${redact(described.subject)}\n\n${described.body ? `${redact(described.body)}\n\n` : ''}Asked for: ${clip(said, 500)}\n\n${provenance}`
+      : `${clip(said, 72)}\n\n${provenance}`
     git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
   }
   return git(wt, ['rev-parse', 'HEAD'])
@@ -150,7 +193,7 @@ export function unfinishedCommit(run: { id: string; request: string; worktreePat
   git(wt, ['add', '-A'])
   if (git(wt, ['diff', '--cached', '--name-only']) !== '') {
     const asked = run.request.replace(/\s+/g, ' ').trim()
-    const message = `Unfinished: ${clip(asked, 60)}\n\nLeft by an agent in AI Factory, run ${run.id}, which stopped before a person approved it.`
+    const message = `Unfinished: ${clip(redact(asked), 60)}\n\nLeft by an agent in AI Factory, run ${run.id}, which stopped before a person approved it.`
     git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
   }
   return git(wt, ['rev-parse', 'HEAD'])
@@ -234,7 +277,7 @@ export async function keepOnBranch(runId: string, options: KeepOptions = {}): Pr
     let branch = run.branch ?? git(wt, ['rev-parse', '--abbrev-ref', 'HEAD'])
     const exists = (name: string) => git(wt, ['branch', '--list', name]) !== ''
     if (own !== null && own !== branch && exists(own)) throw new DeliveryError(strings.delivery.branchExists(own), 409)
-    const commit = keepCommit(run, options.message)
+    const commit = keepCommit(run, options.message, found.passedBy ?? 'person')
     const from = run.deliveryBase ?? run.baseCommit!
     const files = git(wt, ['diff', '--name-only', from, commit]).split('\n').filter(Boolean)
     if (files.length === 0) throw new DeliveryError(strings.delivery.nothing, 409)
@@ -406,12 +449,8 @@ export async function pushBranch(runId: string): Promise<Delivery> {
     const branch = kept.branch
     const repo = (await repoOf(found.run.projectId))
     if (!repo) throw new DeliveryError(strings.run.noRepository, 409)
-    let remote: string
-    try {
-      remote = git(repo, ['remote', 'get-url', 'origin'])
-    } catch {
-      throw new DeliveryError(strings.delivery.noRemote, 409)
-    }
+    const remote = originUrl(repo)
+    if (remote === null) throw new DeliveryError(strings.delivery.noRemote, 409, 'no_connection')
     try {
       await gitAsync(repo, ['push', '--porcelain', 'origin', `refs/heads/${branch}:refs/heads/${branch}`])
     } catch (e) {
@@ -425,7 +464,11 @@ export async function pushBranch(runId: string): Promise<Delivery> {
       // Upstream tracking is a convenience; the push itself succeeded.
     }
     const pullRequestUrl = githubPullUrl(remote, branch)
-    await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx)))
+    // Sending the same branch again (opening its pull request pushes first) is said once.
+    const before = await recordOf(runId, 'run.pushed')
+    if (before?.branch !== branch || (before.pullRequestUrl ?? null) !== pullRequestUrl) {
+      await db.transaction(async tx => void (await appendEventSync({ runId, type: 'run.pushed', payload: { branch, pullRequestUrl } }, tx)))
+    }
     return deliveryState(runId)
   })
 }

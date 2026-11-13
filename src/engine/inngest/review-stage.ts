@@ -4,13 +4,11 @@ import { findings, nodeRuns, runs } from '@/db/schema'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync } from '@/engine/events'
 import { bySeverity, citedPath, findingsOf, mergeDuplicates, recordFindings, riskOf, setFinding, type FindingRow } from '@/engine/findings'
-import { QUESTION_ANSWERED } from '@/engine/inngest/client'
-import { LEAVE, askPerson, consumeAnswer, type Question } from '@/engine/questions'
-import { addEntry, corePaths, standingFor, touchesCore } from '@/engine/register'
+import { waitForAnswer } from '@/engine/inngest/answers'
+import { LEAVE, askPerson, type Question } from '@/engine/questions'
+import { addEntry, corePaths, gateInputs, standingFor, touchesCore } from '@/engine/register'
 import { corrected, makeCopy as realMakeCopy, removeCopy, reproduced, runRepro as realRunRepro, type NoRepro, type Repro, type ReproRun } from '@/engine/repro'
 import {
-  APPROVAL_WAIT,
-  MAX_IGNORED_DECISIONS,
   isCancelled,
   canRetry,
   describeFailure,
@@ -489,17 +487,8 @@ async function askAndWait(ctx: Context, nodeId: string, row: FindingRow, tag: ''
     return question
   })
   if (asked === null) return 'cancelled'
-  let answer: Question | null = asked.state === 'answered' ? await step.run(id(`read-answer-${tag}${row.id}-first`), () => consumeAnswer(asked.id)) : null
-  // The event only says "look": the answer is read from its row, and reading it marks it taken (the relay tells the run again until then). One that is not there yet is ignored and the wait goes on.
-  for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && answer === null; attempt++) {
-    const arrived = await step.waitForEvent(id(`question-${tag}${row.id}-${attempt}`), { event: QUESTION_ANSWERED, timeout: APPROVAL_WAIT, match: 'data.runId' })
-    // No answer (the wait expired) leaves the run waiting on the person; nothing is decided for them.
-    if (!arrived) return 'parked'
-    const read = await step.run(id(`read-answer-${tag}${row.id}-${attempt}`), async () => ((await isCancelled(runId)) ? ('cancelled' as const) : consumeAnswer(asked.id)))
-    if (read === 'cancelled') return 'cancelled'
-    answer = read
-  }
-  return answer ?? 'parked'
+  // The finding's id names the steps, as it always has: a run parked on one of them resumes there.
+  return waitForAnswer(step, id, runId, asked, tag, row.id)
 }
 
 /** Every ending: one register line, its number on the finding, and the event, together; a retry finds the number and does nothing. */
@@ -544,15 +533,15 @@ async function sinceOf(tree: string, workspace: Workspace, deps: ExecutorDeps): 
   }
 }
 
-async function depthOf(runId: string, workspace: Workspace, since?: Since): Promise<'low' | 'high'> {
+export async function depthOf(runId: string, workspace: Workspace, since?: Since): Promise<'low' | 'high'> {
   // A change that cannot be measured is read as carefully as a risky one.
   if (!workspace.workdir || !workspace.baseCommit) return 'high'
   const tests = await testFactsOf(runId)
   const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
-  const core = projectId ? await corePaths(projectId) : []
+  const { core, decisions } = projectId ? await gateInputs(projectId, db, runId) : { core: [], decisions: [] }
   // The same rules, on the files changed since the first review. More files than were carried is far past the limit already.
-  if (since) return since.more > 0 ? 'high' : classifyChange(since.files, tests, core).level
-  return assessRisk(workspace.workdir, workspace.baseCommit, tests, core).level
+  if (since) return since.more > 0 ? 'high' : classifyChange(since.files, tests, core, decisions).level
+  return assessRisk(workspace.workdir, workspace.baseCommit, tests, core, decisions).level
 }
 
 /** What the builder said it did, from the build node's stored sentence. */

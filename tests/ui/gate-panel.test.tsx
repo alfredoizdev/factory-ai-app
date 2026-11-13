@@ -9,7 +9,7 @@ const review = { hash: 'h1', files: [{ path: 'src/app/page.tsx', added: 1, remov
 afterEach(() => vi.unstubAllGlobals())
 
 /** The card as the screen holds it: one composer whose text every section uses. */
-function Card({ mode = 'waiting', risk }: { mode?: CardMode; risk?: { level: 'low' | 'high'; reasons: string[] } }) {
+function Card({ mode = 'waiting', risk }: { mode?: CardMode; risk?: { level: 'low' | 'high'; reasons: string[]; stopForMe?: true } }) {
   const [text, setText] = useState('')
   const [images, setImages] = useState<ComposerImage[]>([])
   return (
@@ -32,6 +32,16 @@ function Card({ mode = 'waiting', risk }: { mode?: CardMode; risk?: { level: 'lo
 const routes = (decision: Response = new Response('{}')) =>
   vi.fn(async (url: string, _init?: RequestInit) =>
     url.endsWith('/review') ? new Response(JSON.stringify(review)) : url.endsWith('/preview') ? new Response(JSON.stringify({ status: 'stopped' })) : decision.clone())
+
+test('a low-risk change that waits because the task asked to stop for the person says so, in one sentence', async () => {
+  vi.stubGlobal('fetch', routes())
+  const view = render(<Card risk={{ level: 'low', reasons: ['1 file, 2 lines.'], stopForMe: true }} />)
+  expect(await screen.findByTestId('stop-for-me-why')).toHaveTextContent(strings.gate.stopForMe)
+  view.unmount()
+  render(<Card risk={{ level: 'low', reasons: ['1 file, 2 lines.'] }} />)
+  await screen.findByText(/1 file, 2 lines\./)
+  expect(screen.queryByTestId('stop-for-me-why')).toBeNull()
+})
 
 test('waiting: it shows what changed and sends the decision bound to the change it showed, with the note', async () => {
   const fetchMock = routes()

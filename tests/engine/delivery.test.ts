@@ -7,19 +7,20 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { approvals, events, nodeRuns, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { eventsSince } from '@/engine/events'
+import { appendEvent, eventsSince } from '@/engine/events'
 import { deliverToProject, DeliveryError, deliveryState, githubPullUrl, pushBranch, switchBack, switchToBranch } from '@/engine/delivery'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import { createRunWorktree } from '@/engine/worktree'
 import { POST } from '@/app/api/runs/[runId]/delivery/route'
 import { strings } from '@/ui/strings'
+import { fakeGitHubOrigin } from '../fake-github'
 
 beforeAll(() => migrateDb())
 const now = () => new Date().toISOString()
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
 
 /** A person's project, and a finished run whose worktree (a real git worktree of it) holds a change. */
-async function finishedRun(options: { approved?: boolean } = {}) {
+async function finishedRun(options: { approved?: boolean; passedByApp?: boolean } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'factory-project-'))
   git(repo, 'init', '-q', '-b', 'main')
   git(repo, 'config', 'user.email', 'me@example.com')
@@ -40,7 +41,11 @@ async function finishedRun(options: { approved?: boolean } = {}) {
   writeFileSync(join(ws.path, 'page.tsx'), 'button: outline\nfooter: same\n')
   writeFileSync(join(ws.path, 'Button.tsx'), 'export const B = 1\n')
   const human = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === 'human')!
-  if (options.approved !== false) {
+  if (options.passedByApp) {
+    // As the executor records a gate it passed on its own (passLowRiskGate): node passed, node.completed with autoApproved.
+    await db.update(nodeRuns).set({ state: 'passed', summary: strings.risk.passedLow }).where(eq(nodeRuns.id, human.id))
+    await appendEvent({ runId, nodeRunId: human.id, type: 'node.completed', payload: { blockId: 'human', summary: strings.risk.passedLow, summarySource: 'system', autoApproved: true } })
+  } else if (options.approved !== false) {
     await db.insert(approvals).values({ id: ulid(), projectId, runId, nodeRunId: human.id, decision: 'approved', actor: 'me', diffHash: 'h', createdAt: now(), consumedAt: now() })
   }
   return { runId, repo, workflowId, wt: ws.path, branch: ws.branch, base: ws.baseCommit }
@@ -160,6 +165,18 @@ test('a follow-up starts from the approved change, is told about it, and its che
   expect(child.parentRunId).toBe(parentId)
   // The person's project is still untouched: nothing is brought over until they say so.
   expect(git(repo, 'status', '--porcelain')).toBe('')
+})
+
+test('a follow-up and a picked-up failed task keep the parent\'s "stop for me"', async () => {
+  const done = await finishedRun()
+  await db.update(runs).set({ stopForMe: true }).where(eq(runs.id, done.runId))
+  const followUp = await startFollowUp(done.runId, 'uppercase')
+  expect((await db.select().from(runs).where(eq(runs.id, followUp.runId)))[0]!.stopForMe).toBe(true)
+  const failed = await failedRun()
+  expect((await db.select().from(runs).where(eq(runs.id, failed.runId)))[0]!.stopForMe).toBe(false)
+  await db.update(runs).set({ stopForMe: true }).where(eq(runs.id, failed.runId))
+  const picked = await startFollowUp(failed.runId, 'Fix it')
+  expect((await db.select().from(runs).where(eq(runs.id, picked.runId)))[0]!.stopForMe).toBe(true)
 })
 
 test('bringing a follow-up over carries its parent along when the parent was never brought over', async () => {
@@ -415,6 +432,15 @@ test('a suggested commit message is used, with the provenance line kept', async 
   expect(body).toContain('Asked for: Outline buttons in the other team colour')
 })
 
+test('the request in the commit, which can leave the computer in a pull request, has its secrets taken out', async () => {
+  const { runId, repo } = await finishedRun()
+  await db.update(runs).set({ request: 'Use the key API_KEY=supersecret123 for the outline buttons' }).where(eq(runs.id, runId))
+  const kept = (await keepOnBranch(runId, { message: { subject: 'Outline the buttons', body: '' } }))
+  const body = git(repo, 'log', '-1', '--format=%b', kept.branch!)
+  expect(body).toContain('Asked for: Use the key')
+  expect(body).not.toContain('supersecret123')
+})
+
 describe('deleting a task', () => {
   test('removes its record and its working copy, and keeps the saved branch in the project', async () => {
     const { deleteRun } = await import('@/engine/run-delete')
@@ -450,7 +476,7 @@ describe('shipping through GitHub', () => {
     const r = await finishedRun()
     const origin = mkdtempSync(join(tmpdir(), 'factory-ship-origin-'))
     git(origin, 'init', '-q', '--bare')
-    git(r.repo, 'remote', 'add', 'origin', origin)
+    fakeGitHubOrigin(r.repo, origin)
     await keepOnBranch(r.runId, { name: 'ai/ship-me' })
     return r
   }
@@ -515,7 +541,7 @@ describe('shipping through GitHub', () => {
     await expect(mergePullRequest(runId, gh)).rejects.toBeInstanceOf(ShipError)
     view = { ...view, mergeable: 'MERGEABLE' }
     const merged = await mergePullRequest(runId, gh)
-    expect(calls.find(c => c[1] === 'merge')).toEqual(['pr', 'merge', '5', '--squash'])
+    expect(calls.find(c => c[1] === 'merge')).toEqual(['pr', 'merge', '5', '--repo', 'ai-factory-test/never-real', '--squash'])
     expect(merged.pr!.state).toBe('merged')
     expect(merged.deploy).toEqual([{ name: 'Deploy', state: 'passed', url: 'https://site' }])
   })
@@ -632,4 +658,108 @@ test('a failed run whose working copy is gone cannot be picked up, and says so',
   await db.update(runs).set({ worktreePath: '/nowhere/at/all' }).where(eq(runs.id, runId))
   expect((await runFailure(runId))!.canContinue).toBe(false)
   await expect(startFollowUp(runId, 'again')).rejects.toThrow(strings.failure.cannotContinue)
+})
+
+test('a run the app passed is eligible to keep, send and continue, like one a person approved', async () => {
+  const { runId, repo } = await finishedRun({ passedByApp: true })
+  const state = await deliveryState(runId)
+  expect(state).toMatchObject({ eligible: true, passedBy: 'app' })
+  const kept = await keepOnBranch(runId)
+  expect(kept.kept).toBe(true)
+  expect(git(repo, 'rev-parse', kept.branch!)).toBe(kept.commit)
+  const followUp = await startFollowUp(runId, 'uppercase')
+  const child = (await db.select().from(runs).where(eq(runs.id, followUp.runId)))[0]!
+  expect(child.parentRunId).toBe(runId)
+  expect(child.baseCommit).toBe(kept.commit)
+})
+
+test('a kept commit says who passed the human check: a person, or the app on its own', async () => {
+  const byApp = await finishedRun({ passedByApp: true })
+  const keptByApp = await keepOnBranch(byApp.runId)
+  const appBody = git(byApp.repo, 'log', '-1', '--format=%b', keptByApp.branch!)
+  expect(appBody).toContain(strings.delivery.passedOnItsOwn)
+  expect(appBody).not.toContain('approved by a person')
+  const byPerson = await finishedRun()
+  const keptByPerson = await keepOnBranch(byPerson.runId)
+  expect(git(byPerson.repo, 'log', '-1', '--format=%b', keptByPerson.branch!)).toContain('and approved by a person.')
+})
+
+test('continuing from a run keeps its change with the same honest sentence', async () => {
+  const byApp = await finishedRun({ passedByApp: true })
+  await startFollowUp(byApp.runId, 'uppercase')
+  const appBody = git(byApp.repo, 'log', '-1', '--format=%b', byApp.branch)
+  expect(appBody).toContain(strings.delivery.passedOnItsOwn)
+  expect(appBody).not.toContain('approved by a person')
+  const byPerson = await finishedRun()
+  await startFollowUp(byPerson.runId, 'uppercase')
+  expect(git(byPerson.repo, 'log', '-1', '--format=%b', byPerson.branch)).toContain('and approved by a person.')
+})
+
+test('a run a person approved says so, and a run nobody passed is not eligible', async () => {
+  expect(await deliveryState((await finishedRun()).runId)).toMatchObject({ eligible: true, passedBy: 'person' })
+  expect(await deliveryState((await finishedRun({ approved: false })).runId)).toMatchObject({ eligible: false, passedBy: null })
+})
+
+// ---- what keeping and sending on its own reuses ---------------------------------------------------------------------
+
+describe('the pieces the automatic pull request reuses', () => {
+  test('the Save button\'s naming: a model names the branch and describes the change before the first keep only', async () => {
+    const { keepOptionsFor } = await import('@/engine/delivery-options')
+    const { runId } = await finishedRun()
+    const asked: string[] = []
+    const ask = async (prompt: string) => (asked.push(prompt), prompt.startsWith('Name a git branch') ? 'outline-buttons' : 'Outline the buttons\n\n- border only')
+    const options = await keepOptionsFor(runId, '', ask)
+    expect(options).toEqual({ name: null, fallbackName: `ai/outline-buttons-${runId.slice(-6).toLowerCase()}`, message: { subject: 'Outline the buttons', body: '- border only' } })
+    // A name the person typed is not asked for.
+    expect((await keepOptionsFor(runId, 'mine/x', ask)).fallbackName).toBeNull()
+    await keepOnBranch(runId, options)
+    asked.length = 0
+    expect(await keepOptionsFor(runId, '', ask)).toEqual({ name: null, fallbackName: null, message: null })
+    expect(asked).toEqual([])
+  })
+
+  test('no origin is a missing connection, and nothing was tried on its own yet', async () => {
+    const { runId } = await finishedRun()
+    await keepOnBranch(runId)
+    const err = await pushBranch(runId).catch(e => e as DeliveryError)
+    expect(err).toBeInstanceOf(DeliveryError)
+    expect((err as DeliveryError).kind).toBe('no_connection')
+    expect((await deliveryState(runId)).autoShip).toBeNull()
+  })
+
+  test('sending the same branch twice is recorded once', async () => {
+    const { runId, repo } = await finishedRun()
+    git(repo, 'remote', 'add', 'origin', (() => {
+      const o = mkdtempSync(join(tmpdir(), 'factory-twice-'))
+      git(o, 'init', '-q', '--bare')
+      return o
+    })())
+    await keepOnBranch(runId)
+    await pushBranch(runId)
+    await pushBranch(runId)
+    expect((await eventsSince(runId, 0)).filter(e => e.type === 'run.pushed')).toHaveLength(1)
+  })
+
+  test('gh\'s missing pieces are a missing connection; anything else it says is not', async () => {
+    const { openPullRequest, ShipError } = await import('@/engine/ship')
+    const { runId, repo } = await finishedRun()
+    const o = mkdtempSync(join(tmpdir(), 'factory-gh-'))
+    git(o, 'init', '-q', '--bare')
+    fakeGitHubOrigin(repo, o)
+    await keepOnBranch(runId)
+    for (const [said, kind] of [['To get started with GitHub CLI, please run:  gh auth login', 'no_connection'], ['none of the git remotes configured for this repository point to a known GitHub host', 'no_connection'], ['HTTP 502', undefined]] as const) {
+      const err = await openPullRequest(runId, async () => {
+        throw new Error(said)
+      }).catch(e => e as InstanceType<typeof ShipError>)
+      expect(err).toBeInstanceOf(ShipError)
+      expect((err as InstanceType<typeof ShipError>).kind).toBe(kind)
+    }
+  })
+})
+
+test('the "not eligible" messages are true for a change the app passed on its own as well as for one a person approved', () => {
+  for (const message of [strings.delivery.notEligible, strings.followUp.notEligible]) {
+    expect(message).not.toMatch(/a person approved/)
+    expect(message).toMatch(/by you or on its own/)
+  }
 })

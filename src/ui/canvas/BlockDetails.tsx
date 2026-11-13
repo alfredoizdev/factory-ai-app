@@ -130,6 +130,34 @@ function Section({ title, help, children }: { title: string; help?: string; chil
   )
 }
 
+/** Why the plan stopped for the person or started on its own, and the files or folders the planner expects to change. */
+function PlanWhy({ measure, startedOnItsOwn }: { measure: { reasons: string[]; entries: string[] }; startedOnItsOwn: boolean }) {
+  return (
+    <>
+      {measure.reasons.length > 0 && (
+        <Section title={startedOnItsOwn ? strings.plan.whyStarted : strings.plan.whyStopped}>
+          <ul style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 6, fontSize: 14.5, lineHeight: 1.5, color: '#d6dce6', overflowWrap: 'anywhere' }}>
+            {measure.reasons.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        </Section>
+      )}
+      <Section title={strings.plan.expects}>
+        {measure.entries.length > 0 ? (
+          <ul style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 4, fontFamily: mono, fontSize: 13, color: '#d6dce6', overflowWrap: 'anywhere' }}>
+            {measure.entries.map((e, i) => (
+              <li key={i}>{e}</li>
+            ))}
+          </ul>
+        ) : (
+          <span style={{ color: theme.dim }}>{strings.plan.noneExpected}</span>
+        )}
+      </Section>
+    </>
+  )
+}
+
 /** One check the block ran: whether it passed, how long it took, and what it printed, folded away. */
 function Command({ c }: { c: BlockCommand }) {
   const [open, setOpen] = useState(false)
@@ -372,6 +400,10 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
               )}
 
               {showsPictures && <Pictures runId={runId} />}
+
+              {(view?.planMeasure ?? details.planMeasure) && (
+                <PlanWhy measure={(view?.planMeasure ?? details.planMeasure)!} startedOnItsOwn={view?.autoStarted === true} />
+              )}
 
               {details.jobs.length > 0 && (
                 <Section title={d.jobs(details.jobs.length)}>

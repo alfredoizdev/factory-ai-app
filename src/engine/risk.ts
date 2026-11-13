@@ -41,9 +41,14 @@ export const SENSITIVE: readonly [RegExp, string][] = [
 /** How many core areas a change is told apart by; past that, how many more is said in one line. */
 export const MAX_CORE_REASONS = 5
 
-/** A core-area pattern ending in "/" is a folder and everything beneath it; any other pattern is that exact file. */
+/**
+ * A core-area pattern ending in "/" is a folder and everything beneath it; any other pattern is that exact file.
+ * Case does not matter, as with the sensitive areas: when in doubt the person is asked.
+ */
 export function insideCoreArea(path: string, pattern: string): boolean {
-  return pattern.endsWith('/') ? path.startsWith(pattern) : path === pattern
+  const p = path.toLowerCase()
+  const q = pattern.toLowerCase()
+  return q.endsWith('/') ? p.startsWith(q) : p === q
 }
 
 /** One reason per core area the files fall in, naming the first file there and how many others. */
@@ -55,12 +60,28 @@ function coreReasons(files: readonly ChangedFile[], core: readonly string[]): st
   return hits.length > MAX_CORE_REASONS ? [...hits.slice(0, MAX_CORE_REASONS), strings.risk.moreCore(hits.length - MAX_CORE_REASONS)] : hits
 }
 
-/** `core`: the project's core areas that are switched on; a change inside one always needs the person. */
-export function classifyChange(files: readonly ChangedFile[], tests: TestFacts, core: readonly string[] = []): RiskAssessment {
+/** A decision of the person's, with the files or folders it names (a folder ends in "/"). */
+export type DecisionPaths = { text: string; paths: readonly string[] }
+
+/** One reason per decision that names a changed file, saying which file and which decision. */
+function decisionReasons(files: readonly ChangedFile[], decisions: readonly DecisionPaths[]): string[] {
+  const hits = decisions.flatMap(d => {
+    const first = files.find(f => d.paths.some(p => insideCoreArea(f.path, p)))
+    return first ? [strings.risk.onDecision(first.path, d.text)] : []
+  })
+  return hits.length > MAX_CORE_REASONS ? [...hits.slice(0, MAX_CORE_REASONS), strings.risk.moreDecisions(hits.length - MAX_CORE_REASONS)] : hits
+}
+
+/**
+ * `core`: the project's core areas that are switched on; a change inside one always needs the person.
+ * `decisions`: the person's decisions that name files; a change on one of those files needs them too.
+ */
+export function classifyChange(files: readonly ChangedFile[], tests: TestFacts, core: readonly string[] = [], decisions: readonly DecisionPaths[] = []): RiskAssessment {
   const reasons: string[] = []
   const linesChanged = files.reduce((n, f) => n + f.lines, 0)
   if (files.length === 0) reasons.push(strings.risk.nothingChanged)
   reasons.push(...coreReasons(files, core))
+  reasons.push(...decisionReasons(files, decisions))
   for (const f of files) {
     const hit = SENSITIVE.find(([re]) => re.test(f.path))
     if (hit) reasons.push(strings.risk.touches(f.path, hit[1]))
@@ -79,18 +100,21 @@ export function classifyChange(files: readonly ChangedFile[], tests: TestFacts, 
 
 function changedFiles(workdir: string, baseCommit: string): ChangedFile[] {
   const git = (args: string[]) => execFileSync('git', args, { cwd: workdir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-  const counted = git(['diff', '--numstat', baseCommit])
-    .split('\n')
-    .filter(Boolean)
-    .map(line => {
-      const [added, removed, path] = line.split('\t')
-      // A binary file reports "-": count it as one line so it is not invisible.
-      const n = (v: string | undefined) => (v === undefined || v === '-' ? 1 : Number(v))
-      return { path: path!, lines: n(added) + n(removed) }
-    })
+  // NUL-separated and without rename detection: a name is never quoted or merged into "a => b", and a moved file shows
+  // as the old path removed and the new path added, so both are judged.
+  const counted: ChangedFile[] = []
+  const numstat = git(['diff', '--numstat', '-z', '--no-renames', baseCommit]).split('\0')
+  for (const entry of numstat) {
+    const [added, removed, ...rest] = entry.split('\t')
+    const path = rest.join('\t')
+    if (!path) continue
+    // A binary file reports "-": count it as one line so it is not invisible.
+    const n = (v: string | undefined) => (v === undefined || v === '-' ? 1 : Number(v))
+    counted.push({ path, lines: n(added) + n(removed) })
+  }
   const known = new Set(counted.map(f => f.path))
-  const added = git(['ls-files', '--others', '--exclude-standard'])
-    .split('\n')
+  const added = git(['ls-files', '--others', '--exclude-standard', '-z'])
+    .split('\0')
     .filter(p => p && !known.has(p))
     .map(path => {
       let lines = 1
@@ -104,9 +128,9 @@ function changedFiles(workdir: string, baseCommit: string): ChangedFile[] {
   return [...counted, ...added]
 }
 
-export function assessRisk(workdir: string, baseCommit: string, tests: TestFacts, core: readonly string[] = []): RiskAssessment {
+export function assessRisk(workdir: string, baseCommit: string, tests: TestFacts, core: readonly string[] = [], decisions: readonly DecisionPaths[] = []): RiskAssessment {
   try {
-    return classifyChange(changedFiles(workdir, baseCommit), tests, core)
+    return classifyChange(changedFiles(workdir, baseCommit), tests, core, decisions)
   } catch {
     return { level: 'high', reasons: [strings.risk.unreadable], files: [], linesChanged: 0 }
   }

@@ -154,6 +154,12 @@ test('a change measured as low risk says so, and why, on the human check', () =>
   expect(screen.queryByText(/AI says/i)).toBeNull()
 })
 
+test('a measure taken on a task that asked to stop for the person keeps that, and only then', () => {
+  const waiting = { type: 'node.waiting_approval', payload: { blockId: 'human' } } as const
+  expect(assessedView({ level: 'low', reasons: ['r'], stopForMe: true }, waiting).risk).toEqual({ level: 'low', reasons: ['r'], stopForMe: true })
+  expect(assessedView({ level: 'low', reasons: ['r'] }, waiting).risk).toEqual({ level: 'low', reasons: ['r'] })
+})
+
 test('a change that needs the person lists what was found', () => {
   const view = assessedView(
     { level: 'high', reasons: ['It changes src/lib/stripe.ts (payments).'] },

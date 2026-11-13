@@ -19,6 +19,7 @@ export const projects = sqliteTable('projects', {
   // The person's choice: a run whose change is measured as low risk does not stop at the human check. Off unless
   // they turn it on; never a default.
   autoApproveLowRisk: integer('auto_approve_low_risk', { mode: 'boolean' }).notNull().default(false),
+  askMode: text('ask_mode'),
   // The prepared base: a copy of the main branch with its dependencies installed once, which every task's working
   // copy starts from instead of installing again. 'none' until prepared; 'installing', 'ready' or 'failed' after.
   baseStatus: text('base_status').notNull().default('none'),
@@ -68,6 +69,7 @@ export const runs = sqliteTable(
     title: text('title'),
     /** True once the person named the task: a later suggestion never replaces their words. */
     titleByPerson: integer('title_by_person', { mode: 'boolean' }).notNull().default(false),
+    stopForMe: integer('stop_for_me', { mode: 'boolean' }).notNull().default(false),
     /** The project rules this task was given when it started (JSON list of texts); null before it started. */
     memoryJson: text('memory_json'),
     providerId: text('provider_id').notNull(),

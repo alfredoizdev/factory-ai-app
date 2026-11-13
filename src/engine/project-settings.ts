@@ -7,6 +7,7 @@ import { db } from '@/db/client'
 import { projects } from '@/db/schema'
 import { detectTestCommand } from '@/engine/test-runner'
 import { strings } from '@/ui/strings'
+import { askModeOf, type AskMode } from '@/domain/ask-mode'
 import { projectHere, setLocal } from '@/engine/machine'
 import { testCommandOnMain } from '@/engine/project-setup'
 
@@ -24,7 +25,8 @@ export type ProjectSettings = {
   projectId: string
   repoPath: string | null
   testCommand: string | null
-  autoApproveLowRisk: boolean
+  /** When the app stops for the person. */
+  askMode: AskMode
   /** The branch the repository is on right now, read live: a fresh run starts from it. Null when detached or unknown. */
   currentBranch: string | null
   /** The project's main branch, where a new task starts unless the person picks another. */
@@ -38,7 +40,7 @@ const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, en
 export async function getProjectSettings(projectId: string): Promise<ProjectSettings> {
   const row = await projectHere(projectId)
   if (!row) throw new ProjectSettingsError(strings.settings.noProject)
-  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, autoApproveLowRisk: row.autoApproveLowRisk, currentBranch: branchOf(row.repoPath), defaultBranch: mainOf(row.repoPath), suggestedTestCommand: suggestionFor(row.repoPath, row.testCommand) }
+  return { projectId, repoPath: row.repoPath, testCommand: row.testCommand, askMode: askModeOf(row), currentBranch: branchOf(row.repoPath), defaultBranch: mainOf(row.repoPath), suggestedTestCommand: suggestionFor(row.repoPath, row.testCommand) }
 }
 
 function suggestionFor(repo: string | null, testCommand: string | null): string | null {
@@ -98,10 +100,10 @@ export async function setProjectRepo(projectId: string, path: string): Promise<{
   return { repoPath, testCommand }
 }
 
-/** The person's choice to let measured low-risk changes pass the human check on their own. */
-export async function setAutoApproveLowRisk(projectId: string, on: boolean): Promise<void> {
+/** The person's choice of when the app stops for them. The old switch is kept in step: it is on for every mode but "everything". */
+export async function setAskMode(projectId: string, mode: AskMode): Promise<void> {
   await getProjectSettings(projectId)
-  await db.update(projects).set({ autoApproveLowRisk: on }).where(eq(projects.id, projectId))
+  await db.update(projects).set({ askMode: mode, autoApproveLowRisk: mode !== 'everything' }).where(eq(projects.id, projectId))
 }
 
 export async function setProjectName(projectId: string, name: string): Promise<void> {

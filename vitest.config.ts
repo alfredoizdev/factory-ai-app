@@ -12,5 +12,8 @@ export default defineConfig({
     env: { FACTORY_MACHINE_ID: 'test-machine', FACTORY_MACHINE_NAME: 'Test Mac' },
     include: ['tests/**/*.test.{ts,tsx}'],
     setupFiles: ['./tests/setup.ts'],
+    // Many tests run real git in a temporary folder: on a busy computer that takes longer than the default 5 s.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 })

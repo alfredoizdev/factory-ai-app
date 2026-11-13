@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { strings } from '@/ui/strings'
-import { assessRisk, classifyChange, MAX_CORE_REASONS, MAX_LOW_RISK_FILES, MAX_LOW_RISK_LINES } from '@/engine/risk'
+import { assessRisk, classifyChange, insideCoreArea, MAX_CORE_REASONS, MAX_LOW_RISK_FILES, MAX_LOW_RISK_LINES } from '@/engine/risk'
 
 const ok = { testsRan: true, testsPassed: true, testsChanged: false }
 
@@ -131,5 +131,136 @@ describe('what is still open after the review', () => {
     const unchecked = classifyChange([{ path: 'a.ts', lines: 1 }], { ...base, reviewUnchecked: true })
     expect(unchecked.reasons).toEqual([strings.risk.fixUnchecked])
     for (const r of [strings.risk.reviewStillOpen, strings.risk.fixUnchecked, strings.risk.reviewUnreadable]) expect(r).toMatch(/^[A-Z].*\.$/)
+  })
+})
+
+describe('decisions that name files', () => {
+  const change = [{ path: 'src/rounding/round.ts', lines: 3 }]
+  const decision = { text: 'Prices round down', paths: ['src/rounding/'] }
+
+  test('a change on a file a decision names is high risk, and says which decision', () => {
+    expect(classifyChange(change, ok).level).toBe('low')
+    const r = classifyChange(change, ok, [], [decision])
+    expect(r.level).toBe('high')
+    expect(r.reasons).toContain(strings.risk.onDecision('src/rounding/round.ts', 'Prices round down'))
+  })
+
+  test('a decision that names no files changes nothing', () => {
+    expect(classifyChange(change, ok, [], [{ text: 'x', paths: [] }]).level).toBe('low')
+  })
+
+  test('a decision names a file exactly, and a folder with everything inside', () => {
+    expect(classifyChange(change, ok, [], [{ text: 'a', paths: ['src/rounding/round.ts'] }]).level).toBe('high')
+    expect(classifyChange(change, ok, [], [{ text: 'a', paths: ['src/rounding/other.ts', 'src/round'] }]).level).toBe('low')
+  })
+
+  test('six decisions hit give five reasons and one line for the rest, after the core reasons', () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({ text: `d${i}`, paths: ['src/rounding/'] }))
+    const r = classifyChange(change, ok, ['src/rounding/'], six)
+    expect(r.reasons).toEqual([
+      strings.risk.insideCore('src/rounding/round.ts', 'src/rounding/', 0),
+      ...[0, 1, 2, 3, 4].map(i => strings.risk.onDecision('src/rounding/round.ts', `d${i}`)),
+      strings.risk.moreDecisions(1),
+    ])
+  })
+
+  test('assessRisk passes the decisions on', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-dec-'))
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim()
+    git('init', '-q')
+    git('config', 'user.email', 't@e.com')
+    git('config', 'user.name', 't')
+    writeFileSync(join(dir, 'a.txt'), 'a\n')
+    git('add', '.')
+    git('commit', '-q', '-m', 'base')
+    const base = git('rev-parse', 'HEAD')
+    mkdirSync(join(dir, 'src/rounding'), { recursive: true })
+    writeFileSync(join(dir, 'src/rounding/round.ts'), 'x\n')
+    expect(assessRisk(dir, base, ok).level).toBe('low')
+    expect(assessRisk(dir, base, ok, [], [decision]).level).toBe('high')
+  })
+})
+
+describe('the changed files, read from a real repository', () => {
+  /** A repository with `base` committed; returns it and a way to run git in it. */
+  function repo(base: Record<string, string | Buffer>) {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-files-'))
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim()
+    git('init', '-q')
+    git('config', 'user.email', 't@e.com')
+    git('config', 'user.name', 't')
+    const write = (p: string, body: string | Buffer) => {
+      mkdirSync(dirname(join(dir, p)), { recursive: true })
+      writeFileSync(join(dir, p), body)
+    }
+    for (const [p, body] of Object.entries(base)) write(p, body)
+    git('add', '.')
+    git('commit', '-q', '-m', 'base')
+    return { dir, git, write, base: git('rev-parse', 'HEAD') }
+  }
+  const decision = { text: 'Prices round down', paths: ['src/rounding/'] }
+  const body = 'line one\nline two\nline three\n'
+
+  test('a file moved out of a decision\'s folder is judged by the path it left', () => {
+    const r = repo({ 'src/rounding/round.ts': body })
+    r.git('mv', 'src/rounding/round.ts', 'src/other.ts')
+    const a = assessRisk(r.dir, r.base, ok, [], [decision])
+    expect(a.level).toBe('high')
+    expect(a.reasons).toContain(strings.risk.onDecision('src/rounding/round.ts', 'Prices round down'))
+    expect(a.files.sort()).toEqual(['src/other.ts', 'src/rounding/round.ts'])
+  })
+
+  test('a file moved into a decision\'s folder is judged by the path it arrived at', () => {
+    const r = repo({ 'src/other.ts': body })
+    mkdirSync(join(r.dir, 'src/rounding'), { recursive: true })
+    r.git('mv', 'src/other.ts', 'src/rounding/round.ts')
+    const a = assessRisk(r.dir, r.base, ok, [], [decision])
+    expect(a.level).toBe('high')
+    expect(a.reasons).toContain(strings.risk.onDecision('src/rounding/round.ts', 'Prices round down'))
+  })
+
+  test('a file with a non-ASCII name is read as it is named, in a core area and by a sensitive pattern', () => {
+    const r = repo({ 'src/ledger/é.ts': 'a\n', 'src/plain.ts': 'a\n' })
+    r.write('src/ledger/é.ts', 'b\n')
+    r.write('src/ledger/ñ-new.ts', 'c\n')
+    const a = assessRisk(r.dir, r.base, ok, ['src/ledger/'], [])
+    expect(a.files.sort()).toEqual(['src/ledger/é.ts', 'src/ledger/ñ-new.ts'].sort())
+    expect(a.level).toBe('high')
+    expect(a.reasons).toEqual([strings.risk.insideCore('src/ledger/é.ts', 'src/ledger/', 1)])
+    const s = repo({ 'x.txt': 'x\n' })
+    s.write('pagos/stripe-é.ts', 'c\n')
+    expect(assessRisk(s.dir, s.base, ok).reasons).toContain(strings.risk.touches('pagos/stripe-é.ts', strings.risk.areas.payments))
+  })
+
+  test('a deleted file inside a decision\'s folder is judged', () => {
+    const r = repo({ 'src/rounding/round.ts': body })
+    execFileSync('rm', [join(r.dir, 'src/rounding/round.ts')])
+    const a = assessRisk(r.dir, r.base, ok, [], [decision])
+    expect(a.level).toBe('high')
+    expect(a.reasons).toContain(strings.risk.onDecision('src/rounding/round.ts', 'Prices round down'))
+  })
+
+  test('a binary file is judged by its path and counted as before', () => {
+    const r = repo({ 'src/rounding/logo.png': Buffer.from([0, 1, 2, 3]) })
+    r.write('src/rounding/logo.png', Buffer.from([0, 9, 8, 7, 0]))
+    const a = assessRisk(r.dir, r.base, ok, [], [decision])
+    expect(a.level).toBe('high')
+    expect(a.reasons).toContain(strings.risk.onDecision('src/rounding/logo.png', 'Prices round down'))
+    expect(a.linesChanged).toBe(2)
+  })
+})
+
+describe('core areas and decisions are compared without regard to case', () => {
+  test.each([
+    ['src/Ledger/', 'src/ledger/x.ts'],
+    ['src/ledger/', 'src/Ledger/x.ts'],
+    ['src/Ledger/x.ts', 'src/ledger/X.ts'],
+  ])('%s catches %s', (pattern, path) => {
+    expect(insideCoreArea(path, pattern)).toBe(true)
+    expect(classifyChange([{ path, lines: 1 }], ok, [pattern]).level).toBe('high')
+    expect(classifyChange([{ path, lines: 1 }], ok, [], [{ text: 'd', paths: [pattern] }]).level).toBe('high')
+  })
+  test('a different name is still not caught', () => {
+    expect(insideCoreArea('src/ledgers/x.ts', 'src/Ledger/')).toBe(false)
   })
 })

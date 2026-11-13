@@ -27,8 +27,8 @@ beforeAll(() => {
   }
 })
 
-const noRepo = { projectId: 'p1', repoPath: null, testCommand: null, autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
-const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', autoApproveLowRisk: false, currentBranch: null, defaultBranch: null }
+const noRepo = { projectId: 'p1', repoPath: null, testCommand: null, askMode: 'everything' as const, currentBranch: null, defaultBranch: null }
+const withRepo = { projectId: 'p1', repoPath: '/repo', testCommand: 'npm test', askMode: 'everything' as const, currentBranch: null, defaultBranch: null }
 const runButton = () => screen.getByRole('button', { name: strings.run.run })
 
 test('the demo is the default without a folder; the project settings open in their own window, saying Claude is not sandboxed', () => {
@@ -131,20 +131,15 @@ test('closing the folder window changes nothing', async () => {
   }
 })
 
-test('the low-risk switch starts off and saves the moment it is turned on', async () => {
-  const fetchMock = vi.fn(async (_u: string, init?: RequestInit) =>
-    new Response(JSON.stringify({ ...withRepo, ...(JSON.parse(String(init?.body)) as object) })))
+test('opening and closing the settings changes nothing: no request goes out until an option is picked', async () => {
+  const fetchMock = vi.fn(async () => new Response('{}'))
   stubFetch(fetchMock)
   try {
-    render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={withRepo} />)
+    render(<CanvasScreen workflowId="w1" graph={defaultGraph()} settings={{ ...withRepo, askMode: 'small_changes' }} />)
     fireEvent.change(screen.getByLabelText(strings.settings.agentLabel), { target: { value: 'claude' } })
     fireEvent.click(screen.getByRole('button', { name: strings.projectSettings.open }))
-    const box = screen.getByRole('checkbox', { name: new RegExp(strings.settings.autoLowLabel) })
-    expect(box).not.toBeChecked()
-    fireEvent.click(box)
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(JSON.parse(String(fetchMock.mock.calls.find(([, i]) => i?.body)![1]!.body))).toEqual({ autoApproveLowRisk: true })
-    expect(box).toBeChecked()
+    expect(screen.getByRole('radio', { name: new RegExp(strings.settings.ask.smallChanges) })).toBeChecked()
+    expect(fetchMock.mock.calls.filter(([u]: unknown[]) => !String(u).endsWith('/github'))).toHaveLength(0)
   } finally {
     vi.unstubAllGlobals()
   }

@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { branchFromWords, suggestBranchWords, suggestCommitMessage } from '@/engine/branch-name'
-import { changedFiles, deliverToProject, DeliveryError, deliveryState, keepOnBranch, pendingDiff, pushBranch, requestOf, switchBack, switchToBranch } from '@/engine/delivery'
+import { deliverToProject, DeliveryError, deliveryState, keepOnBranch, pushBranch, switchBack, switchToBranch } from '@/engine/delivery'
+import { keepOptionsFor } from '@/engine/delivery-options'
 import { requireOwnPage } from '@/engine/same-origin'
 
 type Ctx = { params: Promise<{ runId: string }> }
@@ -38,19 +38,9 @@ export async function POST(req: Request, ctx: Ctx) {
     if (mode === 'back') return Response.json((await switchBack(runId)))
     if (mode === 'push') return Response.json(await pushBranch(runId))
     // Before the first keep, a short model names the branch (unless the person did) and describes the change, at once.
-    const first = !(await deliveryState(runId)).kept
-    const request = (await requestOf(runId)) ?? ''
-    const [fallbackName, message] = first
-      ? await Promise.all([name === '' ? suggestedName(runId) : null, suggestCommitMessage(request, (await pendingDiff(runId)))])
-      : [null, null]
-    const options = { name: name || null, fallbackName, message }
+    const options = await keepOptionsFor(runId, name)
     return Response.json(mode === 'branch' ? (await keepOnBranch(runId, options)) : (await deliverToProject(runId, options)))
   } catch (e) {
     return failed(e)
   }
-}
-
-async function suggestedName(runId: string): Promise<string | null> {
-  const request = (await requestOf(runId))
-  return request === null ? null : branchFromWords(runId, await suggestBranchWords(request, (await changedFiles(runId))))
 }

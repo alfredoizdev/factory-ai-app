@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
+import { redact } from '@/engine/redact'
 
 // Naming the branch an approved change is kept on. The first words of a request make a poor name ("primero ejecuta
 // pnpm install en la..."), so a small, fast model is asked for a few words that say what changed. Whatever it says is
@@ -31,7 +32,8 @@ const FILLER = new Set(
 
 /** The request's own meaningful words, without paths, file names or filler: the fallback name. */
 export function fallbackWords(request: string): string | null {
-  const words = request
+  // The name is sent to GitHub with the branch: a secret written in the request never becomes part of it.
+  const words = redact(request)
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()

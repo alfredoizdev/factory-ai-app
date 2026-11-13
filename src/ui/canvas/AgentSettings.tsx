@@ -2,7 +2,9 @@
 
 import { useState } from 'react'
 import type { ProjectSettings } from '@/engine/project-settings'
+import type { AskMode } from '@/domain/ask-mode'
 import { strings } from '@/ui/strings'
+import { AskModeChoice } from './AskModeChoice'
 import { theme } from '@/ui/theme'
 
 const field = {
@@ -38,26 +40,34 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
   const tone = state === 'saved' ? theme.passed : state === 'failed' ? theme.failed : theme.border
 
   const [choosing, setChoosing] = useState(false)
-  const [autoLow, setAutoLow] = useState(settings.autoApproveLowRisk)
+  // The mode as stored. The third, old option is shown only because it was loaded: opening the window changes nothing.
+  const [mode, setMode] = useState<AskMode>(settings.askMode)
+  const [savingMode, setSavingMode] = useState(false)
+  const [hadSmallChanges] = useState(settings.askMode === 'small_changes')
 
-  // The switch saves on its own: it is one decision, and leaving it half-set would be worse than one more request.
-  async function toggleAutoLow(on: boolean) {
-    setAutoLow(on)
+  // The choice saves on its own: it is one decision, and leaving it half-set would be worse than one more request.
+  async function chooseMode(next: AskMode) {
+    const before = mode
+    setMode(next)
+    setSavingMode(true)
+    setMessage(null)
     try {
       const res = await fetch(`/api/projects/${settings.projectId}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ autoApproveLowRisk: on }),
+        body: JSON.stringify({ askMode: next }),
       })
       const body = (await res.json().catch(() => null)) as (ProjectSettings & { error?: string }) | null
       if (!res.ok || !body) {
-        setAutoLow(!on)
+        setMode(before)
         return setMessage({ text: body?.error ?? strings.settings.saveFailed, ok: false })
       }
       onSaved(body)
     } catch {
-      setAutoLow(!on)
+      setMode(before)
       setMessage({ text: strings.settings.saveFailed, ok: false })
+    } finally {
+      setSavingMode(false)
     }
   }
 
@@ -149,14 +159,7 @@ export function AgentSettings({ settings, onSaved }: { settings: ProjectSettings
           style={{ ...field, width: '100%', boxSizing: 'border-box' }}
         />
       </label>
-      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: theme.dim, lineHeight: 1.4, cursor: 'pointer' }}>
-        <input type="checkbox" checked={autoLow} onChange={e => void toggleAutoLow(e.target.checked)} style={{ marginTop: 2 }} />
-        <span>
-          <span style={{ color: 'inherit', fontWeight: 600 }}>{strings.settings.autoLowLabel}</span>
-          <br />
-          {strings.settings.autoLowHelp}
-        </span>
-      </label>
+      <AskModeChoice value={mode} onChange={m => void chooseMode(m)} showSmallChanges={hadSmallChanges} disabled={savingMode} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
       <button
         type="button"

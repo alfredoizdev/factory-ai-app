@@ -1,9 +1,13 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { events, nodeRuns, projectNotes, projects, questions, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
 import { askPerson, answerQuestion, consumeAnswer, decisionText, LEAVE, openQuestion, OTHER, QuestionError, takeAnswer, type Question } from '@/engine/questions'
+import { recordFindings } from '@/engine/findings'
 import { deliverPending, relayTick, markWaiting, seedWaiting, RESEND_AFTER_MS } from '@/engine/relay'
 import { cancelRun, createRun, publishVersion, saveDraft } from '@/engine/run'
 import { POST } from '@/app/api/runs/[runId]/questions/[questionId]/route'
@@ -13,7 +17,7 @@ beforeAll(() => migrateDb())
 const now = () => new Date().toISOString()
 
 /** A run whose human block is running, as when the review has something to ask. */
-async function runningRun(): Promise<{ projectId: string; runId: string; nodeRunId: string }> {
+async function runningRun(blockId = 'human'): Promise<{ projectId: string; runId: string; nodeRunId: string }> {
   const projectId = ulid()
   const workflowId = ulid()
   await db.insert(projects).values({ id: projectId, projectId, name: 'p', createdAt: now() })
@@ -22,7 +26,7 @@ async function runningRun(): Promise<{ projectId: string; runId: string; nodeRun
   await publishVersion(workflowId)
   const { runId } = await createRun({ workflowId, request: 'r' })
   await db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
-  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === 'human')!
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === blockId)!
   await db.update(nodeRuns).set({ state: 'running' }).where(eq(nodeRuns.id, node.id))
   return { projectId, runId, nodeRunId: node.id }
 }
@@ -389,5 +393,154 @@ describe('the route', () => {
     const again = await post(runId, q.id, { option: 'a' })
     expect(again.status).toBe(409)
     expect((await again.json()).error).toBe(strings.question.alreadyAnswered)
+  })
+})
+
+describe('an answer about a file', () => {
+  /** A real finding, recorded the way the review records it, about `file` (or about no file). */
+  async function aboutFile(file: string | null) {
+    const { projectId, runId, nodeRunId } = await runningRun()
+    const dir = mkdtempSync(join(tmpdir(), 'factory-q-'))
+    mkdirSync(join(dir, 'src/rounding'), { recursive: true })
+    writeFileSync(join(dir, 'src/rounding/round.ts'), 'a\nb\n')
+    const [row] = await recordFindings(runId, nodeRunId, 1, [{ finding: { type: 'logic', ...(file ? { file, line: 1 } : {}), problem: 'It rounds down.', severity: 'medium', affects: [], decisions: [] }, reporters: ['logic'], count: 1 }], dir)
+    const q = await askPerson(runId, nodeRunId, ask({ findingId: row!.id }))
+    return { projectId, q }
+  }
+
+  test('the decision keeps the file it was about', async () => {
+    const { projectId, q } = await aboutFile('src/rounding/round.ts')
+    await answerQuestion(q.id, { option: LEAVE, text: 'on purpose' }, deps)
+    const [decision] = await entries(projectId)
+    expect(JSON.parse(decision!.paths!)).toEqual(['src/rounding/round.ts'])
+  })
+
+  test('a problem with no file gives a decision with no paths', async () => {
+    const { projectId, q } = await aboutFile(null)
+    await answerQuestion(q.id, { option: LEAVE, text: 'on purpose' }, deps)
+    const [decision] = await entries(projectId)
+    expect(decision!.paths).toBeNull()
+  })
+
+  test('without the person\'s own words there is no decision, so no paths either', async () => {
+    const { projectId, q } = await aboutFile('src/rounding/round.ts')
+    await answerQuestion(q.id, { option: LEAVE }, deps)
+    expect(await entries(projectId)).toHaveLength(0)
+  })
+
+  test('a file cited with its line ("a.ts:12") is kept without the line, so the decision names the file', async () => {
+    const { projectId, q } = await aboutFile('src/rounding/round.ts:1')
+    await answerQuestion(q.id, { option: 'a', text: 'on purpose' }, deps)
+    expect(JSON.parse((await entries(projectId))[0]!.paths!)).toEqual(['src/rounding/round.ts'])
+  })
+
+  test('a file outside the working copy gives a decision with no paths', async () => {
+    for (const file of ['/etc/passwd', '../elsewhere/x.ts']) {
+      const { projectId, q } = await aboutFile(file)
+      await answerQuestion(q.id, { option: 'a', text: 'on purpose' }, deps)
+      expect((await entries(projectId))[0]!.paths).toBeNull()
+    }
+  })
+})
+
+describe('whether an answer told the app to go ahead', () => {
+  // Kept on the decision, so the same run's final check still stops when the change touches what the person said to leave.
+  async function answered(kind: 'finding' | 'fix_held' | 'plan', option: string) {
+    const { projectId, runId, nodeRunId } = await runningRun(kind === 'plan' ? 'plan' : 'human')
+    const options = kind === 'fix_held' ? strings.question.forHeldFix({ core: true, areas: [] }).options : opts
+    const q = await askPerson(runId, nodeRunId, ask({ kind, options, recommended: null, ...(kind === 'plan' ? { paths: ['src/a/'] } : {}) }))
+    await answerQuestion(q.id, { option, text: 'my words' }, deps)
+    return (await entries(projectId))[0]!.outcome
+  }
+
+  test('leave on a problem, and undo or not sure on a held fix, said not to change it', async () => {
+    expect(await answered('finding', LEAVE)).toBe('asked_no')
+    expect(await answered('fix_held', 'undo')).toBe('asked_no')
+    expect(await answered('fix_held', LEAVE)).toBe('asked_no')
+  })
+
+  test('any other answer, and letting the planner choose, said go ahead', async () => {
+    expect(await answered('finding', 'a')).toBeNull()
+    expect(await answered('finding', OTHER)).toBeNull()
+    expect(await answered('fix_held', 'keep')).toBeNull()
+    expect(await answered('plan', LEAVE)).toBeNull()
+    expect(await answered('plan', 'a')).toBeNull()
+  })
+})
+
+describe('the planner\'s question', () => {
+  const signIn = [
+    { id: 'a', label: 'Use username', means: 'A new field.' },
+    { id: 'b', label: 'Keep email', means: 'As today.' },
+  ]
+  const planAsk = (over: Partial<Parameters<typeof askPerson>[2]> = {}) => ({
+    findingId: null, kind: 'plan' as const, text: 'Which sign-in?', why: 'It changes sign-in.', options: signIn, recommended: null, touches: [], paths: ['src/auth/'], ...over,
+  })
+
+  test('a second plan question on the node, after the first was answered and taken, is a new row', async () => {
+    const { runId, nodeRunId } = await runningRun('plan')
+    const first = await askPerson(runId, nodeRunId, planAsk())
+    expect(first.kind).toBe('plan')
+    await answerQuestion(first.id, { option: 'a' }, deps)
+    await consumeAnswer(first.id)
+    const second = await askPerson(runId, nodeRunId, planAsk({ text: 'Which page?' }))
+    expect(second.id).not.toBe(first.id)
+    expect(second.state).toBe('open')
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(2)
+    expect(await status(runId)).toBe('waiting_approval')
+  })
+
+  test('one answered but not taken yet is returned as it is, as any question is', async () => {
+    const { runId, nodeRunId } = await runningRun('plan')
+    const first = await askPerson(runId, nodeRunId, planAsk())
+    await answerQuestion(first.id, { option: 'a' }, deps)
+    const again = await askPerson(runId, nodeRunId, planAsk())
+    expect(again).toMatchObject({ id: first.id, state: 'answered' })
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(1)
+  })
+
+  test('its paths are kept on the row', async () => {
+    const { runId, nodeRunId } = await runningRun('plan')
+    const q = await askPerson(runId, nodeRunId, planAsk())
+    expect(JSON.parse((await db.select().from(questions).where(eq(questions.id, q.id)))[0]!.paths!)).toEqual(['src/auth/'])
+  })
+
+  test('the decision says it was the planner\'s question, the label chosen and the person\'s words', () => {
+    const q: Question = {
+      id: 'q', runId: 'r', nodeRunId: 'n', findingId: null, kind: 'plan', text: 'Which sign-in?', why: '', detail: null,
+      options: [...signIn, { id: LEAVE, label: strings.plan.leaveLabel, means: strings.plan.leaveMeans }], recommended: null, touches: [],
+      state: 'answered', answerOption: 'a', answerText: 'keep email for old accounts', actor: 'x', answeredAt: now(),
+    }
+    expect(decisionText(q)).toBe(strings.question.decision({ about: strings.question.about('plan', undefined, 'Which sign-in?'), choice: 'you chose “Use username”', words: 'keep email for old accounts' }))
+    expect(strings.question.about('plan', undefined, 'Which sign-in?')).toBe('About the planner\'s question “Which sign-in?”')
+    expect(decisionText({ ...q, answerText: null })).toBeNull()
+  })
+
+  test('the register entry made from the answer has the question\'s paths', async () => {
+    const { projectId, runId, nodeRunId } = await runningRun('plan')
+    const q = await askPerson(runId, nodeRunId, planAsk())
+    await answerQuestion(q.id, { option: 'a', text: 'keep email for old accounts' }, deps)
+    const [decision] = await entries(projectId)
+    expect(JSON.parse(decision!.paths!)).toEqual(['src/auth/'])
+    expect(decision!.text).toContain('Use username')
+  })
+
+  test('the database refuses a second plan question not yet taken on a node, and keeps taken ones beside a new one', async () => {
+    const { runId, nodeRunId } = await runningRun('plan')
+    for (const text of ['One?', 'Two?']) {
+      const q = await askPerson(runId, nodeRunId, planAsk({ text }))
+      await answerQuestion(q.id, { option: 'a' }, deps)
+      await consumeAnswer(q.id)
+    }
+    const third = await askPerson(runId, nodeRunId, planAsk({ text: 'Three?' }))
+    expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(3)
+    const row = (await db.select().from(questions).where(eq(questions.id, third.id)))[0]!
+    await expect(db.insert(questions).values({ ...row, id: ulid(), state: 'answered' })).rejects.toThrow()
+  })
+
+  test('a question of another kind keeps no paths', async () => {
+    const { runId, nodeRunId } = await runningRun()
+    const q = await askPerson(runId, nodeRunId, ask())
+    expect((await db.select().from(questions).where(eq(questions.id, q.id)))[0]!.paths).toBeNull()
   })
 })

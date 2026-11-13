@@ -7,6 +7,7 @@ import { localActor } from '@/engine/approvals'
 import { appendEventSync, lockRun } from '@/engine/events'
 import { QUESTION_ANSWERED } from '@/engine/inngest/client'
 import { runPlace } from '@/engine/machine'
+import { isPlain } from '@/engine/findings'
 import { addEntry } from '@/engine/register'
 import { markWaiting, type Send } from '@/engine/relay'
 import { strings } from '@/ui/strings'
@@ -20,7 +21,8 @@ export type Question = {
   runId: string
   nodeRunId: string
   findingId: string | null
-  kind: 'finding' | 'fix_held'
+  /** 'plan': the planner's own question, asked before it plans again; it is about no finding. */
+  kind: 'finding' | 'fix_held' | 'plan'
   text: string
   why: string
   /** What the AI reviewer said, in its own words: shown one click away and labelled as the AI's. */
@@ -48,6 +50,9 @@ const MAX_DETAIL = 1000
 const MAX_LABEL = 80
 const MAX_MEANS = 300
 const MAX_ANSWER = 1000
+// A planner question's paths: as many as one job may name, each as long as a job's path may be.
+const MAX_PATHS = 20
+const MAX_PATH = 300
 
 export class QuestionError extends Error {
   constructor(message: string, readonly status: 404 | 409) {
@@ -116,16 +121,19 @@ const runCan = (from: string, to: NodeState) => canTransition(from as NodeState,
  * Asks the person, and parks the run (and the node) on the answer, as a human check does. Asking the same thing again
  * (a retried step) returns the question it already is, in whatever state, and changes nothing: the caller must branch
  * on `state` (`answered` means go straight to `takeAnswer`). Asking something else while one is open throws.
+ * The planner may ask again on the same node after its last answer was taken: that one is a new question, never the
+ * old one. `paths`: what a planner question is about, kept so a decision made from its answer stays on those files.
  */
 export async function askPerson(
   runId: string,
   nodeRunId: string,
-  q: Pick<Question, 'findingId' | 'kind' | 'text' | 'why' | 'options' | 'recommended' | 'touches'> & { detail?: string | null },
+  q: Pick<Question, 'findingId' | 'kind' | 'text' | 'why' | 'options' | 'recommended' | 'touches'> & { detail?: string | null; paths?: readonly string[] },
 ): Promise<Question> {
   const text = cap(q.text, MAX_TEXT)
   if (!text) throw new Error('A question needs its words.')
   const { options, recommended } = normaliseOptions(q.options, q.recommended)
   const touches = [...new Set(q.touches.filter(n => Number.isInteger(n) && n > 0))]
+  const paths = q.kind === 'plan' ? JSON.stringify([...new Set((q.paths ?? []).map(p => p.trim().slice(0, MAX_PATH)).filter(Boolean))].slice(0, MAX_PATHS)) : null
   const asked = await db.transaction(async tx => {
     await lockRun(tx, runId)
     const run = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
@@ -136,6 +144,8 @@ export async function askPerson(
         eq(questions.nodeRunId, nodeRunId),
         eq(questions.kind, q.kind),
         q.findingId === null ? isNull(questions.findingId) : eq(questions.findingId, q.findingId),
+        // A planner question already taken was turned into a plan: the next one on this node is new.
+        ...(q.kind === 'plan' ? [isNull(questions.consumedAt)] : []),
       ))
     )[0]
     if (same) return toQuestion(same)
@@ -156,6 +166,7 @@ export async function askPerson(
       optionsJson: JSON.stringify(options),
       recommended,
       touchesJson: JSON.stringify(touches),
+      paths,
       state: 'open',
       answerOption: null,
       answerText: null,
@@ -210,8 +221,19 @@ export async function consumeAnswer(questionId: string): Promise<Question | null
 export function decisionText(q: Question, finding?: { type: 'logic' | 'security' | 'effect'; file?: string }): string | null {
   const words = q.answerText?.trim() ?? ''
   if (!words) return null
-  const choice = q.answerOption === OTHER || !q.answerOption ? null : strings.question.chose(q.kind, q.answerOption)
-  return strings.question.decision({ about: strings.question.about(q.kind, finding), choice, words })
+  const label = q.options.find(o => o.id === q.answerOption)?.label
+  const choice = q.answerOption === OTHER || !q.answerOption ? null : strings.question.chose(q.kind, q.answerOption, label)
+  return strings.question.decision({ about: strings.question.about(q.kind, finding, q.text), choice, words })
+}
+
+/**
+ * Whether the answer told the app not to change it: leaving a problem as it is, or undoing a held fix (or not being
+ * sure, which undoes it too). Letting the planner choose is going ahead: the planner plans, and its plan is checked.
+ */
+export function heldBack(kind: Question['kind'], option: string): boolean {
+  if (kind === 'finding') return option === LEAVE
+  if (kind === 'fix_held') return option === 'undo' || option === LEAVE
+  return false
 }
 
 export type AnswerDeps = { send: Send; actor?: () => string }
@@ -248,7 +270,12 @@ export async function answerQuestion(questionId: string, a: { option: string; te
     const done = toQuestion({ ...row, ...fields })
     const about = row.findingId ? (await tx.select({ type: findings.type, file: findings.file }).from(findings).where(eq(findings.id, row.findingId)))[0] : undefined
     const text = decisionText(done, about ? { type: about.type as 'logic' | 'security' | 'effect', ...(about.file ? { file: about.file } : {}) } : undefined)
-    if (text) await addEntry(run.projectId, { kind: 'decision', text, source: 'question', runId: run.id }, tx)
+    // The decision stays on the files it was about, so a later change to them stops for the person: the finding's
+    // file (only one inside the working copy: anything else could never match a change), or what the planner's question named.
+    const paths = row.kind === 'plan' ? parse<string[]>(row.paths ?? '[]', []).filter((p): p is string => typeof p === 'string') : about?.file && isPlain(about.file) ? [about.file] : []
+    // An answer that said not to change it stops even the run it was given on, if that run changes those files after all.
+    const held = heldBack(row.kind as Question['kind'], option)
+    if (text) await addEntry(run.projectId, { kind: 'decision', text, paths, source: 'question', runId: run.id, ...(held ? { outcome: 'asked_no' as const } : {}) }, tx)
     return done
   })
   await tell(answered, deps.send)

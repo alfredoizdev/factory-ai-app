@@ -23,6 +23,8 @@ export type ProjectAnalysis = {
   github: { repo: string | null; gh: GhState }
   /** What deploys it or runs on it, as far as the repository says: hosts and CI workflows. */
   deploy: string[]
+  /** The project's own folders (top level and inside src/), for the person to mark as "ask me before changing". */
+  folders: string[]
 }
 
 const FRAMEWORKS: readonly [string, string][] = [
@@ -159,5 +161,27 @@ export async function analyzeProject(path: string, gh: GhProbe = probeGh): Promi
     defaultBranch: defaultBranch(root),
     github: { repo, gh: ghState },
     deploy: deployOf(root),
+    folders: foldersOf(root),
   }
+}
+
+const NOT_SOURCE = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'public', 'vendor', 'tmp'])
+export const MAX_FOLDERS = 16
+
+/** The folders a person would recognise as parts of the project: top level and one level inside src/, each ending in "/". */
+export function foldersOf(dir: string): string[] {
+  const dirsIn = (rel: string) => {
+    try {
+      return readdirSync(join(dir, rel), { withFileTypes: true })
+        .filter(e => e.isDirectory() && !e.name.startsWith('.') && !NOT_SOURCE.has(e.name))
+        .map(e => `${rel}${e.name}/`)
+        .sort()
+    } catch {
+      return []
+    }
+  }
+  const top = dirsIn('')
+  // src/ itself says little; what is inside it does.
+  const out = top.flatMap(f => (f === 'src/' ? dirsIn('src/') : [f]))
+  return out.slice(0, MAX_FOLDERS)
 }

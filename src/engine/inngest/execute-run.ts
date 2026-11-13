@@ -3,9 +3,13 @@ import { MAX_REVIEW_ROUNDS, defaultReviewerModel, type Focus, type Review } from
 import { distinctProblems, endingOf, findingsOf, needsPerson, notReal, problemGroups, type Ending } from '@/engine/findings'
 import { runReviewStage } from '@/engine/inngest/review-stage'
 import { makeCopy as realMakeCopy, runRepro as realRunRepro, type Repro } from '@/engine/repro'
-import { corePaths, giveStanding, type Standing } from '@/engine/register'
+import { gateInputs, giveStanding, type Standing } from '@/engine/register'
 import { markWaiting } from '@/engine/relay'
-import { currentPlan, planDecision, type Job, type PlanDecision } from '@/engine/plan'
+import { currentPlan, planDecision, type Job, type PlanDecision, type PlanQuestion } from '@/engine/plan'
+import { measurePlan } from '@/engine/plan-measure'
+import { askModeOf, passesLowRisk, shipsOnItsOwn, type AskMode } from '@/domain/ask-mode'
+import { LEAVE, OTHER, askPerson, type Question } from '@/engine/questions'
+import { waitForAnswer } from '@/engine/inngest/answers'
 import { and, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
 import { ulid } from 'ulid'
@@ -29,6 +33,8 @@ import { demoProvider } from '@/providers/demo'
 import type { AgentExecutionInput, AgentProvider, ReviewMiss, VerifierMiss } from '@/providers/types'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
+import { autoKeep, autoOpen, autoSend, endAutoShipAfterError, shouldShipOnItsOwn, type AutoShipDeps } from '@/engine/auto-ship'
+import { askClaude } from '@/engine/branch-name'
 
 // The durable run. Every state change is written as an event in the same transaction as the row it changes;
 // nothing here keeps state the canvas could see that the event log does not hold. Each node is one step, so
@@ -65,6 +71,8 @@ export type ExecutorDeps = {
   makeCopy?: typeof realMakeCopy
   /** Where the snapshots taken before a fix are kept. Default: the app's own data folder. */
   snapshotStore?: string
+  /** What keeping, sending and opening a passed change on its own uses. Absent: the real gh, and no model to name it. */
+  autoShip?: AutoShipDeps
 }
 
 const defaultDeps: ExecutorDeps = {
@@ -79,6 +87,7 @@ const defaultDeps: ExecutorDeps = {
     const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
     return projectId ? (await copyBaseInto(projectId, dir)) : { copied: false, reason: 'no-base' }
   },
+  autoShip: { ask: askClaude },
 }
 
 const MAX_LISTED_FILES = 20
@@ -105,8 +114,12 @@ export type Plan = {
   blocks: PlannedBlock[]
   repoPath: string | null
   testCommand: string | null
-  /** Read once when the run starts: changing the switch mid-run does not change this run. */
+  /** Read once when the run starts: changing the switch mid-run does not change this run. Kept for runs already in flight. */
   autoApproveLowRisk: boolean
+  /** When the app stops for the person, read once when the run starts. Absent on a run that started before it existed. */
+  askMode?: AskMode
+  /** The task's own "stop for me" box. */
+  stopForMe?: boolean
   /** A follow-up's parent request: what is already done in the folder it starts from. */
   previousRequest: string | null
   /** Picking up a failed run whose plan was already checked: the plan is not made or asked about again. */
@@ -118,8 +131,8 @@ export type Workspace = {
   testCommand: string | null
   baseCommit: string | null
   previousRequest?: string | null
-  /** Who asked for this round's changes, when it is a later round. */
-  revisionFrom?: 'person' | 'reviewer'
+  /** Who asked for this round's changes, when it is a later round ('answer': the person answered the planner's question). */
+  revisionFrom?: 'person' | 'reviewer' | 'answer'
   /** The plan the person checked, for the builder. */
   jobs?: Job[]
   /** The project's rules this task was given when it started. */
@@ -130,7 +143,19 @@ export type Workspace = {
   /** `reminder`: this reader is asked again after an answer the app could not read. */
   review?: { focus: Focus; builderSummary?: string; since?: { paths: string[]; diff: string; more?: number }; reminder?: true }
 }
-export type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked'; review?: Review }
+/**
+ * `asking`: the planner asked the person something; the plan node is still running and nothing is written yet.
+ * `jobs`: the plan a passed plan block hands to Build. `question`: what the planner asked.
+ */
+export type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked' | 'asking'; review?: Review; jobs?: Job[]; question?: PlanQuestion }
+
+/**
+ * The run's setting. A run whose plan was read before the mode existed has only the old switch: on was "small changes
+ * skip my final check", off was "ask me about everything". It never ships on its own.
+ */
+export function modeOf(plan: Plan): { mode: AskMode; stopForMe: boolean } {
+  return { mode: plan.askMode ?? (plan.autoApproveLowRisk ? 'small_changes' : 'everything'), stopForMe: plan.stopForMe ?? false }
+}
 
 const now = () => new Date().toISOString()
 
@@ -243,14 +268,14 @@ export async function freshNode(id: string, h: DbHandle = db): Promise<NodeRow> 
   return row
 }
 
-export function outcomeOf(state: string): Outcome['outcome'] | null {
+export function outcomeOf(state: string): 'passed' | 'failed' | 'cancelled' | 'skipped' | null {
   if (state === 'passed' || state === 'failed' || state === 'cancelled' || state === 'skipped') return state
   return null
 }
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
+export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; planQuestion?: PlanQuestion | 'unreadable'; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
 export type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
@@ -319,7 +344,7 @@ export async function runAttempt(
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') await onStep(ev.text)
         else if (ev.type === 'evidence') onEvidence(ev.data)
-        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}), ...(ev.noRepro ? { noRepro: ev.noRepro } : {}), ...(ev.unreadable ? { unreadable: ev.unreadable } : {}) }
+        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.planQuestion ? { planQuestion: ev.planQuestion } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}), ...(ev.noRepro ? { noRepro: ev.noRepro } : {}), ...(ev.unreadable ? { unreadable: ev.unreadable } : {}) }
         else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
       }
       return { kind: 'ended' }
@@ -457,6 +482,8 @@ async function runProviderNode(
   workspace: Workspace,
   revisionNote: string | null = null,
   images: readonly string[] = [],
+  /** Set by the plan loop: the planner's answer is measured, and may start on its own or ask the person (`canAsk`). */
+  planning?: { canAsk: boolean },
 ): Promise<Outcome> {
   // Resolved before any row exists, so an unknown provider cannot strand a node.
   const provider = deps.resolveProvider(plan.providerId)
@@ -497,22 +524,44 @@ async function runProviderNode(
     if (result.kind === 'cancelled') return { outcome: 'cancelled' }
 
     if (result.kind === 'done' && block.kind === 'plan' && result.plan) {
-      // A proposed plan is not a finished block: it waits for the person, who checks it before anything is built.
+      // A proposed plan is not a finished block: it waits for the person, who checks it before anything is built. In
+      // the plan loop it is measured first: a simple one starts on its own when the setting allows, and a question
+      // from the planner is put to the person before it plans again.
       const jobs = result.plan
-      const parked = (await withTx(runId, async tx => {
+      const { mode, stopForMe } = modeOf(plan)
+      const question = result.planQuestion && result.planQuestion !== 'unreadable' ? result.planQuestion : null
+      return withTx(runId, async (tx): Promise<Outcome> => {
         const node = (await freshNode(opened.id, tx))
-        if (node.state !== 'running') return false
+        if (node.state !== 'running') return { outcome: 'cancelled' }
         await recordDoneFacts(tx, node, result)
+        let startsOnItsOwn = false
+        if (planning) {
+          // The planner's own answer, against the register as it stands now (what the final check reads too).
+          const measured = measurePlan({ jobs, question: result.planQuestion ?? null }, await gateInputs(node.projectId, tx, runId))
+          const allowed = shipsOnItsOwn(mode, stopForMe)
+          // When the setting stops every plan, that is said first; what was measured follows.
+          const said = strings.plan.reasons
+          const reasons = allowed ? measured.reasons : [stopForMe ? said.stopForMe : mode === 'everything' ? said.everything : said.smallChanges, ...measured.reasons]
+          await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_measured', payload: { blockId: block.id, simple: measured.simple, reasons: reasons.map(r => clip(r, 300)), entries: measured.entries, mode, stopForMe, ...(question ? { question: { text: clip(question.text, 300) } } : {}) } }, tx)
+          startsOnItsOwn = measured.simple && allowed
+        }
         await appendEventSync({ runId, nodeRunId: node.id, type: 'node.planned', payload: { blockId: block.id, jobs, by: 'planner' } }, tx)
+        // Asked in the question window by the plan loop; the node stays running until then.
+        if (question && planning?.canAsk) return { outcome: 'asking', question }
+        if (startsOnItsOwn) {
+          const summary = strings.plan.startedOnItsOwn
+          const moved = await transitionNode(tx, node, 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system', autoStarted: true } }, { summary })
+          return moved ? { outcome: 'passed', jobs } : { outcome: 'cancelled' }
+        }
         await appendEventSync({ runId, nodeRunId: node.id, type: 'node.plan_proposed', payload: { blockId: block.id, summary: result.summary, count: jobs.length } }, tx)
         if ((await runStatusOf(tx, runId)) === 'running') {
           await tx.update(runs).set({ status: 'waiting_approval' }).where(eq(runs.id, runId))
           await appendEventSync({ runId, type: 'run.waiting_approval', payload: { blockId: block.id } }, tx)
         }
         await tx.update(nodeRuns).set({ summary: result.summary }).where(eq(nodeRuns.id, node.id))
-        return transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval', payload: { summary: result.summary, summarySource: result.source } })
-      }))
-      return parked ? { outcome: 'parked' } : { outcome: 'cancelled' }
+        const parked = await transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval', payload: { summary: result.summary, summarySource: result.source } })
+        return parked ? { outcome: 'parked' } : { outcome: 'cancelled' }
+      })
     }
 
     if (result.kind === 'done') {
@@ -679,14 +728,15 @@ export async function unreadableInLatestReview(runId: string): Promise<number> {
   return [...latest.values()].reduce((n, v) => n + v.unreadable, 0)
 }
 
-async function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): Promise<RiskAssessment | null> {
+/** `stopForMe`: recorded with the measure, so the gate card can say why a low-risk change still waits. */
+async function assessGate(runId: string, block: PlannedBlock, workspace: Workspace, stopForMe = false): Promise<RiskAssessment | null> {
   if (!workspace.workdir || !workspace.baseCommit) return null
   // The change as it stands now, recorded for any computer that shows the gate (and binds a decision to its hash).
   await changeUnderReview(runId).catch(() => null) // unreadable now: the gate reads it again when shown
   // The core areas the person marked, as they are now: a change inside one is never waved through.
   const projectId = (await db.select({ p: runs.projectId }).from(runs).where(eq(runs.id, runId)))[0]?.p
-  const core = projectId ? await corePaths(projectId) : []
-  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)), core)
+  const { core, decisions } = projectId ? await gateInputs(projectId, db, runId) : { core: [], decisions: [] }
+  const assessment = assessRisk(workspace.workdir, workspace.baseCommit, (await testFactsOf(runId)), core, decisions)
   await withTx(runId, async tx => {
     const node = (await openNodeIn(tx, runId, block.id))
     if (!node || outcomeOf(node.state)) return
@@ -701,6 +751,7 @@ async function assessGate(runId: string, block: PlannedBlock, workspace: Workspa
           reasons: assessment.reasons.map(r => clip(r, 200)),
           filesCount: assessment.files.length,
           linesChanged: assessment.linesChanged,
+          ...(stopForMe ? { stopForMe: true } : {}),
         },
       },
       tx,
@@ -905,8 +956,25 @@ async function confirmPlanNode(runId: string, block: PlannedBlock): Promise<{ ou
   return ok ? { outcome: 'passed', jobs } : { outcome: 'cancelled' }
 }
 
-/** How many times the person may ask for a new plan on one task. */
-const MAX_REPLANS = 5
+/** Puts the planner's question to the person, with the choice to leave it to the planner. Null once the run was cancelled. */
+async function askPlanQuestion(runId: string, block: PlannedBlock, q: PlanQuestion): Promise<Question | null> {
+  if (await isCancelled(runId)) return null
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(n => n.blockId === block.id)
+  if (!node) return null
+  return askPerson(runId, node.id, {
+    kind: 'plan',
+    findingId: null,
+    text: q.text,
+    why: q.why || strings.plan.questionWhy,
+    options: [...q.options.map(o => ({ id: o.id, label: o.label, means: o.means })), { id: LEAVE, label: strings.plan.leaveLabel, means: strings.plan.leaveMeans }],
+    recommended: null,
+    touches: [],
+    paths: q.paths,
+  })
+}
+
+/** How many times the person may ask for a new plan on one task (the planner's own questions count too). */
+export const MAX_REPLANS = 5
 
 // ---- the orchestration ---------------------------------------------------------------------------------------------
 
@@ -945,6 +1013,9 @@ async function loadPlan(runId: string): Promise<Plan> {
     repoPath: project?.repoPath ?? null,
     testCommand: project?.testCommand ?? null,
     autoApproveLowRisk: project?.autoApproveLowRisk ?? false,
+    // A project that cannot be read asks about everything: the safest setting.
+    askMode: project ? askModeOf(project) : 'everything',
+    stopForMe: run.stopForMe,
     previousRequest: run.parentRunId ? ((await db.select({ r: runs.request }).from(runs).where(eq(runs.id, run.parentRunId)))[0]?.r ?? null) : null,
     skipPlan: await planAlreadyMade(runId),
   }
@@ -1097,14 +1168,38 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     } else if (block.kind === 'plan' && provider.needsWorkspace) {
       // The planner proposes; the person checks, edits, and says build it — or asks for another plan with a note.
       let note: string | null = null
+      // Whether `note` is the person's answer to the planner's question (true) or their request for another plan.
+      let answered = false
       let images = revisionImages
       result = { outcome: 'cancelled' }
       for (let k = 0; k <= MAX_REPLANS; k++) {
         const pid = (name: string) => id(k === 0 ? name : `${name}-plan${k}`)
         const n = note
         const imgs = images
-        result = await step.run(pid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, prepared, n, imgs))
-        if (result.outcome !== 'parked') break // passed without a readable plan (Build works from the request), failed or cancelled
+        // The planner is told whether its note answers its own question or asks for a different plan.
+        const ws: Workspace = answered ? { ...prepared, revisionFrom: 'answer' } : prepared
+        // The last plan allowed may not ask: it stops for the person instead, and says the planner needs them.
+        const canAsk = k < MAX_REPLANS
+        result = await step.run(pid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, ws, n, imgs, { canAsk }))
+        if (result.outcome === 'asking' && result.question) {
+          // The planner's question, in the question window. Its answer becomes the note for the next plan, made in the
+          // same node (it is running again once answered), and that plan is measured again.
+          const q = result.question
+          const asked = await step.run(pid(`ask-plan-${block.id}`), () => askPlanQuestion(runId, block, q))
+          if (asked === null) return // cancelled meanwhile
+          const answer = await waitForAnswer(step, pid, runId, asked, 'plan-')
+          if (answer === 'parked' || answer === 'cancelled') return
+          // Chosen (with or without words), left to the planner, or answered only in the person's own words.
+          const label = answer.answerOption === OTHER || answer.answerOption === LEAVE ? undefined : answer.options.find(o => o.id === answer.answerOption)?.label
+          const how = answer.answerOption === LEAVE ? { option: 'leave' as const } : label !== undefined ? { option: 'chosen' as const, label } : { option: 'own' as const }
+          // The person's words are cleaned as a request for another plan is, before they reach the planner.
+          note = strings.providers.claude.answerNote(q.text, how, answer.answerText ? clip(redact(answer.answerText), 500) : null)
+          answered = true
+          images = []
+          continue
+        }
+        if (result.outcome === 'passed' && result.jobs) prepared = { ...prepared, jobs: result.jobs }
+        if (result.outcome !== 'parked') break // started on its own, passed without a readable plan (Build works from the request), failed or cancelled
         markWaiting(runId) // the relay watches for a word made on another computer
         let decided: PlanDecision | null = null
         for (let attempt = 0; attempt < MAX_IGNORED_DECISIONS && decided === null; attempt++) {
@@ -1124,6 +1219,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         const reopened = await step.run(pid(`replan-${block.id}`), () => reopenForRevision(runId, [block], k + 2, again))
         if (!reopened) return
         note = again
+        answered = false
         images = []
       }
     } else if (block.kind === 'approve' && provider.needsWorkspace) {
@@ -1132,8 +1228,9 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     } else if (block.kind === 'human') {
       // A run that changed files is measured before the gate, so the card can say what it would be waved through or
       // stopped for. It passes on its own only when the person turned that on and the measurement says low risk.
-      const risk = prepared.workdir && prepared.baseCommit ? await step.run(id(`assess-${block.id}`), () => assessGate(runId, block, prepared)) : null
-      if (risk?.level === 'low' && plan.autoApproveLowRisk) {
+      const { mode, stopForMe } = modeOf(plan)
+      const risk = prepared.workdir && prepared.baseCommit ? await step.run(id(`assess-${block.id}`), () => assessGate(runId, block, prepared, stopForMe)) : null
+      if (risk?.level === 'low' && passesLowRisk(mode, stopForMe)) {
         result = await step.run(id(`node-${block.id}`), () => passLowRiskGate(runId, block))
       } else {
         result = await step.run(id(`node-${block.id}`), () => parkHumanNode(runId, block))
@@ -1229,6 +1326,17 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     else if (status === 'waiting_approval') (await setRunStatus(runId, 'waiting_approval', { type: 'run.waiting_approval' }))
     return status
   })
+
+  // In "only what matters", a change that passed (on its own or by the person's yes) is kept, sent and opened as a pull
+  // request, each its own step, after the run is completed. A refusal ends softly and leaves the run as it is. Never merged.
+  const { mode: askMode, stopForMe: stopsForMe } = modeOf(plan)
+  const ship = await step.run('auto-ship-check', () => shouldShipOnItsOwn(runId, askMode, stopsForMe))
+  if (ship) {
+    const auto = deps.autoShip ?? {}
+    if ((await step.run('auto-ship-keep', () => autoKeep(runId, auto))).ok && (await step.run('auto-ship-send', () => autoSend(runId, auto))).ok) {
+      await step.run('auto-ship-open', () => autoOpen(runId, auto))
+    }
+  }
 }
 
 // Last resort when a step throws for good (missing run, exhausted retries): nothing may be left running with no
@@ -1253,13 +1361,36 @@ export async function failRunAfterError(runId: string): Promise<void> {
   })
 }
 
+/**
+ * When the function failed for good: the run is failed if it had not finished, and an automatic pull request left
+ * saying "sending" is ended where it got to. Both are tried; an error in either is logged and thrown, for Inngest.
+ */
+export async function afterRunGaveUp(runId: string): Promise<void> {
+  const said = (e: unknown) => redact(e instanceof Error ? e.message : String(e))
+  let first: unknown = null
+  try {
+    await failRunAfterError(runId)
+  } catch (e) {
+    first = e
+    console.error(`Run ${runId}: the run could not be marked as failed after it gave up:`, said(e))
+  }
+  // Tried even when the first failed: each cleanup is on its own, and both errors are logged.
+  try {
+    await endAutoShipAfterError(runId)
+  } catch (e) {
+    console.error(`Run ${runId}: the automatic pull request could not be ended after the run gave up:`, said(e))
+    throw e
+  }
+  if (first) throw first
+}
+
 export const executeRun = inngest.createFunction(
   {
     id: 'execute-run',
     triggers: [{ event: RUN_REQUESTED }],
     onFailure: async ({ event }) => {
       const runId = (event.data.event.data as { runId?: unknown }).runId
-      if (typeof runId === 'string') (await failRunAfterError(runId))
+      if (typeof runId === 'string') (await afterRunGaveUp(runId))
     },
   },
   async ({ event, step }) => {

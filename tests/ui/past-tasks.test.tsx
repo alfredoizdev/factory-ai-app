@@ -148,7 +148,7 @@ test('tests that arrived after the project was added are offered, and saved only
     unobserve() {}
     disconnect() {}
   }
-  const settings = { projectId: 'p1', repoPath: '/repo', testCommand: null, autoApproveLowRisk: false, currentBranch: 'main', defaultBranch: 'main', suggestedTestCommand: 'npm test' }
+  const settings = { projectId: 'p1', repoPath: '/repo', testCommand: null, askMode: 'everything' as const, currentBranch: 'main', defaultBranch: 'main', suggestedTestCommand: 'npm test' }
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/projects/p1' && init?.method === 'PUT') return new Response(JSON.stringify({ ...settings, testCommand: 'npm test', suggestedTestCommand: null }))
     return new Response(JSON.stringify({ runs: [] }))
@@ -160,4 +160,24 @@ test('tests that arrived after the project was added are offered, and saved only
   await vi.waitFor(() => expect(screen.queryByTestId('test-suggestion')).toBeNull())
   const put = fetchMock.mock.calls.find(([u, i]) => u === '/api/projects/p1' && i?.method === 'PUT')!
   expect(JSON.parse(String(put[1]!.body))).toEqual({ testCommand: 'npm test' })
+})
+
+test('a task the app passed on its own says so, and one a person approved does not', async () => {
+  const base = { ...runs[0]!, status: 'completed' }
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ runs: [{ ...base, runId: 'own', passedOnItsOwn: true }, { ...base, runId: 'person', passedOnItsOwn: false }] }))))
+  render(<PastTasks workflowId="w1" currentRunId={null} refreshKey="x" onOpen={() => {}} />)
+  expect(await screen.findByTestId('past-task-own')).toHaveTextContent(strings.history.wentOnItsOwn)
+  expect(screen.getByTestId('past-task-person')).not.toHaveTextContent(strings.history.wentOnItsOwn)
+})
+
+test('a task that waits for the person says "Waiting for you" in place of the status word, and is counted', async () => {
+  const waiting = { ...runs[0]!, runId: 'w', status: 'waiting_approval', passedOnItsOwn: false }
+  const other = { ...runs[1]!, passedOnItsOwn: false }
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ runs: [waiting, other] }))))
+  const onWaiting = vi.fn()
+  render(<PastTasks workflowId="w1" currentRunId={null} refreshKey="x" onOpen={() => {}} onWaiting={onWaiting} />)
+  const row = await screen.findByTestId('past-task-w')
+  expect(row).toHaveTextContent(strings.history.waitingForYou)
+  expect(row).not.toHaveTextContent(strings.run.status.waiting_approval)
+  expect(onWaiting).toHaveBeenLastCalledWith(1)
 })

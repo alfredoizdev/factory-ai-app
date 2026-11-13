@@ -83,9 +83,14 @@ const sinceLines = (since: { paths: readonly string[]; diff: string; more?: numb
 /** "a", "a and b", "a, b and c". */
 const list = (items: readonly string[]): string => (items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`)
 
+// The planner's prompt line for the person's answer to its own question: an answer, not a request to change a plan.
+const answerLine = (note: string) => `Before this plan, you asked the person a question. ${note} That question is settled: do not ask it again.`
+
+const APP_NAME = 'AI Factory'
+
 export const strings = {
   app: {
-    name: 'AI Factory',
+    name: APP_NAME,
     tagline: 'Design a flow of blocks and watch AI agents run it.',
   },
   blocks: {
@@ -111,7 +116,7 @@ export const strings = {
   projectSwitcher: {
     settings: 'Settings',
     loading: 'Projects…',
-    add: 'Add project',
+    add: 'New project',
     rename: 'Rename',
     save: 'Save',
     cancel: 'Cancel',
@@ -125,6 +130,104 @@ export const strings = {
       installing: 'Preparing dependencies: installing once, for every task to copy…',
       ready: 'Dependencies prepared: tasks start from them.',
       failed: 'Preparing the dependencies failed. Tasks install their own meanwhile.',
+    },
+  },
+  // The "New project" wizard: two ways in (from scratch, or a folder that already has code), a few short screens each.
+  wizard: {
+    title: 'New project',
+    back: 'Back',
+    next: 'Next',
+    stepOf: (n: number, total: number) => `Step ${n} of ${total}`,
+    steps: { start: 'Start', build: 'What to build', where: 'Where', folder: 'Folder', found: 'What I found', models: 'Models', review: 'Review' },
+    start: {
+      lead: 'How do you want to start?',
+      scratch: 'Start from scratch',
+      scratchHint: 'An empty folder. The agents create the project for you.',
+      existing: 'I already have code',
+      existingHint: 'A folder with a project in it. The agents work on it.',
+    },
+    build: {
+      lead: 'What do you want to build?',
+      hint: 'Pick what the project is made with. The agents set it up as the first task.',
+      frontEnd: 'Front end',
+      backEnd: 'Back end',
+      backEndHint: 'Pick any that apply, or none.',
+      agentsChoose: 'Not sure? Leave everything unpicked and the agents choose from what you describe.',
+    },
+    where: {
+      lead: 'Where does it live?',
+      name: 'Project name',
+      folder: 'Folder on this computer',
+      folderHint: 'A new folder, or one that is empty. The app creates it if it does not exist.',
+      chooseParent: 'Choose where…',
+      github: 'GitHub repository (optional)',
+      githubPlaceholder: 'https://github.com/you/my-project',
+      githubHint: 'The repository must already exist on GitHub. Nothing is sent now. Without it, changes stay on this computer.',
+      addTests: 'Add tests, so the agents check their own work',
+      addTestsHint: 'Without tests the app always stops for you before finishing a change.',
+    },
+    found: {
+      askBefore: 'Ask me before changing (optional)',
+      askBeforeHint: 'Tick the folders you want a say on. Sign-in, payments and the database already stop for you.',
+    },
+    models: {
+      lead: 'Which model does each step use?',
+      hint: 'Pick a preset, or change any step below. You can change this later on each block.',
+      presets: {
+        fast: { name: 'Fast', hint: 'Cheaper and quicker' },
+        balanced: { name: 'Balanced', hint: 'Recommended' },
+        best: { name: 'Best quality', hint: 'Slower, costs more' },
+      },
+      step: {
+        plan: { name: 'Plan', hint: 'Decides what to change' },
+        build: { name: 'Build', hint: 'Writes the code' },
+        review: { name: 'Review', hint: 'Reads the change for problems' },
+      },
+      choice: { default: 'Default', haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' },
+      modelFor: (step: string) => `Model for ${step}`,
+      testsNote: 'The Tests step uses no model: it runs your project\'s own tests.',
+    },
+    review: {
+      lead: 'Check it and create',
+      start: 'Start',
+      fromScratch: 'From scratch',
+      fromCode: 'From a folder that already has code',
+      build: 'Built with',
+      agentsChoose: 'the agents choose',
+      folder: 'Folder',
+      github: 'GitHub',
+      notConnected: 'not connected: changes stay on this computer',
+      tests: 'Tests',
+      testsYes: 'yes, the agents add them',
+      testsNo: 'no',
+      testsNone: 'none',
+      models: 'Models',
+      modelsLine: (plan: string, build: string, review: string) => `Plan ${plan} · Build ${build} · Review ${review}`,
+      askBefore: 'Ask me before',
+      scratchNote: 'The app creates the folder with an empty repository. The first task, already written for you in the task box, builds the project: read it, add what you want, and start it.',
+    },
+    readmeLine: 'Created with AI Factory. The project itself is built as the first task.',
+    firstCommit: 'Start of the project',
+    // The first task of a project started from scratch. Written for the agents and shown to the person, who can edit it.
+    firstTask: (name: string, names: readonly string[], tests: boolean) =>
+      [
+        `Create the project "${name}" in this empty repository.`,
+        names.length > 0 ? `Build it with ${names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`}.` : 'Choose what to build it with from what is asked here, and say what you chose.',
+        'Set it up so it installs and runs, with a simple first page.',
+        ...(tests ? ['Add tests, and a "test" script in package.json that runs them.'] : []),
+        '',
+        'What it should be: ',
+      ].join('\n'),
+    rules: {
+      builtWith: (names: readonly string[]) => `This project is built with ${names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`}.`,
+      tests: 'Every change comes with tests.',
+    },
+    errors: {
+      notGitHub: 'That is not a GitHub repository address. It looks like https://github.com/you/my-project.',
+      notFolder: 'There is a file with that name. Choose a folder.',
+      notEmpty: 'That folder already has files in it. Choose a new or empty folder, or go back and pick "I already have code".',
+      noParent: 'The folder that would hold it does not exist. Choose where to put the project.',
+      createdButFailed: (path: string) => `The folder ${path} was created, but the project could not be added. Go back and add it with "I already have code".`,
     },
   },
   setup: {
@@ -428,19 +531,35 @@ export const strings = {
     // The decision the project keeps when the person answered in their own words: what it was about, in the app's words,
     // what they chose, and their words. A choice with no words of their own is kept with the problem only.
     decision: (o: { about: string; choice: string | null; words: string }) => `${o.about}${o.choice ? `: ${o.choice}.` : '.'} In your words: ${o.words}`,
-    about: (kind: 'finding' | 'fix_held', f?: { type: 'logic' | 'security' | 'effect'; file?: string }) => {
+    about: (kind: 'finding' | 'fix_held' | 'plan', f?: { type: 'logic' | 'security' | 'effect'; file?: string }, planText?: string) => {
+      if (kind === 'plan') return `About the planner's question \u201c${planText}\u201d`
       const where = f?.file ? ` in ${f.file}` : ''
       if (kind === 'fix_held') return `About a fix${where} that changed an important part of the project`
       const what = f ? { logic: 'a problem with what the change does', security: 'a safety problem', effect: 'a problem with what else the change affects' }[f.type] : 'a problem the reviewers reported'
       return `About ${what}${where}`
     },
     // What they chose, said in full; null when they answered in their own words only.
-    chose: (kind: 'finding' | 'fix_held', option: string) =>
-      kind === 'fix_held'
-        ? ({ keep: 'you chose to keep the fix', undo: 'you chose to undo the fix', leave: 'you were not sure, so the fix was undone' } as Record<string, string>)[option] ?? null
-        : ({ fix: 'you chose to have it fixed', leave: 'you chose to leave it as it is' } as Record<string, string>)[option] ?? null,
+    // For the planner's question the options are its own, so the choice is said by its label.
+    chose: (kind: 'finding' | 'fix_held' | 'plan', option: string, label?: string) =>
+      kind === 'plan'
+        ? (label ? `you chose \u201c${label}\u201d` : null)
+        : kind === 'fix_held'
+          ? ({ keep: 'you chose to keep the fix', undo: 'you chose to undo the fix', leave: 'you were not sure, so the fix was undone' } as Record<string, string>)[option] ?? null
+          : ({ fix: 'you chose to have it fixed', leave: 'you chose to leave it as it is' } as Record<string, string>)[option] ?? null,
+  },
+  tell: {
+    waitingTitle: (n: number) => `${n} waiting for you`,
+    readyTitle: 'Ready to publish',
+    tabTitle: (part: string | null) => (part ? `${part} \u00b7 ${APP_NAME}` : APP_NAME),
+    needsAnswer: 'A task needs your answer',
+    readyToPublish: 'A change is ready to publish',
+    offer: 'Get a notice from this browser when a task needs you',
+    on: 'This browser will tell you when a task needs you.',
+    blocked: 'This browser is set not to show notices from the app. You can change that in its site settings.',
   },
   history: {
+    wentOnItsOwn: 'Went on its own',
+    waitingForYou: 'Waiting for you',
     title: 'Past tasks',
     newTaskTitle: 'New task',
     newTaskText: 'Describe the change you want in the card at the bottom right, then press Run. The flow below is what it will go through.',
@@ -609,6 +728,8 @@ export const strings = {
       area.endsWith('/')
         ? `${path}${others > 0 ? ` and ${others} other ${others === 1 ? 'file' : 'files'} are` : ' is'} inside ${area}, which you marked as a core area.`
         : `${path} is a file you marked as a core area.`,
+    onDecision: (path: string, text: string) => `${path} is covered by your decision “${text}”.`,
+    moreDecisions: (n: number) => `It also changes files that ${n} more ${n === 1 ? 'decision' : 'decisions'} of yours cover.`,
     moreCore: (n: number) => `It also changes ${n} more ${n === 1 ? 'core area' : 'core areas'} you marked.`,
     tooManyFiles: (n: number, max: number) => `It changes ${n} files; low risk is at most ${max}.`,
     tooManyLines: (n: number, max: number) => `It changes ${n} lines; low risk is at most ${max}.`,
@@ -624,12 +745,14 @@ export const strings = {
     unreadable: 'What it changed could not be read, so it is treated as high risk.',
     lowBecause: (files: number, lines: number) =>
       `${files} ${files === 1 ? 'file' : 'files'}, ${lines} ${lines === 1 ? 'line' : 'lines'}, nothing sensitive, tests passed and untouched.`,
-    passedLow: 'Not needed: a low-risk change, and you chose not to be asked for those.',
+    passedLow: 'Not needed: a low-risk change, and this project does not ask you about those.',
     label: { low: 'Low risk', high: 'Needs you' },
   },
   gate: {
     title: 'Your call',
     waiting: 'The work is done. Nothing goes further without your yes.',
+    // A low-risk change that waits anyway, because the person ticked "Stop for me on this one" for the task.
+    stopForMe: 'It is low risk, but it waits for you because you asked the app to stop for you on this task.',
     filesChanged: (n: number) => `${n} ${n === 1 ? 'file' : 'files'} changed`,
     noFiles: 'This run changed no files.',
     showChanges: 'Show the changes',
@@ -682,12 +805,11 @@ export const strings = {
   },
   delivery: {
     title: 'Approved',
-    ready: 'You approved it. It is ready, but not in your project yet.',
-    readyKept: 'You approved it, and it is saved as its own version of your project.',
-    sent: 'You approved it and sent it to GitHub. Follow it below.',
     finished: 'Done. This change is published. There is nothing else to do for it.',
     nowPublishing: 'Publishing your change. This takes a moment.',
     steps: ['Approved', 'Save', 'Check', 'Publish'],
+    // The first step, for a change the app passed on its own (see passedOnItsOwn): nobody approved it.
+    passedStep: 'Passed on its own',
     stepsLabel: 'Where this change is',
     nowSave: 'Save it to keep it. Nothing is sent anywhere yet.',
     nowSend: 'Saved. Next, send it so GitHub checks it. Nothing is published yet.',
@@ -770,10 +892,32 @@ export const strings = {
     what: 'Adds it to your project folder, uncommitted, for you to look at and commit. It is also kept as a commit on its own local branch. Nothing is pushed.',
     done: (files: number) => `In your project: ${files} ${files === 1 ? 'file' : 'files'} changed, not committed. Commit it when you are happy.`,
     keptOn: (branch: string, commit: string) => `Also kept as commit ${commit.slice(0, 7)} on the local branch ${branch}.`,
-    notEligible: 'Only a finished run that a person approved can be brought to the project.',
+    notEligible: 'Only a finished change that passed the human check, by you or on its own, can be brought to the project.',
+    passedOnItsOwn: 'It passed the human check on its own, as a small change that touched nothing that matters.',
     dirty: 'Your project has changes that are not committed. Commit or stash them first, so your work and the agent\'s are not mixed.',
     nothing: 'This run changed no files, so there is nothing to bring.',
     conflict: (branch: string) => `Your project changed in the same places since this run began, so the change does not fit cleanly. Nothing was changed. It is kept on the local branch ${branch} to merge by hand.`,
+    /** After it passed in "only what matters": kept, sent to GitHub and opened as a pull request on its own. */
+    auto: {
+      /** The app began sending it on its own but never finished, and nothing says why. */
+      seemsStopped: 'It seems to have stopped part-way. The buttons below can finish it.',
+      working: 'Sending it to GitHub and opening a pull request for you…',
+      openedByApp: 'It passed on its own, so it was sent to GitHub and a pull request is open.',
+      openedAfterYes: 'You approved it, so it was sent to GitHub and a pull request is open.',
+      // Added only once GitHub's checks are done and passed: before that, there is nothing to publish yet.
+      publishWhenReady: 'Publish it when you are ready.',
+      passedReady: 'It passed on its own. It is ready, but not in your project yet.',
+      stopped: {
+        keep: 'It passed, but it could not be saved on its own branch. Nothing was sent.',
+        send: 'It is saved on its own branch on this computer, but it could not be sent to GitHub.',
+        open: 'It was sent to GitHub, but the pull request could not be opened.',
+        noConnection: 'It is saved on its own branch on this computer. It was not sent, because this project is not connected to GitHub.',
+      },
+      whatHappened: 'What happened',
+      tryAgain: 'You can try again with the button below.',
+      /** Never sent on its own: the kept branch is the project's main branch. */
+      mainBranch: 'Its branch has the same name as your main branch, so it was not sent on its own.',
+    },
   },
   followUp: {
     title: 'Another change',
@@ -782,7 +926,7 @@ export const strings = {
     start: 'Continue from this change',
     starting: 'Starting the follow-up…',
     needNote: 'Say what to change next.',
-    notEligible: 'Only a finished run that a person approved can be continued.',
+    notEligible: 'Only a finished change that passed the human check, by you or on its own, can be continued.',
     couldNotKeep: 'The approved change could not be saved to build on.',
     followsFrom: (request: string) => `Continues from: ${request}`,
   },
@@ -844,6 +988,7 @@ export const strings = {
     suggestionsTitle: 'Suggested core areas',
     suggestionWhy: (area: string) => `Your latest change touched ${area}.`,
     suggestionYes: 'Yes, mark it as core',
+    decisionsLimit: 'Only a decision that names files or folders can stop a task on its own. A decision written only in words is given to the planner, which may ask you about it, but the app cannot check it.',
     coreWhat: 'A core area is a folder or file that matters a lot to you. A change there never goes ahead on its own: it always waits for your yes.',
     coreLabel: 'Folder or file',
     corePlaceholder: 'e.g. src/app',
@@ -888,6 +1033,7 @@ export const strings = {
   plan: {
     alreadyMade: 'You already checked the plan for this task, so the work carries on from where it stopped.',
     notWaiting: 'There is no plan waiting for you on this task.',
+    answerFirst: 'The planner asked you a question. Answer it first; the plan comes after.',
     needAJob: 'A plan needs at least one job with a name.',
     needANote: 'Say what the new plan should do differently.',
     title: 'Your plan',
@@ -913,6 +1059,33 @@ export const strings = {
     jobStep: (n: number, title: string) => `${n}. ${title}`,
     model: (model: string) => `Planned with ${model}.`,
     notPickedUp: 'The run has not picked this up yet. If it stays like this, check that the Inngest dev server is running.',
+    startedOnItsOwn: 'Simple change, so it started on its own.',
+    seePlan: 'See the plan',
+    whyStopped: 'Why it stopped for you',
+    whyStarted: 'Why it started on its own',
+    expects: 'What the planner expects to change',
+    noneExpected: 'The planner did not say.',
+    // The planner's own question, asked in the question window before it plans again.
+    questionWhy: 'The planner needs this decided before it can plan the work.',
+    leaveLabel: 'Let the planner choose',
+    leaveMeans: 'The planner picks what it thinks is best, and the plan is checked like any other.',
+    reasons: {
+      // Put first when the project's setting (or the task's own box) says every plan is checked with the person.
+      everything: 'This project asks you about every plan.',
+      smallChanges: 'This project still checks every plan with you.',
+      stopForMe: 'You asked the app to stop for you on this task.',
+      asks: 'The planner needs you to decide something.',
+      questionUnreadable: 'The planner wanted to ask you something, but its question could not be read.',
+      noPaths: 'The planner did not say which files it expects to change.',
+      unmeasurable: 'The planner named some files in a way the app cannot measure.',
+      tooWide: 'It expects to change a whole top-level part of the project, which is too large to call simple.',
+      rootName: 'It names something at the top of the project that the app cannot tell from a whole folder.',
+      sensitive: (area: string) => `It expects to change files that deal with ${area}.`,
+      core: 'It expects to change a part of the project you marked as a core area.',
+      decision: (text: string) => `It expects to change files that one of your decisions covers: “${text}”.`,
+      tooMany: (n: number, max: number) => `It expects to change ${n} files or folders; a simple change is at most ${max}.`,
+      simple: (n: number) => `It expects to change ${n} ${n === 1 ? 'file or folder' : 'files or folders'}, none of them sensitive, in a core area or covered by a decision of yours.`,
+    },
   },
   snapshots: {
     title: 'Final results',
@@ -1104,8 +1277,15 @@ export const strings = {
     notSandboxed: 'Claude works on its own in a separate copy of the repository. It is not sandboxed.',
     needsRepo: 'Set the repository before running Claude.',
     choose: 'Choose folder…',
-    autoLowLabel: 'Do not stop for low-risk changes',
-    autoLowHelp: 'Small changes that touch nothing sensitive and pass the tests skip your check. Anything else still waits for you.',
+    ask: {
+      title: 'When should the app stop for you?',
+      whatMatters: 'Ask me only about what matters',
+      whatMattersHelp: 'Simple changes go on their own, up to a pull request on GitHub. The app stops for you when a change touches sign-in, payments, the database, the server, settings or deploy files, a core area you marked or one of your decisions; when it is large; or when the project\'s tests did not run and pass. Publishing is always your click.',
+      everything: 'Ask me about everything',
+      everythingHelp: 'The app stops for you at every plan and before every change is kept.',
+      smallChanges: 'Small changes skip my final check',
+      smallChangesHelp: 'How this project worked until now: every plan waits for you, small changes skip your final check, and nothing is sent to GitHub on its own. Pick one of the options above to change it.',
+    },
     choosing: 'Choose the folder in the window that opened…',
     choosingHint: 'If you cannot see the window, it may be behind this one.',
     pickerMacOnly: 'Choosing a folder from a window only works on a Mac. Type the path instead.',
@@ -1120,6 +1300,11 @@ export const strings = {
     crossSite: 'That request came from another site, so it was refused.',
     notLocal: 'This app only answers on this computer (localhost), so the request was refused.',
     invalidBody: 'The request was not in the expected shape.',
+  },
+  composer: {
+    stopForMe: 'Stop for me on this one',
+    stopForMeWhat: 'What is this?',
+    stopForMeWhy: 'The app waits for you at the plan and before the change is kept, even when it is simple, and nothing is sent to GitHub until you press the button. Tasks that continue this one wait too.',
   },
   run: {
     skippedDisabled: 'This block is switched off, so it was skipped.',
@@ -1211,6 +1396,20 @@ export const strings = {
           'Do not commit, push or create branches. Leave the changes in the working tree.',
           'When you are done, reply with one plain sentence saying what you changed.',
         ].join('\n'),
+      // The person's answer to the planner's question, handed to the planner for its next plan: what they chose, or that
+      // they left it to the planner, or (with no option chosen) their own words, which are then the whole answer.
+      answerNote: (q: string, a: { option: 'chosen'; label: string } | { option: 'leave' } | { option: 'own' }, words: string | null) => {
+        const added = words ? ` They added, in their own words: ${words}` : ''
+        const answer =
+          a.option === 'chosen'
+            ? `The person answered your question "${q}": they chose "${a.label}".${added}`
+            : a.option === 'leave'
+              ? `The person answered your question "${q}": they left it to you: choose what you think is best.${added}`
+              : `The person answered your question "${q}" in their own words: ${words ?? ''}`
+        return `${answer} Plan the work with that.`
+      },
+      // The answer in the planner's prompt: an answer to its own question, not a request to change a plan nobody saw.
+      answerLine: (note: string) => answerLine(note),
       notFound: 'The claude command was not found on this computer.',
       badModel: (model: string) => `"${model.slice(0, 40)}" is not a model name, so the agent was not started. Fix it in the block's settings.`,
       noWorkdir: 'This run has no working copy, so the agent was not started.',
@@ -1342,18 +1541,25 @@ export const strings = {
       rulesNote: (notes: readonly string[]) =>
         ['The person set these rules for this project on earlier tasks. Follow them unless this request says otherwise:', ...notes.map(n => `- ${n}`)].join('\n'),
       workListNote: (list: string) => ['The person checked this plan. Work through it, job by job:', list].join('\n'),
-      planPrompt: (request: string, previous?: string, note?: string) =>
+      // `from`: 'answer' when the note is the person's answer to the planner's own question (see answerNote).
+      planPrompt: (request: string, previous?: string, note?: string, from?: 'person' | 'reviewer' | 'answer') =>
         [
           'You are planning a change. Do not change any file: read only.',
           ...(previous ? [`An earlier change was already made and approved in this directory: ${previous}`] : []),
           `The person asked for this: ${request}`,
-          ...(note ? ['', `They looked at an earlier plan and asked for this instead: ${note}`] : []),
+          ...(note ? ['', from === 'answer' ? answerLine(note) : `They looked at an earlier plan and asked for this instead: ${note}`] : []),
           '',
           'Read the parts of the project this touches, then split the work into as few jobs as it really needs (one is fine for a small change, at most 8).',
           'Each job is one thing a builder does, named plainly so a person who does not program understands it, with one to three short checks that tell it is done.',
           'Do not plan anything they did not ask for.',
-          'End your reply with one JSON object and nothing after it, exactly in this form:',
-          '{"jobs":[{"title":"what to do","done":["how to tell it is done"]}]}',
+          'For each job, list in "paths" every file it will change or add, as the project names it (for example src/ui/Footer.tsx). End a folder with / only when the job changes many files inside it.',
+          'If something must be decided by the person before the work can be planned (which way sign-in works, what a price is), add "question" with two to four options. Otherwise leave "question" out.',
+          'In "paths" of the question, name the files or folders the decision is about, and end a folder with /.',
+          'End your reply with one JSON object and nothing after it, exactly in one of these two forms.',
+          'When nothing needs deciding (most of the time):',
+          '{"jobs":[{"title":"what to do","done":["how to tell it is done"],"paths":["path/to/file.ts"]}]}',
+          'When the person must decide something first:',
+          '{"jobs":[{"title":"what to do","done":["how to tell it is done"],"paths":["path/to/file.ts"]}],"question":{"text":"what to decide","why":"why it matters","paths":["path/to/folder/","path/to/file.ts"],"options":[{"id":"a","label":"short choice","means":"what happens then"},{"id":"b","label":"another choice","means":"what happens then"}]}}',
         ].join('\n'),
     },
     demo: {

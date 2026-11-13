@@ -39,6 +39,7 @@ export function PastTasks({
   onOpen,
   onDeleted,
   onCount,
+  onWaiting,
 }: {
   workflowId: string
   currentRunId: string | null
@@ -49,6 +50,8 @@ export function PastTasks({
   onDeleted?: (runId: string) => void
   /** Called with how many tasks there are, each time the list is known or changes. */
   onCount?: (count: number) => void
+  /** Called with how many tasks wait for the person, each time the list is known or changes. */
+  onWaiting?: (count: number) => void
 }) {
   const [runs, setRuns] = useState<RunSummary[] | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
@@ -89,6 +92,12 @@ export function PastTasks({
     if (count !== null) onCount?.(count)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- told once per change of the count, not per render
   }, [count])
+
+  const waiting = runs?.filter(r => r.status === 'waiting_approval').length ?? null
+  useEffect(() => {
+    if (waiting !== null) onWaiting?.(waiting)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- told once per change of the count, not per render
+  }, [waiting])
 
   if (runs === null) return null
   if (runs.length === 0) return <p style={{ margin: 0, fontSize: 12.5, color: theme.skipped }}>{strings.history.empty}</p>
@@ -167,6 +176,11 @@ export function PastTasks({
                     <PauseIcon />
                     {strings.history.onHold}
                   </span>
+                ) : status === 'waiting_approval' ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: theme.waiting, fontWeight: 700 }}>
+                    <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: theme.waiting }} />
+                    {strings.history.waitingForYou}
+                  </span>
                 ) : (
                   <>
                     <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: COLOUR[status] ?? theme.skipped }} />
@@ -175,6 +189,7 @@ export function PastTasks({
                 )}
                 <span>·</span>
                 {whenText(r.createdAt)}
+                {r.passedOnItsOwn && <span data-testid={`on-its-own-${r.runId}`} style={{ color: theme.passed }}>· {strings.history.wentOnItsOwn}</span>}
                 {r.providerId === DEMO_PROVIDER_ID && <span style={{ color: theme.waiting }}>· {strings.history.demo}</span>}
               </span>
             </button>

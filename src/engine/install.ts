@@ -16,7 +16,8 @@ export function installCommandFor(dir: string): string | null {
   if (has('yarn.lock')) return 'yarn install --frozen-lockfile'
   if (has('bun.lockb') || has('bun.lock')) return 'bun install --frozen-lockfile'
   if (has('package-lock.json')) return 'npm ci --prefer-offline --no-audit --no-fund'
-  return 'npm install --no-audit --no-fund'
+  // No lock file: none is written either, so the install leaves nothing behind that would count as the task's change.
+  return 'npm install --no-package-lock --no-audit --no-fund'
 }
 
 export type InstallResult = { command: string; ok: boolean; durationMs: number; outputTail: string }

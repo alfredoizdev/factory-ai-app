@@ -1,11 +1,12 @@
 import { eq } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { approvals, nodeRuns, runs, workflowVersions } from '@/db/schema'
+import { nodeRuns, runs, workflowVersions } from '@/db/schema'
 import type { Graph } from '@/domain/graph'
 import { and } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
 import { DeliveryError, keepCommit, unfinishedCommit, wasDelivered } from '@/engine/delivery'
 import { appendEvent } from '@/engine/events'
+import { humanCheckPassedBy } from '@/engine/passed-check'
 import { runPlace } from '@/engine/machine'
 import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { createRun, type RunProviderId } from '@/engine/run'
@@ -30,13 +31,13 @@ export async function startFollowUp(parentRunId: string, note: string): Promise<
   if (!parent) throw new FollowUpError(strings.errors.runNotFound, 404)
   // A run that failed is picked up where it stopped instead: see continueFailed.
   if (parent.status === 'failed') return continueFailed(parent, text)
-  const approved = (await db.select().from(approvals).where(and(eq(approvals.runId, parentRunId), eq(approvals.decision, 'approved'))))[0]
-  if (parent.status !== 'completed' || !approved || !parent.worktreePath || !parent.baseCommit) {
+  const passedBy = await humanCheckPassedBy(parentRunId)
+  if (parent.status !== 'completed' || passedBy === null || !parent.worktreePath || !parent.baseCommit) {
     throw new FollowUpError(strings.followUp.notEligible, 409)
   }
   let parentCommit: string
   try {
-    parentCommit = keepCommit(parent)
+    parentCommit = keepCommit(parent, null, passedBy)
   } catch (e) {
     if (e instanceof DeliveryError) throw new FollowUpError(e.message, 409)
     throw new FollowUpError(strings.followUp.couldNotKeep, 409)
@@ -45,6 +46,7 @@ export async function startFollowUp(parentRunId: string, note: string): Promise<
   await db.update(runs)
     .set({
       parentRunId,
+      stopForMe: parent.stopForMe,
       // The new worktree starts here; its human check compares against it, so it shows only the new change.
       baseCommit: parentCommit,
       deliveryBase: (await wasDelivered(parentRunId)) ? null : (parent.deliveryBase ?? parent.baseCommit),
@@ -71,7 +73,7 @@ async function continueFailed(parent: typeof runs.$inferSelect, text: string): P
     throw new FollowUpError(strings.failure.cannotContinue, 409)
   }
   const { runId } = await createRun({ workflowId: parent.workflowId, request: text, providerId: parent.providerId as RunProviderId })
-  await db.update(runs).set({ parentRunId: parent.id, baseCommit: parent.baseCommit, deliveryBase: parent.deliveryBase, title: parent.title }).where(eq(runs.id, runId))
+  await db.update(runs).set({ parentRunId: parent.id, stopForMe: parent.stopForMe, baseCommit: parent.baseCommit, deliveryBase: parent.deliveryBase, title: parent.title }).where(eq(runs.id, runId))
   await appendEvent({ runId, type: 'run.continues', payload: { fromRun: parent.id, commit, skipPlan: await planWasMade(parent) } })
   return { runId }
 }

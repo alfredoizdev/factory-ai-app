@@ -200,6 +200,30 @@ test('a question from the review waits in the same card as the other checks, and
   expect(screen.getByTestId('command-card')).toHaveAttribute('data-mode', 'working')
 })
 
+test('the planner\'s question waits in the question card, not as a plan to check, and can be answered', async () => {
+  const planQuestion = {
+    id: 'q2', runId: 'r1', nodeRunId: 'n1', findingId: null, kind: 'plan', text: 'Which sign-in?', why: strings.plan.questionWhy, detail: null,
+    options: [{ id: 'a', label: 'Use username', means: 'A new field.' }, { id: 'leave', label: strings.plan.leaveLabel, means: strings.plan.leaveMeans }],
+    recommended: null, touches: [], state: 'open', answerOption: null, answerText: null, actor: null, answeredAt: null,
+  }
+  const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async url =>
+    url.endsWith('/findings') ? new Response(JSON.stringify({ findings: [], question: planQuestion, touched: [] })) : url.endsWith('/prompts') ? new Response(JSON.stringify({ prompts: [] })) : url.endsWith('/questions/q2') ? new Response('{}') : new Response('{}', { status: 404 }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  page()
+  await emit('run.started')
+  await emit('node.started', { blockId: 'plan' })
+  await emit('run.waiting_approval', { blockId: 'plan' })
+  await emit('node.question_asked', { blockId: 'plan', questionId: 'q2', kind: 'plan' })
+  expect(screen.getByTestId('command-card')).toHaveAttribute('data-mode', 'question')
+  expect(await screen.findByText('Which sign-in?')).toBeInTheDocument()
+  expect(screen.getByText(strings.plan.questionWhy)).toBeInTheDocument()
+  expect(screen.queryByText(strings.question.position(1, 1))).toBeNull()
+  fireEvent.click(screen.getByRole('radio', { name: /Use username/ }))
+  fireEvent.click(screen.getByRole('button', { name: strings.question.confirm }))
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u, init]) => String(u).endsWith('/questions/q2') && init?.method === 'POST')).toBe(true))
+})
+
 test('the human check is still the human check', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/findings') ? new Response(JSON.stringify({ findings: [], question: null, touched: [] })) : url.endsWith('/prompts') ? new Response(JSON.stringify({ prompts: [] })) : new Response('{}', { status: 404 }))))
   page()

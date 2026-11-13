@@ -1,10 +1,13 @@
 'use client'
 
 import { PastTasks } from './PastTasks'
+import { attentionOf, useAttention } from './attention'
+import { readyToPublish } from './shipReady'
 import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
 import type { FailureActions } from './FailurePanel'
 import { PROMPT_BLOCK, usePrompts } from './PromptCards'
+import { firstTaskKey } from './AddProjectDialog'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { SettingsIcon } from './SettingsIcon'
@@ -84,8 +87,33 @@ export function CanvasScreen({
   // A project with a folder is worked on by Claude by default; without one only the demo can run.
   const [agent, setAgent] = useState<Agent>(initialSettings?.repoPath ? CLAUDE_PROVIDER_ID : DEMO_PROVIDER_ID)
   const claudeBlocked = agent === CLAUDE_PROVIDER_ID && !settings?.repoPath
-  const [request, setRequest] = useState('')
+  // What the person typed, or null while they have typed nothing in this page.
+  const [typed, setTyped] = useState<string | null>(null)
+  // A project made from scratch arrives with its first task written by the wizard. It is shown in the box until the
+  // person types or starts it; read after hydration so the server's page still matches.
+  const firstTask = useSyncExternalStore(
+    noSubscription,
+    () => {
+      try {
+        return window.sessionStorage.getItem(firstTaskKey(workflowId))
+      } catch {
+        return null
+      }
+    },
+    () => null,
+  )
+  const request = typed ?? firstTask ?? ''
+  const setRequest = (text: string) => {
+    try {
+      window.sessionStorage.removeItem(firstTaskKey(workflowId))
+    } catch {
+      // No storage: nothing to forget.
+    }
+    setTyped(text)
+  }
   const [images, setImages] = useState<ComposerImage[]>([])
+  // The box on a fresh task: stop for the person on this one. It clears once a run starts.
+  const [stopForMe, setStopForMe] = useState(false)
   // The name the person gives a new task, if any; empty, the app names it from the request.
   const [taskName, setTaskName] = useState('')
   const clearComposer = () => {
@@ -217,6 +245,7 @@ export function CanvasScreen({
           request,
           provider: agent,
           attachments: readyImageIds(images),
+          ...(stopForMe ? { stopForMe: true } : {}),
           ...(taskName.trim() ? { title: taskName.trim() } : {}),
           ...(agent === CLAUDE_PROVIDER_ID && chosenStart ? { startFrom: chosenStart } : {}),
         }),
@@ -228,6 +257,7 @@ export function CanvasScreen({
       setHighlightedId(null)
       setRun((await detail.json()) as RunInfo)
       clearComposer()
+      setStopForMe(false)
       setTaskName('')
     } catch {
       setMessage(strings.run.startFailed)
@@ -244,6 +274,8 @@ export function CanvasScreen({
   // How many tasks the project has, once known: with none, the screen invites the first one instead of pointing
   // at past tasks that do not exist.
   const [taskCount, setTaskCount] = useState<number | null>(noTasksYet ? 0 : null)
+  // How many of this project's tasks wait for the person, from the list the screen already reads.
+  const [waitingCount, setWaitingCount] = useState(0)
   // Nothing open and nothing being started (the open task was deleted, or the project was just opened): the screen
   // says so in its middle, without the flow. A project with no tasks at all keeps its flow and invites the first one.
   const nothingOpen = run === null && taskCount !== 0 && emptyBecause !== 'new'
@@ -358,14 +390,16 @@ export function CanvasScreen({
   // The run waits on the person at its plan, or at the human check: the card shows the one it waits at.
   // The change a person decides on is shown in the Human check window; the side card keeps the decision.
   const humanBlock = run?.blocks.find(b => b.kind === 'human')
-  const planWaiting = !!run && run.blocks.some(b => b.kind === 'plan' && views[b.id]?.state === 'waiting_approval')
-  // A question from the review is the person's to answer, in the same place; it is not the human check.
+  const planBlock = run?.blocks.find(b => b.kind === 'plan')
+  // A plan node that waits on the planner's question waits on an answer, not on the plan: the question card shows it.
+  const planWaiting = !!run && run.blocks.some(b => b.kind === 'plan' && views[b.id]?.state === 'waiting_approval' && views[b.id]?.asking !== true)
+  // A question from the review (or from the planner) is the person's to answer, in the same place; it is not the human check.
   const reviewRan = !!run && run.providerId !== DEMO_PROVIDER_ID && run.blocks.some(b => b.kind === 'review' && b.enabled && views[b.id]?.state === 'passed')
   const mode: CardMode =
-    run && runStatus === 'waiting_approval' && planWaiting
-      ? 'plan'
-      : run && runStatus === 'waiting_approval' && asking
+    run && runStatus === 'waiting_approval' && asking
       ? 'question'
+      : run && runStatus === 'waiting_approval' && planWaiting
+      ? 'plan'
       : run && runStatus === 'waiting_approval'
       ? 'waiting'
       : run && (runStatus === 'running' || runStatus === 'queued')
@@ -375,6 +409,19 @@ export function CanvasScreen({
           : run && runStatus === 'failed' && run.providerId !== DEMO_PROVIDER_ID
             ? 'failed'
             : 'idle'
+
+  // Telling the person when a task needs them: the tab's title, and a notice from the browser if they allowed it.
+  // Ready to publish reads the ship state the result card already read; nothing new is asked for.
+  const shipState = shipFor && shipFor.runId === runIdNow ? shipFor.state : null
+  const shipReady = readyToPublish(shipState)
+  const attention = attentionOf(mode, shipReady)
+  const { offer: noticeOffer, allow: allowNotice } = useAttention({
+    attention,
+    // The open task waits for the person even before the list has been read again.
+    waitingCount: Math.max(waitingCount, attention === 'answer' ? 1 : 0),
+    taskTitle: run?.title ?? null,
+    askKey: run ? `${run.runId}:${mode}:${askedIdOf(events) ?? ''}` : null,
+  })
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -639,6 +686,7 @@ export function CanvasScreen({
               void watchRun(id)
             }}
             onCount={setTaskCount}
+            onWaiting={setWaitingCount}
             onDeleted={id => {
               // The open task is gone: leave it, and close the list so the "No task open" screen is seen.
               if (id === run?.runId) {
@@ -654,6 +702,9 @@ export function CanvasScreen({
           mode={mode}
           runId={run?.runId ?? null}
           risk={Object.values(views).find(v => v.state === 'waiting_approval')?.risk}
+          planMeasure={planBlock ? views[planBlock.id]?.planMeasure : undefined}
+          stopForMe={stopForMe}
+          onStopForMe={setStopForMe}
           text={request}
           onText={setRequest}
           images={images}
@@ -684,6 +735,7 @@ export function CanvasScreen({
           askedId={askedIdOf(events)}
           onRecordChanged={reloadRecord}
           showFindings={reviewRan}
+          notice={{ offer: noticeOffer, onAllow: allowNotice }}
         />
         <Canvas
           graph={graph}

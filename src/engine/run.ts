@@ -8,6 +8,7 @@ import { nodeRuns, projects, runs, workflows, workflowVersions } from '@/db/sche
 import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync, lockRun } from '@/engine/events'
+import { passedOnItsOwnAmong } from '@/engine/passed-check'
 import { onHoldAmong } from '@/engine/ship'
 import { cleanTitle, titleOf } from '@/engine/title'
 import { CLAUDE_PROVIDER_ID, DEMO_PROVIDER_ID } from '@/providers/ids'
@@ -171,6 +172,8 @@ export async function createRun(input: {
   startFrom?: string
   /** The person's name for the task. Absent: none, until they give one. */
   title?: string
+  /** The person asked to be stopped for this task whatever the project's ask mode says. Absent: no. */
+  stopForMe?: boolean
 }): Promise<{ runId: string; versionId: string }> {
   const wf = (await requireWorkflow(input.workflowId))
   const providerId = input.providerId ?? DEMO_PROVIDER_ID
@@ -216,6 +219,7 @@ export async function createRun(input: {
           request: input.request,
           title: input.title ? cleanTitle(input.title) : null,
           titleByPerson: !!(input.title && cleanTitle(input.title)),
+          stopForMe: input.stopForMe === true,
           providerId,
           // The run executes here: its working copy and its Inngest are on this computer.
           machineId: thisMachine().id,
@@ -296,6 +300,8 @@ export type RunSummary = {
   title: string | null
   /** Its pull request is ready and the person put it on hold. */
   onHold: boolean
+  /** The app passed the human check on its own; no person approved. */
+  passedOnItsOwn: boolean
 }
 
 /** A workflow's past tasks, newest first: what was asked, when, how it ended, and the branch it was kept on. */
@@ -317,5 +323,6 @@ export async function listRuns(workflowId: string, limit = 50): Promise<RunSumma
     .limit(limit)
     )
   const held = await onHoldAmong(rows.map(r => r.runId))
-  return rows.map(r => ({ ...r, title: titleOf(r), onHold: held.has(r.runId) }))
+  const onItsOwn = await passedOnItsOwnAmong(rows.map(r => r.runId))
+  return rows.map(r => ({ ...r, title: titleOf(r), onHold: held.has(r.runId), passedOnItsOwn: onItsOwn.has(r.runId) }))
 }

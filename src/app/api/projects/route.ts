@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { ASK_MODES } from '@/domain/ask-mode'
+import { MODEL_CHOICES } from '@/domain/models'
 import { prepareBase } from '@/engine/base'
 import { ProjectSettingsError } from '@/engine/project-settings'
 import { createProject, listProjects } from '@/engine/projects'
@@ -12,12 +14,17 @@ export async function GET() {
   return Response.json({ projects: (await listProjects()) })
 }
 
+/** The model of each step, as the wizard sends it. */
+const modelsSchema = z.object({ plan: z.enum(MODEL_CHOICES), build: z.enum(MODEL_CHOICES), review: z.enum(MODEL_CHOICES) }).partial()
+
 const createSchema = z.object({
   path: z.string().min(1).max(1000),
   name: z.string().max(200),
   testCommand: z.string().max(500).nullable(),
   checks: z.array(z.object({ label: z.string().max(200), command: z.string().max(500) })).max(10),
-  autoApproveLowRisk: z.boolean().optional(),
+  askMode: z.enum(ASK_MODES).optional(),
+  models: modelsSchema.optional(),
+  coreAreas: z.array(z.string().min(1).max(500)).max(16).optional(),
 })
 
 // Makes a folder a project, then prepares its base in the background (installing its dependencies once).

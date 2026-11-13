@@ -1,5 +1,5 @@
 import type { BlockKind } from '@/domain/graph'
-import type { Job } from '@/engine/plan'
+import type { Job, PlanQuestion } from '@/engine/plan'
 import type { NoRepro, Repro } from '@/engine/repro'
 import type { FindingType, Focus, Review, UnreadableReview } from '@/engine/review'
 import type { TestRun } from '@/engine/test-runner'
@@ -26,7 +26,7 @@ export type AgentEvent =
   // does not do what the finding says. Both are the model's claims until the app runs the repro itself.
   // `noRepro`: why a verifier's answer gave no repro, with the end of that answer; for a developer, never shown to the person.
   // `unreadable`: the same for a reviewer's answer that gave no verdict.
-  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
+  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; planQuestion?: PlanQuestion | 'unreadable'; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
   // Same rule for a failure: 'system' marks a sentence the app composed from facts. `cause` names a failure the
   // executor must not retry (re-running failing tests twice proves nothing new).
   | { type: 'error'; message: string; source?: 'provider' | 'system'; cause?: 'tests_failed' }
@@ -45,8 +45,9 @@ export type AgentExecutionInput = {
   baseCommit?: string
   /** Set on a later round: what the person asked to change after looking at the previous one. */
   revisionNote?: string
-  /** Who asked for that round's changes: the person, or a reviewer. */
-  revisionFrom?: 'person' | 'reviewer'
+  /** Who asked for that round's changes: the person, or a reviewer. 'answer': for the planner, the note is the person's
+   *  answer to its own question, not a request to change an earlier plan. */
+  revisionFrom?: 'person' | 'reviewer' | 'answer'
   /** Set on a follow-up run: the approved request whose change is already in the folder. */
   previousRequest?: string
   /** Absolute paths of images the person attached for this round, for the agent to look at. */

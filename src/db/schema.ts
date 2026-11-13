@@ -18,6 +18,8 @@ export const projects = pgTable('projects', {
   // The person's choice: a run whose change is measured as low risk does not stop at the human check. Off unless
   // they turn it on; never a default.
   autoApproveLowRisk: boolean('auto_approve_low_risk').notNull().default(false),
+  // When the app stops for the person: 'what_matters' | 'everything' | 'small_changes'. Null: derived from the switch above.
+  askMode: text('ask_mode'),
   // The prepared base: a copy of the main branch with its dependencies installed once, which every task's working
   // copy starts from instead of installing again. 'none' until prepared; 'installing', 'ready' or 'failed' after.
   baseStatus: text('base_status').notNull().default('none'),
@@ -69,6 +71,8 @@ export const runs = pgTable(
     title: text('title'),
     /** True once the person named the task: a later suggestion never replaces their words. */
     titleByPerson: boolean('title_by_person').notNull().default(false),
+    /** The person asked to be stopped for this task, whatever the project's ask mode says. */
+    stopForMe: boolean('stop_for_me').notNull().default(false),
     /** The project rules this task was given when it started (JSON list of texts); null before it started. */
     memoryJson: text('memory_json'),
     providerId: text('provider_id').notNull(),
@@ -310,6 +314,8 @@ export const questions = pgTable(
     optionsJson: text('options_json').notNull(),
     recommended: text('recommended'),
     touchesJson: text('touches_json').notNull(),
+    /** The paths a planner question is about (JSON list of text); null on every other question. */
+    paths: text('paths'),
     state: text('state').notNull(),
     answerOption: text('answer_option'),
     answerText: text('answer_text'),
@@ -324,7 +330,9 @@ export const questions = pgTable(
   t => [
     index('questions_run_idx').on(t.runId),
     // One question per thing asked: a repeated step finds it instead of asking again.
-    uniqueIndex('questions_asked_once').on(t.runId, t.nodeRunId, t.kind, sql`coalesce(${t.findingId}, '')`),
+    uniqueIndex('questions_asked_once').on(t.runId, t.nodeRunId, t.kind, sql`coalesce(${t.findingId}, '')`).where(sql`${t.kind} <> 'plan'`),
+    // The planner may ask again on its node once its last answer was taken, so only one not yet taken is allowed there.
+    uniqueIndex('questions_plan_open_once').on(t.runId, t.nodeRunId).where(sql`${t.kind} = 'plan' and ${t.consumedAt} is null`),
   ],
 )
 
