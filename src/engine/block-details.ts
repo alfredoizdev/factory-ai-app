@@ -1,7 +1,9 @@
+import { execFileSync } from 'node:child_process'
 import { and, asc, eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { events, evidence, nodeRuns, runs, usageRecords, workflowVersions } from '@/db/schema'
 import type { Graph } from '@/domain/graph'
+import { changesTheLook } from '@/engine/snapshots'
 
 // Everything recorded about one block of a run, for the "See details" window: what it said, every step it took, how
 // long it worked, the tokens it used, the plan it proposed and what its commands measured. Read-only, and only what
@@ -36,7 +38,43 @@ export type BlockDetails = {
    * Every task of the change this one belongs to, oldest first: the first task and each one that continued from it.
    * On the Human check and Ship blocks, where the person looks back at what was done.
    */
-  history?: { runId: string; name: string; request: string; at: string; here: boolean }[]
+  history?: { runId: string; name: string; request: string; at: string; here: boolean; files: string[]; look: boolean }[]
+  /** Where the change stands on GitHub, when it was sent there: the last thing in its history. */
+  github?: { branch: string; at: string; pr: { number: number; url: string } | null; published: boolean }
+}
+
+/** The files one task changed itself, not counting the tasks it continued from. Empty when that cannot be read. */
+function ownFiles(run: typeof runs.$inferSelect): string[] {
+  if (!run.worktreePath || !run.baseCommit) return []
+  try {
+    const git = (args: string[]) => execFileSync('git', args, { cwd: run.worktreePath!, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const tracked = git(['diff', '--name-only', run.baseCommit]).split('\n')
+    const untracked = git(['ls-files', '--others', '--exclude-standard']).split('\n')
+    return [...new Set([...tracked, ...untracked].filter(Boolean))].sort()
+  } catch {
+    return []
+  }
+}
+
+/** The latest sending to GitHub among the tasks of a change, with its pull request and whether it was published. */
+async function githubOf(runIds: string[]): Promise<BlockDetails['github']> {
+  for (const id of [...runIds].reverse()) {
+    const log = await db.select().from(events).where(eq(events.runId, id)).orderBy(asc(events.sequence))
+    const last = (type: string) => log.filter(e => e.type === type).at(-1)
+    const pushed = last('run.pushed')
+    if (!pushed) continue
+    const branch = (JSON.parse(pushed.payloadJson) as { branch?: unknown }).branch
+    if (typeof branch !== 'string') continue
+    const opened = last('run.pr_opened')
+    const pr = opened ? (JSON.parse(opened.payloadJson) as { number?: unknown; url?: unknown }) : null
+    return {
+      branch,
+      at: (opened ?? pushed).createdAt,
+      pr: pr && typeof pr.number === 'number' && typeof pr.url === 'string' ? { number: pr.number, url: pr.url } : null,
+      published: last('run.merged') !== undefined,
+    }
+  }
+  return undefined
 }
 
 /** The tasks that make up one change: the run's oldest ancestor and everything that continued from it, in order. */
@@ -55,7 +93,8 @@ async function historyOf(run: typeof runs.$inferSelect): Promise<NonNullable<Blo
   const root = rootOf(run)
   return all
     .filter(r => rootOf(r) === root)
-    .map(r => ({ runId: r.id, name: r.title?.trim() || r.request.replace(/\s+/g, ' ').trim().slice(0, 80), request: r.request, at: r.createdAt, here: r.id === run.id }))
+    .map(r => ({ runId: r.id, name: r.title?.trim() || r.request.replace(/\s+/g, ' ').trim().slice(0, 80), request: r.request, at: r.createdAt, here: r.id === run.id, files: ownFiles(r) }))
+    .map(t => ({ ...t, look: changesTheLook(t.files) }))
 }
 
 const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null)
@@ -106,6 +145,8 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
   })
   const model = (block?.config as { model?: unknown } | undefined)?.model
   const ms = node.startedAt && node.finishedAt ? Date.parse(node.finishedAt) - Date.parse(node.startedAt) : NaN
+  const history = block?.kind === 'ship' || block?.kind === 'human' ? await historyOf(run) : undefined
+  const github = history ? await githubOf(history.map(h => h.runId)) : undefined
   return {
     blockId,
     label: block?.label ?? blockId,
@@ -122,6 +163,7 @@ export async function blockDetails(runId: string, blockId: string): Promise<Bloc
     jobs,
     ...(planMeasure ? { planMeasure } : {}),
     commands,
-    ...(block?.kind === 'ship' || block?.kind === 'human' ? { history: await historyOf(run) } : {}),
+    ...(history ? { history } : {}),
+    ...(github ? { github } : {}),
   }
 }

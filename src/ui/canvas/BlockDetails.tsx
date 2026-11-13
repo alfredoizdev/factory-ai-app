@@ -204,33 +204,120 @@ function Pictures({ runId }: { runId: string }) {
   )
 }
 
-/** The pictures of one task of the history: shown when there are some, a quiet line otherwise. */
-function TaskPictures({ runId }: { runId: string }) {
-  const { state } = useSnapshots(runId, false)
-  if (!state) return null
-  if (state.status === 'working' || (state.status === 'ready' && state.shots.length > 0)) return <PicturesBody runId={runId} state={state} />
-  return <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNoPictures}</span>
+/** The pictures of one task, small: a click opens them large with the computer and phone tabs. None yet: a button takes them. */
+function TaskPictures({ runId, name }: { runId: string; name: string }) {
+  // Taken by themselves the first time the history is opened, so the person finds them there.
+  const { state, take, error } = useSnapshots(runId, true)
+  const [open, setOpen] = useState(false)
+  const [asked, setAsked] = useState(false)
+  if (!state) return <Bone width={300} height={96} radius={8} />
+  if (state.status === 'unneeded') return <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNothingToSee}</span>
+  if (state.status === 'working' || (asked && state.status === 'none' && !error)) {
+    return (
+      <span role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: theme.dim }}>
+        <WorkingSpinner blockId={`pictures-${runId}`} size={14} /> {state.message ?? d.historyTaking}
+      </span>
+    )
+  }
+  if (state.status !== 'ready' || state.shots.length === 0) {
+    return (
+      <span style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
+        <button type="button" onClick={() => { setAsked(true); void take() }} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bg, color: '#cfe0ff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+          {d.historyTake}
+        </button>
+        {(error ?? (state.status === 'failed' ? state.message : null)) && <span style={{ fontSize: 12.5, color: theme.failed }}>{error ?? state.message}</span>}
+      </span>
+    )
+  }
+  const thumbs = (['before', 'after'] as const).filter(side => state.shots.includes(`${side}-desktop` as Shot))
+  return (
+    <>
+      <button type="button" data-testid="history-thumbs" aria-label={d.historyPicturesOf(name)} onClick={() => setOpen(true)} style={{ display: 'flex', gap: 10, padding: 0, border: 'none', background: 'none', cursor: 'zoom-in', justifySelf: 'start' }}>
+        {thumbs.map(side => (
+          <span key={side} style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? theme.dim : theme.passed }}>{strings.snapshots[side]}</span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`/api/runs/${runId}/snapshots/${side}-desktop`} alt="" style={{ display: 'block', width: 150, height: 96, objectFit: 'cover', objectPosition: 'top', borderRadius: 8, border: `1px solid ${theme.border}` }} />
+          </span>
+        ))}
+      </button>
+      {open &&
+        createPortal(
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 110, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', background: 'rgba(5, 7, 11, 0.8)' }}>
+            <div role="dialog" aria-modal="true" aria-label={d.historyPicturesOf(name)} onClick={e => e.stopPropagation()} style={{ width: 'min(1100px, calc(100% - 32px))', maxHeight: 'calc(100% - 64px)', overflowY: 'auto', display: 'grid', gap: 14, padding: 22, background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, ...thin }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <strong className="factory-display" style={{ fontSize: 18 }}>{d.historyPicturesOf(name)}</strong>
+                <button type="button" aria-label={d.close} onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 18 }}>✕</button>
+              </div>
+              <PicturesBody runId={runId} state={state} />
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
+  )
 }
 
-/** Every task of the change, in order: its name, when it was asked, what was asked, and its pictures. */
-function History({ tasks }: { tasks: NonNullable<BlockDetails['history']> }) {
+const FEW_FILES = 6
+
+/** A line of time: every task of the change with its pictures and what it changed, and last where it stands on GitHub. */
+function History({ tasks, github }: { tasks: NonNullable<BlockDetails['history']>; github?: BlockDetails['github'] }) {
+  const dot = (colour: string, n: number | string) => (
+    <span style={{ width: 26, height: 26, borderRadius: 999, display: 'grid', placeItems: 'center', background: '#0f141c', border: `2px solid ${colour}`, color: colour, fontSize: 12.5, fontWeight: 800, zIndex: 1 }}>{n}</span>
+  )
+  const when = (at: string) => new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  const row = { position: 'relative', display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 14, paddingBottom: 22 } as const
+  // The line that joins one moment to the next, behind the numbered dots.
+  const rail = { position: 'absolute', left: 12, top: 26, bottom: 0, width: 2, background: theme.border } as const
   return (
     <Section title={d.history} help={d.historyHelp}>
-      <ol data-testid="details-history" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 10 }}>
+      <ol data-testid="details-history" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
         {tasks.map((t, i) => (
-          <li key={t.runId} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 12, padding: '14px 16px', borderRadius: 10, background: '#0f141c', border: `1px solid ${t.here ? theme.tint('passed', 0.5) : theme.border}` }}>
-            <span style={{ width: 26, height: 26, borderRadius: 999, display: 'grid', placeItems: 'center', background: theme.tint('passed', 0.18), color: theme.passed, fontSize: 13, fontWeight: 800 }}>{i + 1}</span>
+          <li key={t.runId} style={row}>
+            {(i < tasks.length - 1 || github) && <span aria-hidden="true" style={rail} />}
+            {dot(theme.passed, i + 1)}
             <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', minHeight: 26 }}>
                 <strong style={{ fontSize: 15, color: '#e6e9ef', overflowWrap: 'anywhere' }}>{t.name}</strong>
                 {t.here && <span style={{ padding: '2px 9px', borderRadius: 999, background: theme.tint('passed', 0.18), color: theme.passed, fontSize: 11.5, fontWeight: 800 }}>{d.historyHere}</span>}
-                <span style={{ fontSize: 12.5, color: theme.skipped }}>{new Date(t.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                <span style={{ fontSize: 12.5, color: theme.skipped }}>{when(t.at)}</span>
               </div>
-              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.5, color: '#c9d0db', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 120, overflowY: 'auto', ...thin }}>{t.request}</p>
-              <TaskPictures runId={t.runId} />
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.5, color: '#c9d0db', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={t.request}>{t.request}</p>
+              {t.look ? <TaskPictures runId={t.runId} name={t.name} /> : <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNothingToSee}</span>}
+              {t.files.length > 0 && (
+                <div style={{ display: 'grid', gap: 4, fontSize: 12.5 }}>
+                  <span style={{ color: theme.dim, fontWeight: 700 }}>{d.historyFiles(t.files.length)}</span>
+                  <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {t.files.slice(0, FEW_FILES).map(f => (
+                      <code key={f} style={{ padding: '2px 7px', borderRadius: 6, background: '#0f141c', border: `1px solid ${theme.border}`, color: '#c9d0db', fontSize: 12 }}>{f}</code>
+                    ))}
+                    {t.files.length > FEW_FILES && <span style={{ color: theme.skipped, alignSelf: 'center' }}>{d.historyMoreFiles(t.files.length - FEW_FILES)}</span>}
+                  </span>
+                </div>
+              )}
             </div>
           </li>
         ))}
+        {github && (
+          <li data-testid="history-github" style={{ ...row, paddingBottom: 0 }}>
+            {dot(github.published ? theme.passed : theme.waiting, tasks.length + 1)}
+            <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', minHeight: 26 }}>
+                <strong style={{ fontSize: 15, color: '#e6e9ef' }}>{d.historyGithub}</strong>
+                <span style={{ padding: '2px 9px', borderRadius: 999, background: theme.tint(github.published ? 'passed' : 'waiting', 0.18), color: github.published ? theme.passed : theme.waiting, fontSize: 11.5, fontWeight: 800 }}>{github.published ? d.historyPublished : d.historyWaiting}</span>
+                <span style={{ fontSize: 12.5, color: theme.skipped }}>{when(github.at)}</span>
+              </div>
+              <span style={{ fontSize: 13, color: theme.dim, overflowWrap: 'anywhere' }}>
+                {d.historyBranch} <code style={{ color: '#c9d0db' }}>{github.branch}</code>
+              </span>
+              {github.pr && (
+                <a href={github.pr.url} target="_blank" rel="noreferrer" style={{ justifySelf: 'start', color: '#9cc2ff', fontSize: 13.5 }}>
+                  {d.historyPr(github.pr.number)} ↗
+                </a>
+              )}
+            </div>
+          </li>
+        )}
       </ol>
     </Section>
   )
@@ -456,8 +543,8 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
                 </Section>
               )}
 
-              {/* A change made of several tasks shows each with its own pictures; a single task, just its pictures. */}
-              {showsPictures && ((details.history?.length ?? 0) > 1 ? <History tasks={details.history!} /> : <Pictures runId={runId} />)}
+              {/* The line of time of the change: each task with its pictures and files, then where it stands on GitHub. */}
+              {showsPictures && ((details.history?.length ?? 0) > 0 ? <History tasks={details.history!} github={details.github} /> : <Pictures runId={runId} />)}
 
               {(view?.planMeasure ?? details.planMeasure) && (
                 <PlanWhy measure={(view?.planMeasure ?? details.planMeasure)!} startedOnItsOwn={view?.autoStarted === true} />

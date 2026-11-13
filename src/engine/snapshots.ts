@@ -8,7 +8,7 @@ import { events, projects, runs } from '@/db/schema'
 import { copyBaseInto } from '@/engine/base'
 import { changedFiles, pendingDiff } from '@/engine/delivery'
 import { appendEventSync } from '@/engine/events'
-import { previewState, startPreview, startServer, stopPreview, untilReady } from '@/engine/preview'
+import { devCommand, previewState, startPreview, startServer, stopPreview, untilReady } from '@/engine/preview'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
 import { projectHere, setLocal } from '@/engine/machine'
@@ -162,10 +162,12 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
       if (existsSync(beforeTree)) removeTree(repo, beforeTree)
       git(repo, ['worktree', 'add', '-q', '--detach', beforeTree, from])
       await copyBaseInto(run.projectId, beforeTree)
+      // A project started from scratch had nothing to start before its first change: only the "after" is taken.
+      const hadBefore = devCommand(beforeTree, 0) !== null
       // Both versions start at once; each is photographed as soon as it answers.
-      await Promise.all([startPreview(runId), startServer(beforeKey, beforeTree, repo)])
+      await Promise.all([startPreview(runId), hadBefore ? startServer(beforeKey, beforeTree, repo) : null])
       working.set(runId, strings.snapshots.waiting)
-      const [afterUrl, beforeUrl] = await Promise.all([untilReady(runId), untilReady(beforeKey)])
+      const [afterUrl, beforeUrl] = await Promise.all([untilReady(runId), hadBefore ? untilReady(beforeKey) : null])
       working.set(runId, strings.snapshots.shooting)
       const page = (base: string) => new URL(route, base).toString()
       if (beforeUrl) {
@@ -179,7 +181,7 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
       // Kept in R2 too, so another computer can show them.
       const store = storage()
       if (store) for (const shot of shots) await store.put(snapshotKey(runId, shot), readFileSync(fileOf(runId, shot, root)), 'image/png')
-      if (!beforeUrl || !afterUrl) message = strings.snapshots.didNotStart(!afterUrl ? strings.snapshots.afterVersion : strings.snapshots.beforeVersion)
+      if ((hadBefore && !beforeUrl) || !afterUrl) message = strings.snapshots.didNotStart(!afterUrl ? strings.snapshots.afterVersion : strings.snapshots.beforeVersion)
     } catch (e) {
       message = strings.snapshots.failed(clip(redact(String((e as Error)?.message ?? e)).split('\n')[0] ?? '', 200))
     } finally {
