@@ -1104,7 +1104,7 @@ export const strings = {
     after: 'After',
     desktop: 'Computer',
     mobile: 'Phone',
-    page: (route: string) => `Page ${route}`,
+    page: (route: string) => (route === '/' ? 'Page shown: the home page' : `Page shown: ${route}`),
     starting: 'Starting your site, as it was and with the change…',
     waiting: 'Waiting for both versions of your site to load…',
     shooting: 'Taking the pictures…',

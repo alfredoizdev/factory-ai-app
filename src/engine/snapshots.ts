@@ -63,20 +63,52 @@ export const playwrightShoot: Shoot = async (url, files) => {
 }
 
 /** The page a change shows on, from the files it changed: the first app or pages route; the home page otherwise. */
+const APP_PAGE = /^(?:src\/)?app\/(?:(.*)\/)?page\.(?:tsx|jsx|ts|js|mdx)$/
+const PAGES_PAGE = /^(?:src\/)?pages\/(.*)\.(?:tsx|jsx|ts|js|mdx)$/
+
+/** The address a page file answers at, written as the project writes it ("/teams", "/[team]/[matchId]"); null when
+ *  the file is not a page. Route groups "(site)" and slots "@modal" are not part of an address. */
+export function addressOf(file: string): string | null {
+  const app = APP_PAGE.exec(file)
+  if (app) return `/${(app[1] ?? '').split('/').filter(s => s && !/^\(.*\)$/.test(s) && !s.startsWith('@')).join('/')}`
+  const pages = PAGES_PAGE.exec(file)
+  if (pages && !/^(_|api\/)/.test(pages[1]!)) return `/${pages[1]!.replace(/(^|\/)index$/, '')}`.replace(/\/$/, '') || '/'
+  return null
+}
+
+/** The page to photograph for a change: the first changed page with one fixed address, else the home page. */
 export function routeFor(files: readonly string[]): string {
   for (const f of files) {
-    const app = /^(?:src\/)?app\/(?:(.*)\/)?page\.(?:tsx|jsx|ts|js|mdx)$/.exec(f)
-    if (app) {
-      const segments = (app[1] ?? '').split('/').filter(s => s && !/^\(.*\)$/.test(s) && !s.startsWith('@'))
-      if (segments.some(s => s.startsWith('['))) continue // a dynamic page has no one address to open
-      return `/${segments.join('/')}`
-    }
-    const pages = /^(?:src\/)?pages\/(.*)\.(?:tsx|jsx|ts|js|mdx)$/.exec(f)
-    if (pages && !/^(_|api\/)/.test(pages[1]!) && !pages[1]!.includes('[')) {
-      return `/${pages[1]!.replace(/(^|\/)index$/, '')}`.replace(/\/$/, '') || '/'
-    }
+    const address = addressOf(f)
+    if (address !== null && !address.includes('[')) return address // a page that takes a value has no one address
   }
   return '/'
+}
+
+/** The first changed page whose address takes a value ("/[team]"), when no changed page has a fixed one. */
+export function valuePageFor(files: readonly string[]): string | null {
+  const addresses = files.map(addressOf).filter((a): a is string => a !== null)
+  if (addresses.some(a => !a.includes('['))) return null
+  return addresses[0] ?? null
+}
+
+/**
+ * A real address for a page that takes a value, picked from the links another page shows: the first link shaped
+ * like the page's address ("/boys" for "/[team]") that is not one of the project's own fixed pages ("/admin").
+ */
+export function linkFor(page: string, links: readonly string[], fixedPages: readonly string[]): string | null {
+  const shape = new RegExp(
+    `^${page
+      .split('/')
+      .map(seg => (/^\[\[?\.\.\./.test(seg) ? '.+' : seg.startsWith('[') ? '[^/]+' : seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+      .join('/')}$`,
+  )
+  const fixed = new Set(fixedPages)
+  for (const link of links) {
+    const path = link.split(/[?#]/)[0]!.replace(/(.)\/$/, '$1')
+    if (shape.test(path) && !fixed.has(path)) return path
+  }
+  return null
 }
 
 // Files that never change what a visitor sees: tests, notes, tooling settings and the list of installed packages.
@@ -127,13 +159,31 @@ export async function snapshotState(runId: string): Promise<SnapshotState> {
   return shots.length > 0 ? { status: 'ready', route: p.route, shots, message: null } : { status: 'failed', route: p.route, shots: [], message: p.message }
 }
 
+export type Links = (url: string) => Promise<string[]>
+
+/** The addresses on this same site that the page at `url` links to, in the order it shows them. */
+export const playwrightLinks: Links = async url => {
+  const { chromium } = await import('@playwright/test')
+  const browser = await chromium.launch()
+  try {
+    const page = await browser.newPage()
+    await page.goto(url, { waitUntil: 'load', timeout: 120_000 })
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined)
+    const hrefs = await page.$$eval('a[href]', as => as.map(a => (a as HTMLAnchorElement).href))
+    const origin = new URL(url).origin
+    return hrefs.filter(h => h.startsWith(`${origin}/`)).map(h => h.slice(origin.length))
+  } finally {
+    await browser.close()
+  }
+}
+
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
 /**
  * Takes the before and after pictures of a run's change, in the background. Returns at once; snapshotState says how
  * it goes. Once at a time per run. Whatever it started (the version before, a copy of it, a browser) it stops.
  */
-export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot, root = SNAP_ROOT): Promise<SnapshotState> {
+export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrightShoot, root = SNAP_ROOT, links: Links = playwrightLinks): Promise<SnapshotState> {
   const away = await elsewhere(runId)
   if (away) throw new SnapshotError(away)
   if (working.has(runId)) return snapshotState(runId)
@@ -147,7 +197,9 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
   const files = await changedFiles(runId)
   if (!changesTheLook(files)) return UNNEEDED
   const change = (await changeHash(runId))
-  const route = routeFor(files)
+  let route = routeFor(files)
+  const valuePage = valuePageFor(files)
+  const worktree = run.worktreePath
   const dir = join(root, runId)
   const beforeTree = join(dir, 'before-tree')
   const beforeKey = `${runId}:before`
@@ -168,6 +220,15 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
       await Promise.all([startPreview(runId), hadBefore ? startServer(beforeKey, beforeTree, repo) : null])
       working.set(runId, strings.snapshots.waiting)
       const [afterUrl, beforeUrl] = await Promise.all([untilReady(runId), hadBefore ? untilReady(beforeKey) : null])
+      // The changed page takes a value in its address ("/[team]"): a real one is looked for among the home page's links.
+      if (valuePage && afterUrl) {
+        try {
+          const fixedPages = git(worktree, ['ls-files']).split('\n').map(addressOf).filter((p): p is string => p !== null && !p.includes('['))
+          route = linkFor(valuePage, await links(afterUrl), fixedPages) ?? route
+        } catch {
+          // The home page is photographed, as before.
+        }
+      }
       working.set(runId, strings.snapshots.shooting)
       const page = (base: string) => new URL(route, base).toString()
       if (beforeUrl) {

@@ -353,6 +353,8 @@ function PicturesBody({ runId, state }: { runId: string; state: SnapshotState })
             {strings.snapshots[value]}
           </button>
         ))}
+        {/* Which page these pictures are of, so nobody takes the home page for the page that changed. */}
+        {state.route && <span data-testid="pictures-page" style={{ alignSelf: 'center', marginLeft: 'auto', fontSize: 13, color: theme.dim }}>{strings.snapshots.page(state.route)}</span>}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
         {(['before', 'after'] as const).map(side => {

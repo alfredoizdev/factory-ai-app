@@ -1,4 +1,4 @@
-import { changesTheLook, routeFor, snapshotFile } from '@/engine/snapshots'
+import { changesTheLook, linkFor, routeFor, snapshotFile, valuePageFor } from '@/engine/snapshots'
 
 test('the page photographed is the one the change touched, or the home page', () => {
   expect(routeFor(['src/app/page.tsx'])).toBe('/')
@@ -25,4 +25,16 @@ test('a change nobody can see needs no pictures', () => {
   expect(changesTheLook(['app/about/page.mdx'])).toBe(true)
   expect(changesTheLook(['tailwind.config.ts'])).toBe(true)
   expect(changesTheLook([])).toBe(true)
+})
+
+test('a changed page that takes a value in its address gets a real one from the links of the home page', () => {
+  expect(valuePageFor(['src/components/team-header.tsx', 'src/app/[team]/page.tsx'])).toBe('/[team]')
+  // A changed page with a fixed address wins: no value is looked for.
+  expect(valuePageFor(['src/app/[team]/page.tsx', 'src/app/about/page.tsx'])).toBeNull()
+  expect(valuePageFor(['src/components/x.tsx'])).toBeNull()
+  // "/admin" is one of the project's own fixed pages, not a team.
+  expect(linkFor('/[team]', ['/', '/admin', '/girls/', '/boys?tab=1', '/boys/42'], ['/', '/admin'])).toBe('/girls')
+  expect(linkFor('/[team]/[matchId]', ['/girls', '/boys/42#top'], ['/'])).toBe('/boys/42')
+  expect(linkFor('/docs/[...slug]', ['/docs', '/docs/a/b'], [])).toBe('/docs/a/b')
+  expect(linkFor('/[team]', ['/', '/admin'], ['/', '/admin'])).toBeNull()
 })

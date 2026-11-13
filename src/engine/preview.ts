@@ -63,16 +63,31 @@ export function copyEnvFiles(fromRepo: string, toWorktree: string): string[] {
   return copied
 }
 
+/** A port given to a server that has not opened it yet still counts as taken: two versions started at the same
+ *  moment (the site before a change and after it) must not be handed the same one. */
+const promised = (port: number) => [...registry.values()].some(e => e.port === port && e.status !== 'failed' && e.status !== 'stopped')
+let picking: Promise<unknown> = Promise.resolve()
+
+/** The next free port from `start`. One caller at a time, so each sees the port the one before it was given. */
 function freePort(start: number): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const tryPort = (port: number) => {
-      if (port > start + 200) return reject(new Error('no free port'))
-      const server = createServer()
-      server.once('error', () => tryPort(port + 1))
-      server.listen(port, '127.0.0.1', () => server.close(() => resolve(port)))
-    }
-    tryPort(start)
-  })
+  const mine = picking.then(
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const tryPort = (port: number) => {
+          if (port > start + 200) return reject(new Error('no free port'))
+          const server = createServer()
+          server.once('error', () => tryPort(port + 1))
+          server.listen(port, '127.0.0.1', () => server.close(() => (promised(port) ? tryPort(port + 1) : resolve(port))))
+        }
+        tryPort(start)
+      }),
+  )
+  // The next caller waits one more turn, so this one has written its port down by then.
+  picking = mine.then(
+    () => new Promise(r => setTimeout(r, 0)),
+    () => undefined,
+  )
+  return mine
 }
 
 // The preview's environment: the person's, minus this app's own framework and Inngest settings, which would
