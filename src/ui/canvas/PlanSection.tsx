@@ -115,7 +115,7 @@ export function PlanSection({ runId, note, composer, onSent, measure }: { runId:
       ) : (
         <ol ref={list} data-testid="plan-jobs" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8, maxHeight: 'min(52vh, 560px)', overflowY: 'auto', paddingRight: 4, scrollbarWidth: 'thin', scrollbarColor: `${theme.skipped} transparent` }}>
           {drafts.map((d, i) => (
-            <li key={d.key} style={{ display: 'grid', gap: 6, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118' }}>
+            <li key={d.key} className="factory-job-in" style={{ display: 'grid', gap: 6, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0d1118', animationDelay: `${300 + Math.min(i, 6) * 260}ms` }}>
               <span aria-hidden="true" style={{ fontSize: 11, color: theme.dim, paddingLeft: 28 }}>
                 {strings.plan.jobWhat}
               </span>
@@ -198,6 +198,7 @@ export function PlanSection({ runId, note, composer, onSent, measure }: { runId:
           type="button"
           disabled={locked || jobs.length === 0}
           onClick={() => void send({ action: 'build', jobs }, 'build')}
+          className="factory-call"
           style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: jobs.length > 0 ? theme.passed : 'transparent', color: jobs.length > 0 ? '#07110a' : theme.skipped, fontWeight: 700, cursor: locked ? 'wait' : jobs.length === 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
         >
           {busy === 'build' ? <WorkingSpinner blockId="plan-build" size={16} /> : <span aria-hidden="true">▶</span>} {busy === 'build' ? strings.plan.building : strings.plan.build}
