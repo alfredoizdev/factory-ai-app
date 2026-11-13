@@ -435,7 +435,7 @@ function LargePicture({ src, label, phone, onClose }: { src: string; label: stri
  * in plain sentences, the plan's jobs, the pictures of the change, every step in order and the checks it ran.
  * `view` is what the card itself shows: used where the screen knows more than the record (a change that was shipped).
  */
-export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = null, onClose }: { runId: string; blockId: string; label: string; view?: CardView; pr?: { number: number; url: string } | null; away?: { machine: string | null } | null; onClose: () => void }) {
+export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = null, onClose, inline = false }: { /** Drawn in the page, under the row of steps, instead of as a window over it. */ inline?: boolean; runId: string; blockId: string; label: string; view?: CardView; pr?: { number: number; url: string } | null; away?: { machine: string | null } | null; onClose: () => void }) {
   const [details, setDetails] = useState<BlockDetails | null | undefined>(undefined)
   const [allSteps, setAllSteps] = useState(false)
 
@@ -451,12 +451,13 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
   }, [runId, blockId])
 
   useEffect(() => {
+    if (inline) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, inline])
 
   const state = (view?.state ?? details?.state ?? 'queued') as NodeState
   const accent = theme[visualStateOf(state)]
@@ -466,14 +467,14 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
   const shownSteps = allSteps ? steps : steps.slice(-FEW_STEPS)
   const showsPictures = kind === 'ship' || kind === 'human'
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', background: 'rgba(5, 7, 11, 0.7)' }}>
+    <div onClick={inline ? undefined : onClose} style={inline ? undefined : { position: 'fixed', inset: 0, zIndex: 60, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', background: 'rgba(5, 7, 11, 0.7)' }}>
       <div
-        role="dialog"
-        aria-modal="true"
+        role={inline ? 'region' : 'dialog'}
+        aria-modal={inline ? undefined : 'true'}
         aria-label={d.title(label)}
         data-testid="block-details"
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(920px, calc(100% - 32px))', height: 'min(780px, calc(100% - 96px))', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.border}`, borderTop: `3px solid ${accent}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14.5 }}
+        style={{ width: inline ? '100%' : 'min(920px, calc(100% - 32px))', height: inline ? undefined : 'min(780px, calc(100% - 96px))', boxSizing: 'border-box', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.border}`, borderTop: `3px solid ${accent}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14.5 }}
       >
         <header style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '18px 26px', borderBottom: `1px solid ${theme.border}` }}>
           {kind && KINDS.includes(kind) && <TypeMark kind={kind as BlockKind} colour={accent} size={40} />}
@@ -486,9 +487,11 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
             </div>
             {kind && d.purpose[kind] && <span style={{ fontSize: 14, color: theme.dim }}>{d.purpose[kind]}</span>}
           </div>
-          <button type="button" aria-label={d.close} onClick={onClose} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 18 }}>
-            ✕
-          </button>
+          {!inline && (
+            <button type="button" aria-label={d.close} onClick={onClose} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 18 }}>
+              ✕
+            </button>
+          )}
         </header>
         <div style={{ overflowY: 'auto', padding: '22px 26px 28px', display: 'grid', gap: 26, alignContent: 'start', ...thin }}>
           {details === undefined && (

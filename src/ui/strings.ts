@@ -706,6 +706,17 @@ export const strings = {
     passedWithoutCounts: 'Passed, but no test counts were recorded.',
     failedWithoutCounts: 'Failed. No test counts were recorded.',
   },
+  // The task as a row of steps with the chosen step's details under it: the other way to look at the same task.
+  steps: {
+    checks: 'Checks',
+    rowLabel: 'The steps of this task',
+    noLog: 'Nothing yet. What the agents do will be listed here.',
+    editFlow: 'Change the steps',
+    beforeRun: 'These are the steps your next task will go through. Write what you want in the card on the right.',
+    viewSteps: 'Steps view',
+    viewCanvas: 'Canvas view',
+    viewHint: 'Two ways to look at the same task. Switch whenever you like.',
+  },
   canvas: {
     notBuilt: 'Not built yet',
     stateLabel: {

@@ -3,6 +3,7 @@
 import { PastTasks } from './PastTasks'
 import { attentionOf, useAttention } from './attention'
 import { readyToPublish } from './shipReady'
+import { StepsView } from './StepsView'
 import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
 import type { FailureActions } from './FailurePanel'
@@ -59,6 +60,35 @@ async function readError(res: Response, fallback: string): Promise<string> {
 }
 
 type Agent = typeof DEMO_PROVIDER_ID | typeof CLAUDE_PROVIDER_ID
+
+/** Where this browser remembers which layout the person likes. */
+const VIEW_KEY = 'factory.view'
+
+type Layout = 'canvas' | 'steps'
+// What was picked on this page, for a browser that will not store it.
+let pickedLayout: Layout | null = null
+const LAYOUT_EVENT = 'factory-view'
+function readLayout(): Layout {
+  if (pickedLayout) return pickedLayout
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === 'steps' ? 'steps' : 'canvas'
+  } catch {
+    return 'canvas'
+  }
+}
+function watchLayout(onChange: () => void) {
+  window.addEventListener(LAYOUT_EVENT, onChange)
+  return () => window.removeEventListener(LAYOUT_EVENT, onChange)
+}
+function pickLayout(next: Layout) {
+  pickedLayout = next
+  try {
+    window.localStorage.setItem(VIEW_KEY, next)
+  } catch {
+    // Not remembered, but shown.
+  }
+  window.dispatchEvent(new Event(LAYOUT_EVENT))
+}
 
 export function CanvasScreen({
   workflowId,
@@ -230,6 +260,8 @@ export function CanvasScreen({
   const withShip =
     reachedPerson && runIdNow && shipBlock && shippedViews[shipBlock.id] ? { ...shippedViews, [shipBlock.id]: { ...shippedViews[shipBlock.id]!, results: runIdNow } } : shippedViews
   const closeTasks = useCallback(() => setTasksOpen(false), [])
+  // Which of the two layouts shows the task. Remembered on this browser; the canvas until the person picks otherwise.
+  const layout = useSyncExternalStore(watchLayout, readLayout, () => 'canvas' as const)
 
   async function startRun() {
     setBusy(true)
@@ -588,6 +620,16 @@ export function CanvasScreen({
         >
           ☰ {strings.history.open}
         </button>
+        {/* The switch between the two layouts, beside the Tasks button. */}
+        <button
+          type="button"
+          data-testid="view-switch"
+          title={strings.steps.viewHint}
+          onClick={() => pickLayout(layout === 'canvas' ? 'steps' : 'canvas')}
+          style={{ ...headerButton, position: 'absolute', top: 12, right: 112, zIndex: 6, fontWeight: 600, background: theme.card, boxShadow: '0 6px 18px rgba(0,0,0,0.35)' }}
+        >
+          {layout === 'canvas' ? strings.steps.viewSteps : strings.steps.viewCanvas}
+        </button>
         {run === null && (
           // No task is open (a new one not started yet, or the open one was deleted): say so, and where to go next.
           // The flow below stays visible: it is what the next task will run through.
@@ -737,6 +779,20 @@ export function CanvasScreen({
           showFindings={reviewRan}
           notice={{ offer: noticeOffer, onAllow: allowNotice }}
         />
+        {layout === 'steps' && (
+          <StepsView
+            blocks={run?.blocks ?? graph.blocks}
+            views={run ? withAsked(withShip) : {}}
+            runId={loading ? null : (run?.runId ?? null)}
+            blank={nothingOpen}
+            title={run && !loading ? <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} /> : undefined}
+            log={run ? <EventBarList events={events} blocks={run.blocks} onPoint={() => undefined} /> : undefined}
+            pr={run && shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null}
+            away={run && run.here === false ? { machine: run.machine ?? null } : null}
+            onEditFlow={() => pickLayout('canvas')}
+          />
+        )}
+        {layout === 'canvas' && (
         <Canvas
           graph={graph}
           save={save}
@@ -759,6 +815,7 @@ export function CanvasScreen({
           }
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
+        )}
         {run && detailsOf && (
           <BlockDetailsDialog key={`details-${run.runId}-${detailsOf}`} runId={run.runId} blockId={detailsOf} label={run.blocks.find(b => b.id === detailsOf)?.label ?? detailsOf} view={withShip[detailsOf]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} away={run.here === false ? { machine: run.machine ?? null } : null} onClose={() => setDetailsOf(null)} />
         )}
