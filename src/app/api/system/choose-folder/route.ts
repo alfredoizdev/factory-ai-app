@@ -1,4 +1,5 @@
 import { chooseFolder, FolderPickerError } from '@/engine/choose-folder'
+import { isEmptyFolder } from '@/engine/scratch'
 import { rejectCrossSite } from '@/engine/same-origin'
 import { detectTestCommand } from '@/engine/test-runner'
 import { strings } from '@/ui/strings'
@@ -11,7 +12,8 @@ export async function POST(req: Request) {
   try {
     const choice = await chooseFolder()
     if ('cancelled' in choice) return Response.json({ cancelled: true })
-    return Response.json({ path: choice.path, testCommand: detectTestCommand(choice.path) })
+    // `empty`: nothing in it yet, so a new project can start right there instead of in a folder inside it.
+    return Response.json({ path: choice.path, testCommand: detectTestCommand(choice.path), empty: isEmptyFolder(choice.path) })
   } catch (e) {
     if (e instanceof FolderPickerError) return Response.json({ error: strings.settings.pickerFailed }, { status: 500 })
     throw e

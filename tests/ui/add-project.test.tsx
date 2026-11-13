@@ -222,3 +222,18 @@ test('a folder that already has code: its own folders are offered to ask about, 
   expect(sent.coreAreas).toEqual(['src/checkout/'])
   expect(sent.models).toEqual({ plan: 'haiku', build: 'sonnet', review: 'sonnet' })
 })
+
+test('from scratch: an empty folder the person chose is the project\'s own folder, with nothing added inside it', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) => new Response(JSON.stringify(url === '/api/system/choose-folder' ? { path: '/Users/me/Desktop/landing', empty: true } : {}))),
+  )
+  render(<AddProjectDialog startWith="scratch" onClose={() => {}} onCreated={() => {}} />)
+  next()
+  fireEvent.change(screen.getByLabelText(w.where.name), { target: { value: 'My Landing Page' } })
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(w.where.chooseParent) }))
+  await vi.waitFor(() => expect(screen.getByLabelText(w.where.folder)).toHaveValue('/Users/me/Desktop/landing'))
+  // It stays the folder chosen when the name changes.
+  fireEvent.change(screen.getByLabelText(w.where.name), { target: { value: 'Shop' } })
+  expect(screen.getByLabelText(w.where.folder)).toHaveValue('/Users/me/Desktop/landing')
+})

@@ -76,14 +76,14 @@ export function AddProjectDialog({
     panel.current?.scrollTo?.({ top: 0 })
   }
 
-  async function chooseFolder(): Promise<string | null> {
+  async function chooseFolder(): Promise<{ path: string; empty: boolean } | null> {
     setBusy('pick')
     setError(null)
     try {
       const res = await fetch('/api/system/choose-folder', { method: 'POST' })
-      const body = (await res.json().catch(() => null)) as { path?: string; cancelled?: boolean; error?: string } | null
+      const body = (await res.json().catch(() => null)) as { path?: string; empty?: boolean; cancelled?: boolean; error?: string } | null
       if (body?.error) setError(body.error)
-      return body?.path ?? null
+      return body?.path ? { path: body.path, empty: body.empty === true } : null
     } catch {
       setError(s.readFailed)
       return null
@@ -110,15 +110,23 @@ export function AddProjectDialog({
   }
 
   async function pickExisting() {
-    const path = await chooseFolder()
-    if (path) await read(path)
+    const chosen = await chooseFolder()
+    if (chosen) await read(chosen.path)
   }
 
   async function pickParent() {
-    const path = await chooseFolder()
-    if (!path) return
+    const chosen = await chooseFolder()
+    if (!chosen) return
+    const path = chosen.path.replace(/\/+$/, '')
+    // An empty folder is taken as the project's own folder: the person made it for this. Any other folder is where
+    // the project's folder goes, named after the project.
+    if (chosen.empty) {
+      setParent(null)
+      setWhere(v => ({ ...v, path }))
+      return
+    }
     setParent(path)
-    setWhere(v => ({ ...v, path: `${path.replace(/\/+$/, '')}/${folderName(v.name)}` }))
+    setWhere(v => ({ ...v, path: `${path}/${folderName(v.name)}` }))
   }
 
   /** While the folder is still the one the app named, it follows the project's name. */

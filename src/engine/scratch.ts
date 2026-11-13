@@ -23,6 +23,15 @@ export function cleanGitHubUrl(raw: string | null | undefined): string | null {
   return url
 }
 
+/** Whether the folder exists and holds nothing a person put there. */
+export function isEmptyFolder(path: string): boolean {
+  try {
+    return statSync(path).isDirectory() && !readdirSync(path).some(f => !IGNORABLE.has(f))
+  } catch {
+    return false
+  }
+}
+
 /** Throws the plain sentence for a folder a new project cannot start in. */
 export function checkNewFolder(path: string): void {
   if (!isAbsolute(path)) throw new ProjectSettingsError(strings.settings.notAbsolute)
