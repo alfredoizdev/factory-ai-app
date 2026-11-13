@@ -40,16 +40,18 @@ const nextId = monotonicFactory()
 
 /** A cited path the way the project names it: relative to the working copy, forward slashes, no "./" or "..". */
 const PLAIN = /^(?!\/)(?![A-Za-z]:)(?!\.{1,2}(\/|$))(?!.*\/\.{1,2}(\/|$))[^\\]+$/
-const isPlain = (path: string) => PLAIN.test(path) && !path.startsWith('./')
+/** True for a path inside the working copy as the project names it; false for one outside it or written oddly. */
+export const isPlain = (path: string) => PLAIN.test(path) && !path.startsWith('./')
 
 /**
  * The path a reviewer cited, as the project names it, so it can be compared with core areas and sensitive paths:
  * relative to the working copy (an absolute path inside it, under either its given or its real name, is made relative),
- * forward slashes, no "./", and each name with the letters it has on disk. A path outside the copy is returned as
- * written: the cite check refuses it, and anything that compares it counts it as unknown.
+ * forward slashes, no "./", no line written after it ("a.ts:12" is "a.ts"), and each name with the letters it has on
+ * disk. A path outside the copy is returned as written: the cite check refuses it, and anything that compares it counts
+ * it as unknown.
  */
 export function citedPath(workdir: string, file: string): string {
-  const slashed = file.trim().replace(/\\/g, '/')
+  const slashed = file.trim().replace(/\\/g, '/').replace(/:\d+(?::\d+)?$/, '')
   let roots: string[]
   try {
     roots = [...new Set([workdir, realpathSync(workdir)].map(r => r.replace(/\\/g, '/').replace(/\/+$/, '')))]

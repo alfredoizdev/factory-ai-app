@@ -427,6 +427,45 @@ describe('an answer about a file', () => {
     await answerQuestion(q.id, { option: LEAVE }, deps)
     expect(await entries(projectId)).toHaveLength(0)
   })
+
+  test('a file cited with its line ("a.ts:12") is kept without the line, so the decision names the file', async () => {
+    const { projectId, q } = await aboutFile('src/rounding/round.ts:1')
+    await answerQuestion(q.id, { option: 'a', text: 'on purpose' }, deps)
+    expect(JSON.parse((await entries(projectId))[0]!.paths!)).toEqual(['src/rounding/round.ts'])
+  })
+
+  test('a file outside the working copy gives a decision with no paths', async () => {
+    for (const file of ['/etc/passwd', '../elsewhere/x.ts']) {
+      const { projectId, q } = await aboutFile(file)
+      await answerQuestion(q.id, { option: 'a', text: 'on purpose' }, deps)
+      expect((await entries(projectId))[0]!.paths).toBeNull()
+    }
+  })
+})
+
+describe('whether an answer told the app to go ahead', () => {
+  // Kept on the decision, so the same run's final check still stops when the change touches what the person said to leave.
+  async function answered(kind: 'finding' | 'fix_held' | 'plan', option: string) {
+    const { projectId, runId, nodeRunId } = await runningRun(kind === 'plan' ? 'plan' : 'human')
+    const options = kind === 'fix_held' ? strings.question.forHeldFix({ core: true, areas: [] }).options : opts
+    const q = await askPerson(runId, nodeRunId, ask({ kind, options, recommended: null, ...(kind === 'plan' ? { paths: ['src/a/'] } : {}) }))
+    await answerQuestion(q.id, { option, text: 'my words' }, deps)
+    return (await entries(projectId))[0]!.outcome
+  }
+
+  test('leave on a problem, and undo or not sure on a held fix, said not to change it', async () => {
+    expect(await answered('finding', LEAVE)).toBe('asked_no')
+    expect(await answered('fix_held', 'undo')).toBe('asked_no')
+    expect(await answered('fix_held', LEAVE)).toBe('asked_no')
+  })
+
+  test('any other answer, and letting the planner choose, said go ahead', async () => {
+    expect(await answered('finding', 'a')).toBeNull()
+    expect(await answered('finding', OTHER)).toBeNull()
+    expect(await answered('fix_held', 'keep')).toBeNull()
+    expect(await answered('plan', LEAVE)).toBeNull()
+    expect(await answered('plan', 'a')).toBeNull()
+  })
 })
 
 describe('the planner\'s question', () => {

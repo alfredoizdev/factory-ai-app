@@ -114,23 +114,34 @@ export async function standingFor(projectId: string, h: DbHandle = db): Promise<
     .map(e => ({ number: e.number, kind: e.kind, text: e.text, paths: e.paths }))
 }
 
-/** The path patterns of the core areas that are switched on. */
+/**
+ * A stored path as the checks read it. A path written without its slash may be a folder (a core area typed while the
+ * project's folder was not on this computer, or a folder the planner's question named without one), so it is read both
+ * as that exact file and as that folder. A real file path still matches only itself: nothing lies beneath a file.
+ */
+export function bothWays(paths: readonly string[]): string[] {
+  return paths.flatMap(p => (p.endsWith('/') ? [p] : [p, `${p}/`]))
+}
+
+/** The path patterns of the core areas that are switched on, each read both ways (see bothWays). */
 export async function corePaths(projectId: string, h: DbHandle = db): Promise<string[]> {
-  return (await standingFor(projectId, h)).filter(s => s.kind === 'core').flatMap(s => s.paths)
+  return bothWays((await standingFor(projectId, h)).filter(s => s.kind === 'core').flatMap(s => s.paths))
 }
 
 /**
  * What a change is measured against besides its size: the core areas and the decisions that name files. The one place
  * the plan's measure, the final check and the review depth read it from, so they cannot disagree about the same change.
- * `run`: the run being measured. A decision the person made by answering a question on that very run settled the
- * matter for it, so it does not stop that run again; it counts for every other run, follow-ups included.
+ * `run`: the run being measured. A decision the person made by answering a question on that very run, telling the app
+ * to go ahead, settled the matter for it, so it does not stop that run again; it counts for every other run, follow-ups
+ * included. An answer that said not to change it (outcome `asked_no`) stops this run too, if it changes those files.
+ * Every stored path is read both ways (see bothWays).
  */
 export async function gateInputs(projectId: string, h: DbHandle = db, run?: string): Promise<{ core: string[]; decisions: DecisionPaths[] }> {
   const standing = (await listRegister(projectId, h)).filter(e => e.enabled && e.kind !== 'finding')
-  const ownAnswer = (e: Entry) => run !== undefined && e.kind === 'decision' && e.source === 'question' && e.runId === run
+  const ownGoAhead = (e: Entry) => run !== undefined && e.kind === 'decision' && e.source === 'question' && e.runId === run && e.outcome !== 'asked_no'
   return {
-    core: standing.filter(e => e.kind === 'core').flatMap(e => e.paths),
-    decisions: standing.filter(e => e.kind === 'decision' && e.paths.length > 0 && !ownAnswer(e)).map(e => ({ text: e.text, paths: e.paths })),
+    core: bothWays(standing.filter(e => e.kind === 'core').flatMap(e => e.paths)),
+    decisions: standing.filter(e => e.kind === 'decision' && e.paths.length > 0 && !ownGoAhead(e)).map(e => ({ text: e.text, paths: bothWays(e.paths) })),
   }
 }
 
@@ -239,7 +250,7 @@ export function normaliseCorePath(raw: string, repoPath: string | null): CorePat
     if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return outside
     if (inside === '') return { ok: false, reason: strings.memory.core.empty }
     // The path as the project names it: a link is followed (realpath above), and each name takes the case it has on disk,
-    // because touchesCore compares with the paths git reports, letter for letter.
+    // so it reads the way git reports it (touchesCore itself compares without regard to case).
     const named: string[] = []
     let here = rootReal
     for (const seg of inside.split(sep)) {

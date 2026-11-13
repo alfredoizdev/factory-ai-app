@@ -3,7 +3,10 @@ import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
 import { projectNotes, projects, runs, workflows } from '@/db/schema'
 import { defaultGraph } from '@/domain/graph'
-import { addEntry, coreCandidates, corePaths, giveStanding, label, listRegister, numberUnnumbered, standingFor, touchesCore } from '@/engine/register'
+import { addEntry, coreCandidates, corePaths, gateInputs, giveStanding, label, listRegister, numberUnnumbered, standingFor, touchesCore } from '@/engine/register'
+import { measurePlan } from '@/engine/plan-measure'
+import { classifyChange, type DecisionPaths } from '@/engine/risk'
+import { strings } from '@/ui/strings'
 import { createRun, publishVersion, saveDraft } from '@/engine/run'
 
 beforeAll(() => migrateDb())
@@ -113,4 +116,63 @@ test('giveStanding records once per run, always gives decisions and core areas, 
   expect(await giveStanding(runId)).toEqual(first)
   await db.update(runs).set({ memoryJson: JSON.stringify(['old rule']) }).where(eq(runs.id, runId))
   expect(await giveStanding(runId)).toEqual([{ number: 0, kind: 'rule', text: 'old rule', paths: [] }])
+})
+
+describe('a folder stored without its slash still counts as that folder', () => {
+  const passing = { testsRan: true, testsPassed: true, testsChanged: false }
+  const plan = (paths: string[]) => ({ jobs: [{ title: 'Round', done: [], paths }], question: null })
+  const final = (path: string, g: { core: string[]; decisions: DecisionPaths[] }) => classifyChange([{ path, lines: 2 }], passing, g.core, g.decisions)
+
+  test('a core area written as "src/rounding" stops a plan naming a file or the folder, and the final check on a file inside', async () => {
+    const p = await project()
+    await addEntry(p, { kind: 'core', text: 'Rounding', paths: ['src/rounding'], source: 'person' })
+    const g = await gateInputs(p)
+    expect(measurePlan(plan(['src/rounding/round.ts']), g).simple).toBe(false)
+    expect(measurePlan(plan(['src/rounding/']), g).simple).toBe(false)
+    expect(measurePlan(plan(['src/rounding']), g).simple).toBe(false)
+    expect(final('src/rounding/round.ts', g).level).toBe('high')
+    expect(await corePaths(p)).toEqual(['src/rounding', 'src/rounding/'])
+  })
+
+  test('a decision about "src/rounding" does the same', async () => {
+    const p = await project()
+    await addEntry(p, { kind: 'decision', text: 'Prices round down', paths: ['src/rounding'], source: 'question' })
+    const g = await gateInputs(p)
+    expect(measurePlan(plan(['src/rounding/round.ts']), g).simple).toBe(false)
+    expect(measurePlan(plan(['src/rounding/']), g).simple).toBe(false)
+    expect(final('src/rounding/round.ts', g).reasons).toEqual([strings.risk.onDecision('src/rounding/round.ts', 'Prices round down')])
+  })
+
+  test('the slashed forms keep working, and a real file path still matches only that file', async () => {
+    const p = await project()
+    await addEntry(p, { kind: 'core', text: 'Rounding', paths: ['src/rounding/'], source: 'person' })
+    await addEntry(p, { kind: 'decision', text: 'Keep a', paths: ['src/a.ts'], source: 'question' })
+    const g = await gateInputs(p)
+    expect(measurePlan(plan(['src/rounding/round.ts']), g).simple).toBe(false)
+    expect(final('src/rounding/round.ts', g).level).toBe('high')
+    expect(final('src/a.ts', g).reasons).toEqual([strings.risk.onDecision('src/a.ts', 'Keep a')])
+    expect(final('src/a.tsx', g).level).toBe('low')
+    expect(final('src/a.ts.bak', g).level).toBe('low')
+    expect(measurePlan(plan(['src/a.tsx']), g).simple).toBe(true)
+    expect(measurePlan(plan(['src/a.ts']), g).simple).toBe(false)
+  })
+})
+
+describe('a decision made on this run, by its answer', () => {
+  async function runOf(p: string): Promise<string> {
+    const workflowId = ulid()
+    await db.insert(workflows).values({ id: workflowId, projectId: p, name: 'w', draftJson: JSON.stringify(defaultGraph()), createdAt: now(), updatedAt: now() })
+    await saveDraft(workflowId, defaultGraph())
+    await publishVersion(workflowId)
+    return (await createRun({ workflowId, request: 'x' })).runId
+  }
+
+  test('one that said go ahead does not stop this run; one that said do not change it does', async () => {
+    const p = await project()
+    const runId = await runOf(p)
+    await addEntry(p, { kind: 'decision', text: 'Go', paths: ['src/a/'], source: 'question', runId })
+    await addEntry(p, { kind: 'decision', text: 'Hold', paths: ['src/b/'], source: 'question', runId, outcome: 'asked_no' })
+    expect((await gateInputs(p, db, runId)).decisions.map(d => d.text)).toEqual(['Hold'])
+    expect((await gateInputs(p)).decisions.map(d => d.text)).toEqual(['Go', 'Hold'])
+  })
 })
