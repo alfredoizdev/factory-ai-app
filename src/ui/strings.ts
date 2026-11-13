@@ -1382,11 +1382,33 @@ export const strings = {
       return exitCode === null ? head : `${head} Exit code ${exitCode}.`
     },
   },
-  // The first screen, before there is any project.
+  // The first screen, before there is any project: what the app can do, and the two ways to start one.
   welcome: {
-    title: 'Welcome to AI Factory',
-    lead: 'Agents plan, build, test and review changes to your project. Simple changes go on their own; the app stops for you on what matters.',
-    hint: 'Start a project from scratch, or point the app at a folder that already has code.',
+    eyebrow: 'AI Factory',
+    title: 'Say what you want. Agents build it, check it and send it.',
+    lead: 'A team of AI agents works on your project the way a careful team would: a plan first, then the code, then tests and a review. Simple changes go all the way on their own. You are asked only about what matters.',
+    scratch: 'Start from scratch',
+    scratchHint: 'Pick what to build. The agents create the project.',
+    existing: 'I already have code',
+    existingHint: 'Point at your folder. The agents work on it.',
+    howTitle: 'What happens to every task',
+    steps: [
+      { name: 'You ask', hint: 'In your own words' },
+      { name: 'Plan', hint: 'What will change' },
+      { name: 'Build', hint: 'The code is written' },
+      { name: 'Tests', hint: 'Your tests run' },
+      { name: 'Review', hint: 'Other agents read it' },
+      { name: 'Pull request', hint: 'Ready on GitHub' },
+    ],
+    canTitle: 'What it can do',
+    can: [
+      { title: 'Builds from your words', text: 'Write what you want changed, or attach a picture. No code and no commands to learn.' },
+      { title: 'Checks its own work', text: 'It runs your project\'s tests, and separate agents read every change. A problem they report is tried out before it counts.' },
+      { title: 'Asks only about what matters', text: 'Simple changes go on their own. It stops for you on sign-in, payments, the database, and the folders you mark as yours.' },
+      { title: 'Never merges for you', text: 'A finished change becomes a pull request on GitHub, on its own branch. Publishing it is always your click.' },
+      { title: 'Remembers what you decided', text: 'Your rules and answers are kept for the project, and every later task starts with them.' },
+      { title: 'You choose the models', text: 'Pick which model plans, builds and reviews, by step, or take the recommended setup.' },
+    ],
   },
   demo: {
     projectName: 'Demo project',

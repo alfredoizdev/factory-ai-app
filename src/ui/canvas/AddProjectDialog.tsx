@@ -34,9 +34,18 @@ export const firstTaskKey = (workflowId: string) => `factory.firstTask.${workflo
  * that already has code (the app reads it and shows what it found). Both then choose the model of each step and
  * check everything on a last screen before the project is created. Nothing is created until that last button.
  */
-export function AddProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (workflowId: string) => void }) {
-  const [way, setWay] = useState<Way>('scratch')
-  const [at, setAt] = useState(0)
+export function AddProjectDialog({
+  onClose,
+  onCreated,
+  startWith,
+}: {
+  onClose: () => void
+  onCreated: (workflowId: string) => void
+  /** The way in the person already chose before opening the wizard: it opens past the first screen. */
+  startWith?: 'scratch' | 'existing'
+}) {
+  const [way, setWay] = useState<Way>(startWith ?? 'scratch')
+  const [at, setAt] = useState(startWith ? 1 : 0)
   const [stack, setStack] = useState<Stack>(NO_STACK)
   const [where, setWhere] = useState<Where>({ name: '', path: '', githubUrl: '', addTests: true })
   // The folder the person chose to put the new project in; its own folder is named after the project until they type a path.
