@@ -1,3 +1,4 @@
+import { detectTestCommand } from '@/engine/test-runner'
 import { classifyArea, routeModel, wantsRouting, type Area } from '@/engine/model-routing'
 import { MAX_REVIEW_ROUNDS, defaultReviewerModel, type Focus, type Review } from '@/engine/review'
 import { distinctProblems, endingOf, findingsOf, needsPerson, notReal, problemGroups, type Ending } from '@/engine/findings'
@@ -317,7 +318,7 @@ export async function runAttempt(
         blockKind: block.kind,
         request,
         workdir: workspace.workdir ?? undefined,
-        testCommand: block.testCommand ?? workspace.testCommand,
+        testCommand: testCommandFor(block, workspace),
         baseCommit: workspace.baseCommit ?? undefined,
         revisionNote: revisionNote ?? undefined,
         ...(revisionNote ? { revisionFrom: workspace.revisionFrom ?? 'person' } : {}),
@@ -684,6 +685,17 @@ async function prepareDependencies(
 }
 
 /** A command written on a Tests block: one line, of a sane length, or none at all. */
+/**
+ * The command a step's tests run: the block's own, else the project's, else — for the Tests step of a project that
+ * names none — the "test" script found in the working copy. A project started from scratch has no tests when it is
+ * created; its first task adds them, and from then on they run without anyone having to set the command.
+ */
+function testCommandFor(block: { kind: string; testCommand?: string }, at: { workdir: string | null; testCommand: string | null }): string | undefined {
+  const named = block.testCommand ?? at.testCommand
+  if (named) return named
+  return block.kind === 'tests' && at.workdir ? (detectTestCommand(at.workdir) ?? undefined) : undefined
+}
+
 function ownCommand(b: { kind: string; config: Record<string, unknown> }): { testCommand?: string } {
   const v = b.config.testCommand
   if (b.kind !== 'tests' || typeof v !== 'string') return {}
@@ -1157,7 +1169,7 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     const block = plan.blocks[index]!
     if (notAgain.has(block.id)) continue
     let result: Outcome
-    const route = block.kind === 'human' ? undefined : provider.route?.(block.kind, { testCommand: block.testCommand ?? prepared.testCommand })
+    const route = block.kind === 'human' ? undefined : provider.route?.(block.kind, { testCommand: testCommandFor(block, prepared) })
     if (!block.enabled) {
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block))
     } else if (route?.mode === 'skip') {
