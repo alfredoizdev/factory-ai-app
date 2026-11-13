@@ -171,7 +171,9 @@ export function ShipSection({
                       {busy === 'hold' ? strings.ship.holding : state.onHold ? strings.ship.unhold : strings.ship.hold}
                     </button>
                   </span>
-                  <div style={{ ...hint, marginTop: -2 }}>{state.onHold ? strings.ship.mergeWhat : `${strings.ship.mergeWhat} ${strings.ship.holdWhat}`}</div>
+                  {/* One line for each button, so it is plain what each one does. */}
+                  <div style={{ ...hint, marginTop: -2 }}>{strings.ship.mergeWhat}</div>
+                  {!state.onHold && <div style={hint}>{strings.ship.holdWhat}</div>}
                 </>
               )}
               {confirming && (
