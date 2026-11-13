@@ -562,7 +562,7 @@ export function CanvasScreen({
         )}
       </header>
       {suggested && dismissedSuggestion !== suggested && (
-        <div data-testid="test-suggestion" role="status" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: `1px solid ${theme.border}`, background: 'rgba(34, 197, 94, 0.07)', fontSize: 13 }}>
+        <div data-testid="test-suggestion" role="status" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: `1px solid ${theme.border}`, background: 'rgba(121, 220, 139, 0.07)', fontSize: 13 }}>
           <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke={theme.passed} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M5 12.5l4.5 4.5L19 7.5" />
           </svg>

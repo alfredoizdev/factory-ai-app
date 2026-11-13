@@ -7,7 +7,7 @@ const colours = {
   card: '#151a23',
   border: '#262d3a',
   running: '#3b82f6',
-  passed: '#22c55e',
+  passed: '#79dc8b',
   failed: '#ef4444',
   waiting: '#f59e0b',
   skipped: '#6b7280',
@@ -27,7 +27,7 @@ const colours = {
 
 const glowRgb: Record<VisualState, string> = {
   running: '59, 130, 246',
-  passed: '34, 197, 94',
+  passed: '121, 220, 139',
   failed: '239, 68, 68',
   waiting: '245, 158, 11',
   skipped: '107, 114, 128',

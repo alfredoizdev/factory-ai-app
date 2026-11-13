@@ -184,7 +184,7 @@ export function ShipSection({
                     <button type="button" disabled={busy !== null} onClick={() => void act('merge')} style={{ ...button(busy), flex: 1 }}>
                       {busy === 'merge' ? <WorkingSpinner blockId="ship-merge" size={14} /> : null} {busy === 'merge' ? strings.ship.merging : strings.ship.yes}
                     </button>
-                    <button type="button" disabled={busy !== null} onClick={() => setConfirming(false)} style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${theme.border}`, background: 'transparent', color: 'inherit', cursor: 'pointer' }}>
+                    <button type="button" disabled={busy !== null} onClick={() => setConfirming(false)} style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${theme.dim}`, background: theme.card, color: theme.ink, fontWeight: 600, cursor: 'pointer' }}>
                       {strings.ship.no}
                     </button>
                   </span>

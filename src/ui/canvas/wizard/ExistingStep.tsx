@@ -56,7 +56,7 @@ export function ExistingStep({
             disabled={busy !== null || value.path.trim() === ''}
             title={checked ? s.checkedHint : s.readHint}
             onClick={onRead}
-            style={checked ? { ...button(false), border: `1px solid ${theme.passed}`, color: theme.passed, background: 'rgba(34, 197, 94, 0.08)' } : button(!analysis, busy !== null)}
+            style={checked ? { ...button(false), border: `1px solid ${theme.passed}`, color: theme.passed, background: 'rgba(121, 220, 139, 0.08)' } : button(!analysis, busy !== null)}
           >
             {busy === 'read' ? <WorkingSpinner blockId="read" size={14} /> : checked ? <LevelIcon level="ok" /> : null} {checked ? s.checked : s.read}
           </button>

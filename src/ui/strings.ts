@@ -310,7 +310,7 @@ export const strings = {
     mergeWhat: 'Publish it: the change becomes part of your project on GitHub. If your site updates from GitHub, it updates too.',
     confirm: 'Publish this change? It becomes part of your project on GitHub, and a site that updates from GitHub will update.',
     yes: 'Yes, publish',
-    no: 'Not yet',
+    no: 'No, go back',
     merging: 'Publishing…',
     hold: 'Put on hold',
     holding: 'Putting on hold…',
