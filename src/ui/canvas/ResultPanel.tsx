@@ -438,7 +438,7 @@ function Steps({ current, passedByApp }: { current: Step; passedByApp: boolean }
         const now = i === current && current !== 4
         const colour = done ? theme.passed : now ? '#d6dce6' : theme.skipped
         return (
-          <li key={name} aria-current={now ? 'step' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 4, flex: i < names.length - 1 ? 1 : 'none', minWidth: 0 }}>
+          <li key={name} aria-current={now ? 'step' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 4, flex: i < names.length - 1 ? '1 1 auto' : 'none', minWidth: 0 }}>
             <span
               aria-hidden="true"
               style={{ width: 18, height: 18, flex: 'none', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 900, background: done ? theme.passed : 'transparent', color: done ? '#07110a' : colour, border: `1.5px solid ${done ? theme.passed : colour}` }}
