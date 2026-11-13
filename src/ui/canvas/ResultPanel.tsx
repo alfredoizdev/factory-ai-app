@@ -5,6 +5,8 @@ import type { Delivery } from '@/engine/delivery'
 import type { ShipState } from '@/engine/ship'
 import { GithubConnect } from './GithubConnect'
 import { strings } from '@/ui/strings'
+import { brand } from '@/ui/brand'
+import { useDocked } from './docked'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
 import { ShipSection } from './ShipSection'
@@ -47,6 +49,7 @@ export function ResultSection({
   onFollowUp: (runId: string) => void
   onShipState?: (state: ShipState) => void
 }) {
+  const docked = useDocked()
   const [delivery, setDeliveryState] = useState<Delivery | null>(null)
   // When this browser first saw the app's start of sending it, on this browser's own clock (the server's may differ).
   const [firstSeen, setFirstSeen] = useState<{ key: string; at: number } | null>(null)
@@ -252,8 +255,10 @@ export function ResultSection({
 
   return (
     <>
-      <Steps current={step} passedByApp={delivery.passedBy === 'app'} />
-      <div data-testid="next-step" role={autoWorking ? 'status' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: '#d6dce6', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
+      <Steps current={step} passedByApp={delivery.passedBy === 'app'} docked={docked} />
+      {/* Fixed to the edge there is room for it: where the change stands and what there is to do, as one card. */}
+      <div style={docked ? { display: 'grid', gap: 12, gridTemplateColumns: 'minmax(0, 1fr)', padding: 18, borderRadius: 14, border: `1px solid ${brand.line}`, background: brand.card } : { display: 'contents' }}>
+      <div data-testid="next-step" role={autoWorking ? 'status' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: docked ? 16 : 13.5, fontWeight: docked ? 700 : undefined, color: docked ? brand.text : '#d6dce6', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
         {autoWorking && <WorkingSpinner blockId="auto-ship" size={16} />}
         <span style={{ minWidth: 0 }}>{headline}</span>
       </div>
@@ -265,7 +270,7 @@ export function ResultSection({
               <span style={{ color: theme.dim }}>{d.auto.tryAgain}</span>
               {auto.message && (
                 <>
-                  <button type="button" aria-expanded={whatHappened} onClick={() => setWhatHappened(o => !o)} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline' }}>
+                  <button type="button" aria-expanded={whatHappened} onClick={() => setWhatHappened(o => !o)} style={{ justifySelf: 'start', padding: 0, background: 'none', border: 'none', color: brand.green, fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline' }}>
                     {d.auto.whatHappened}
                   </button>
                   {whatHappened && <span data-testid="auto-message" style={{ color: theme.dim }}>{auto.message}</span>}
@@ -294,13 +299,13 @@ export function ResultSection({
                   disabled={busy !== null || suggesting}
                   spellCheck={false}
                   onChange={e => setBranchName(e.target.value)}
-                  style={{ flex: 1, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: '#0b0e14', color: '#d6dce6', border: `1px solid ${theme.border}`, borderRadius: 6, minWidth: 0 }}
+                  style={{ flex: 1, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, padding: '7px 8px', background: brand.bg, color: '#d6dce6', border: `1px solid ${brand.line}`, borderRadius: 6, minWidth: 0 }}
                 />
                 <button
                   type="button"
                   disabled={busy !== null || suggesting}
                   onClick={() => void suggestName()}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12, fontWeight: 600, cursor: suggesting ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, border: `1px solid ${brand.line}`, background: brand.card, color: '#d6dce6', fontSize: 12, fontWeight: 600, cursor: suggesting ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
                 >
                   {suggesting ? <WorkingSpinner blockId="suggest" size={12} /> : <SparkIcon />} {suggesting ? d.suggesting : d.suggestName}
                 </button>
@@ -361,52 +366,53 @@ export function ResultSection({
         )}
         {delivery.delivered && <div style={{ fontSize: 12.5, color: '#b9dcc5', lineHeight: 1.4 }}>{d.done(delivery.files.length)}</div>}
 
-        {/* Everything a developer may want and nobody else needs: names, hashes, and the less common moves. Closed. */}
-        {(kept || canApply) && !waitingOnGithub && !autoWorking && (
-          <div style={{ display: 'grid', gap: 8 }}>
-            <button
-              type="button"
-              aria-expanded={moreOpen}
-              onClick={() => setMoreOpen(o => !o)}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.card, color: '#d6dce6', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}
-            >
-              {d.moreOptions}
-              <span aria-hidden="true" style={{ display: 'inline-block', transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease-out' }}>
-                ▾
-              </span>
-            </button>
-            {moreOpen && (
-              <div data-testid="more-options" style={{ display: 'grid', gap: 8 }}>
-                {kept && (
-                  <dl data-testid="kept-facts" style={{ ...optionCard, margin: 0, gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: 12, rowGap: 6, fontSize: 12 }}>
-                    <dt style={{ color: theme.dim }}>{d.branchLabel}</dt>
-                    <dd style={{ margin: 0, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6', overflowWrap: 'anywhere' }}>{delivery.branch}</dd>
-                    <dt style={{ color: theme.dim }}>{d.commitLabel}</dt>
-                    <dd style={{ margin: 0, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6' }}>{(delivery.commit ?? '').slice(0, 7)}</dd>
-                  </dl>
-                )}
-                {canPushOnly && (
-                  <div style={optionCard}>
-                    <button type="button" disabled={busy !== null} onClick={() => void bring('push')} style={secondaryButton(busy)}>
-                      {busy === 'push' ? <WorkingSpinner blockId="push" size={16} /> : '↑'} {d.pushOnly}
-                    </button>
-                    <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{d.pushOnlyWhat}</div>
-                  </div>
-                )}
-                {canApply && (
-                  <div style={optionCard}>
-                    <button type="button" disabled={busy !== null} onClick={() => void bring('apply')} style={secondaryButton(busy)}>
-                      {busy === 'apply' ? <WorkingSpinner blockId="apply" size={16} /> : '⤵'} {d.applyButton}
-                    </button>
-                    <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{d.applyWhat}</div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </div>
-      <div style={{ display: waitingOnGithub ? 'none' : 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}` }}>
+      </div>
+        {/* Everything a developer may want and nobody else needs: names, hashes, and the less common moves. Closed. */}
+      {(kept || canApply) && !waitingOnGithub && !autoWorking && (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <button
+            type="button"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, border: `1px solid ${brand.line}`, background: brand.card, color: '#d6dce6', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}
+          >
+            {d.moreOptions}
+            <span aria-hidden="true" style={{ display: 'inline-block', transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease-out' }}>
+              ▾
+            </span>
+          </button>
+          {moreOpen && (
+            <div data-testid="more-options" style={{ display: 'grid', gap: 8 }}>
+              {kept && (
+                <dl data-testid="kept-facts" style={{ ...optionCard, margin: 0, gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: 12, rowGap: 6, fontSize: 12 }}>
+                  <dt style={{ color: theme.dim }}>{d.branchLabel}</dt>
+                  <dd style={{ margin: 0, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6', overflowWrap: 'anywhere' }}>{delivery.branch}</dd>
+                  <dt style={{ color: theme.dim }}>{d.commitLabel}</dt>
+                  <dd style={{ margin: 0, fontFamily: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace', color: '#d6dce6' }}>{(delivery.commit ?? '').slice(0, 7)}</dd>
+                </dl>
+              )}
+              {canPushOnly && (
+                <div style={optionCard}>
+                  <button type="button" disabled={busy !== null} onClick={() => void bring('push')} style={secondaryButton(busy)}>
+                    {busy === 'push' ? <WorkingSpinner blockId="push" size={16} /> : '↑'} {d.pushOnly}
+                  </button>
+                  <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{d.pushOnlyWhat}</div>
+                </div>
+              )}
+              {canApply && (
+                <div style={optionCard}>
+                  <button type="button" disabled={busy !== null} onClick={() => void bring('apply')} style={secondaryButton(busy)}>
+                    {busy === 'apply' ? <WorkingSpinner blockId="apply" size={16} /> : '⤵'} {d.applyButton}
+                  </button>
+                  <div style={{ fontSize: 11.5, color: theme.dim, lineHeight: 1.4 }}>{d.applyWhat}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      <div style={{ display: waitingOnGithub ? 'none' : 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}`, ...(docked ? { marginTop: 'auto', marginInline: -20, padding: '20px 20px 0', gap: 10, borderTop: `1px solid ${brand.line}` } : null) }}>
         <div style={{ fontSize: 12, color: theme.dim }}>{strings.followUp.hint}</div>
         {composer({
           label: strings.followUp.start,
@@ -428,25 +434,39 @@ export function ResultSection({
 type Step = 1 | 2 | 3 | 4
 
 /** Where the change is on its way: Approved (or passed on its own), Save, Check, Publish. Done steps are ticked, the current one is lit. */
-function Steps({ current, passedByApp }: { current: Step; passedByApp: boolean }) {
+function Steps({ current, passedByApp, docked = false }: { current: Step; passedByApp: boolean; docked?: boolean }) {
   // Nobody approved a change the app passed on its own: its first step says so.
   const names = passedByApp ? [strings.delivery.passedStep, ...strings.delivery.steps.slice(1)] : strings.delivery.steps
+  const size = docked ? 26 : 18
   return (
-    <ol data-testid="steps" aria-label={strings.delivery.stepsLabel} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+    <ol data-testid="steps" aria-label={strings.delivery.stepsLabel} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', alignItems: docked ? 'flex-start' : 'center', gap: docked ? 0 : 4 }}>
       {names.map((name, i) => {
         const done = i < current || current === 4
         const now = i === current && current !== 4
         const colour = done ? theme.passed : now ? '#d6dce6' : theme.skipped
+        const mark = (
+          <span
+            aria-hidden="true"
+            style={{ position: 'relative', width: size, height: size, flex: 'none', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: docked ? 13 : 10, fontWeight: 900, background: done ? theme.passed : brand.bg, color: done ? '#07110a' : colour, border: `1.5px solid ${done ? theme.passed : colour}` }}
+          >
+            {done ? '✓' : i + 1}
+          </span>
+        )
+        const line = done && i + 1 <= current ? theme.tint('passed', 0.6) : brand.line
+        // Fixed to the edge: each step is a column, its name under its mark, and the line runs from mark to mark.
+        if (docked)
+          return (
+            <li key={name} aria-current={now ? 'step' : undefined} style={{ position: 'relative', flex: '1 1 0', minWidth: 0, display: 'grid', justifyItems: 'center', gap: 8 }}>
+              {i < names.length - 1 && <span aria-hidden="true" style={{ position: 'absolute', top: size / 2 - 1, left: '50%', width: '100%', height: 1.5, background: line }} />}
+              {mark}
+              <span style={{ fontSize: 12.5, fontWeight: now ? 800 : 500, color: done ? brand.quiet : colour, textAlign: 'center', lineHeight: 1.3, textWrap: 'balance' }}>{name}</span>
+            </li>
+          )
         return (
           <li key={name} aria-current={now ? 'step' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 4, flex: i < names.length - 1 ? '1 1 auto' : 'none', minWidth: 0 }}>
-            <span
-              aria-hidden="true"
-              style={{ width: 18, height: 18, flex: 'none', borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 900, background: done ? theme.passed : 'transparent', color: done ? '#07110a' : colour, border: `1.5px solid ${done ? theme.passed : colour}` }}
-            >
-              {done ? '✓' : i + 1}
-            </span>
+            {mark}
             <span style={{ fontSize: 11.5, fontWeight: now ? 800 : 600, color: colour, whiteSpace: 'nowrap' }}>{name}</span>
-            {i < names.length - 1 && <span aria-hidden="true" style={{ flex: 1, height: 1.5, minWidth: 8, background: done && i + 1 <= current ? theme.tint('passed', 0.6) : theme.border }} />}
+            {i < names.length - 1 && <span aria-hidden="true" style={{ flex: 1, height: 1.5, minWidth: 8, background: line }} />}
           </li>
         )
       })}
@@ -454,7 +474,7 @@ function Steps({ current, passedByApp }: { current: Step; passedByApp: boolean }
   )
 }
 
-const linkButton: CSSProperties = { justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, background: 'none', border: 'none', color: '#93c5fd', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }
+const linkButton: CSSProperties = { justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, background: 'none', border: 'none', color: brand.green, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }
 
 /** Save: a tray with an arrow into it. */
 function SaveIcon() {
@@ -465,7 +485,7 @@ function SaveIcon() {
   )
 }
 
-const optionCard: CSSProperties = { display: 'grid', gap: 6, padding: 10, borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c' }
+const optionCard: CSSProperties = { display: 'grid', gap: 6, padding: 10, borderRadius: 8, border: `1px solid ${brand.line}`, background: '#141414' }
 
 function primaryButton(busy: unknown): CSSProperties {
   return { padding: '9px 12px', borderRadius: 8, border: `1px solid ${theme.passed}`, background: theme.passed, color: '#07110a', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }

@@ -8,7 +8,7 @@ import { theme } from '@/ui/theme'
  * The open task's name, large, at the top left of the canvas. Without one, a quiet invitation to add it. Clicking it
  * (or the pencil) edits it in place: Enter saves, Escape keeps what was there.
  */
-export function TaskTitle({ runId, initial, onRenamed }: { runId: string; initial: string; onRenamed?: (title: string) => void }) {
+export function TaskTitle({ runId, initial, onRenamed, roomy = false }: { runId: string; initial: string; onRenamed?: (title: string) => void; /** Nothing floats beside it (the steps layout), so it may use the whole width it is given. */ roomy?: boolean }) {
   const [title, setTitle] = useState(initial)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(initial)
@@ -35,7 +35,7 @@ export function TaskTitle({ runId, initial, onRenamed }: { runId: string; initia
   }
 
   return (
-    <div data-testid="task-title" style={{ position: 'absolute', top: 18, left: 24, zIndex: 4, maxWidth: 'min(760px, calc(100% - 560px))', display: 'grid', gap: 4 }}>
+    <div data-testid="task-title" style={{ position: 'absolute', top: 18, left: 24, zIndex: 4, maxWidth: roomy ? 'calc(100% - 24px)' : 'min(760px, calc(100% - 560px))', display: 'grid', gap: 4 }}>
       {editing ? (
         <input
           ref={input}

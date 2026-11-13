@@ -3,6 +3,7 @@
 import { FailedSection, type FailureActions } from './FailurePanel'
 import { forwardRef, useState } from 'react'
 import { brand } from '@/ui/brand'
+import { DockedContext } from './docked'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { RUN_INPUT_ID } from './Canvas'
@@ -13,7 +14,7 @@ import { QuestionSection } from './QuestionPanel'
 import type { ReviewRecord } from './useReviewRecord'
 import { PlanSection } from './PlanSection'
 import { ResultSection } from './ResultPanel'
-import { COMMAND_CARD_WIDTH } from './layout'
+import { COMMAND_CARD_WIDTH, DOCKED_ZOOM } from './layout'
 import { CardSkeleton } from './Skeleton'
 import type { ShipState } from '@/engine/ship'
 
@@ -137,9 +138,10 @@ export const CommandCard = forwardRef<
         gridTemplateColumns: 'minmax(0, 1fr)',
         gap: 12,
         outline: 'none',
-        ...(docked ? { top: 0, right: 0, bottom: 0, maxWidth: '100%', maxHeight: 'none', padding: '20px 20px 24px', alignContent: 'start', background: brand.bg, border: 'none', borderLeft: `1px solid ${brand.line}`, borderRadius: 0, boxShadow: 'none' } : null),
+        ...(docked ? { top: 0, right: 0, bottom: 0, maxWidth: '100%', maxHeight: 'none', padding: '20px 20px 24px', display: 'flex', flexDirection: 'column', gap: 16, zoom: DOCKED_ZOOM, background: brand.bg, border: 'none', borderLeft: `1px solid ${brand.line}`, borderRadius: 0, boxShadow: 'none' } : null),
       }}
     >
+      <DockedContext.Provider value={docked}>
       {loading && <CardSkeleton />}
       {!loading && mode === 'idle' && (
         <>
@@ -229,6 +231,7 @@ export const CommandCard = forwardRef<
           }}
         />
       )}
+      </DockedContext.Provider>
     </section>
   )
 })

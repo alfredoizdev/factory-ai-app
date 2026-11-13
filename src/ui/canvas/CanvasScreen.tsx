@@ -523,7 +523,7 @@ export function CanvasScreen({
           {strings.run.cancel}
         </button>
         {/* A finished run stays on screen until the person moves on: this clears it for a separate, fresh task. */}
-        {run && !live && (
+        {run && !live && layout === 'canvas' && (
           <button type="button" style={{ ...headerButton, fontWeight: 600 }} onClick={() => newTask('new')}>
             ＋ {strings.delivery.newTask}
           </button>
@@ -606,7 +606,17 @@ export function CanvasScreen({
             </span>
           )
         )}
-        {layout === 'steps' && <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>{topButtons(false)}</span>}
+        {layout === 'steps' && (
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {topButtons(false)}
+            {/* In the steps layout "New task" is the one green button of the top bar, at its right end. */}
+            {run && !live && (
+              <button type="button" style={{ ...headerButton, fontWeight: 700, background: theme.passed, borderColor: theme.passed, color: '#0d1f12' }} onClick={() => newTask('new')}>
+                + {strings.delivery.newTask}
+              </button>
+            )}
+          </span>
+        )}
       </header>
       {suggested && dismissedSuggestion !== suggested && (
         <div data-testid="test-suggestion" role="status" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: `1px solid ${theme.border}`, background: 'rgba(121, 220, 139, 0.07)', fontSize: 13 }}>
@@ -801,7 +811,7 @@ export function CanvasScreen({
           overlay={
             run && !loading ? (
               <>
-                <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} />
+                <TaskTitle key={run.runId} roomy={layout === 'steps'} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} />
               </>
             ) : undefined
           }

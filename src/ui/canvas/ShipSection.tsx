@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import type { Check, ShipState } from '@/engine/ship'
 import { strings } from '@/ui/strings'
+import { brand } from '@/ui/brand'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
 import { PauseIcon } from './PastTasks'
@@ -26,7 +27,7 @@ function CheckList({ checks }: { checks: Check[] }) {
             {MARK[c.state].glyph}
           </span>
           {c.url ? (
-            <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ color: '#93c5fd' }}>
+            <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ color: brand.green }}>
               {c.name}
             </a>
           ) : (
@@ -130,7 +131,7 @@ export function ShipSection({
       )}
       {state.pr && (
         <div style={{ display: 'grid', gap: 6, fontSize: 12.5, lineHeight: 1.4 }}>
-          <a href={state.pr.url} target="_blank" rel="noopener noreferrer" style={{ color: '#93c5fd', fontWeight: 600, fontSize: 12 }}>
+          <a href={state.pr.url} target="_blank" rel="noopener noreferrer" style={{ color: brand.green, fontWeight: 600, fontSize: 12 }}>
             {strings.ship.pr(state.pr.number)} ↗
           </a>
           {state.pr.state === 'closed' && <span style={{ color: theme.failed }}>{strings.ship.closed}</span>}
@@ -184,7 +185,7 @@ export function ShipSection({
                     <button type="button" disabled={busy !== null} onClick={() => void act('merge')} style={{ ...button(busy), flex: 1 }}>
                       {busy === 'merge' ? <WorkingSpinner blockId="ship-merge" size={14} /> : null} {busy === 'merge' ? strings.ship.merging : strings.ship.yes}
                     </button>
-                    <button type="button" disabled={busy !== null} onClick={() => setConfirming(false)} style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${theme.dim}`, background: theme.card, color: theme.ink, fontWeight: 600, cursor: 'pointer' }}>
+                    <button type="button" disabled={busy !== null} onClick={() => setConfirming(false)} style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${theme.dim}`, background: brand.card, color: theme.ink, fontWeight: 600, cursor: 'pointer' }}>
                       {strings.ship.no}
                     </button>
                   </span>

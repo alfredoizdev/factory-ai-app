@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { strings } from '@/ui/strings'
+import { brand } from '@/ui/brand'
 import { theme } from '@/ui/theme'
 import { WorkingSpinner } from './BlockCard'
 
@@ -166,8 +167,8 @@ export function Composer({
       <div
         style={{
           position: 'relative',
-          background: theme.card,
-          border: `1px ${dragging ? 'dashed' : 'solid'} ${dragging ? theme.running : theme.border}`,
+          background: brand.card,
+          border: `1px ${dragging ? 'dashed' : 'solid'} ${dragging ? theme.running : brand.line}`,
           borderRadius: 10,
           padding: 8,
           display: 'grid',
@@ -188,8 +189,8 @@ export function Composer({
                   height: 56,
                   borderRadius: 8,
                   overflow: 'hidden',
-                  border: `1px solid ${img.status === 'failed' ? theme.failed : theme.border}`,
-                  background: '#0b0e14',
+                  border: `1px solid ${img.status === 'failed' ? theme.failed : brand.line}`,
+                  background: brand.bg,
                 }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element -- a local object URL, not an optimisable asset */}
@@ -281,7 +282,7 @@ export function Composer({
             onClick={() => picker.current?.click()}
             title={strings.attachments.add}
             aria-label={strings.attachments.add}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: `1px solid ${theme.border}`, borderRadius: 6, color: '#d6dce6', cursor: 'pointer', padding: '4px 10px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: `1px solid ${brand.line}`, borderRadius: 6, color: '#d6dce6', cursor: 'pointer', padding: '4px 10px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}
           >
             <ClipIcon /> {strings.attachments.browse}
           </button>
@@ -302,7 +303,7 @@ export function Composer({
                 placeItems: 'center',
                 padding: 0,
                 border: 'none',
-                background: send.enabled ? theme.passed : theme.border,
+                background: send.enabled ? theme.passed : brand.line,
                 color: send.enabled ? '#07110a' : theme.skipped,
                 cursor: send.enabled ? 'pointer' : 'not-allowed',
               }}

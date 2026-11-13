@@ -7,7 +7,7 @@ import { brand } from '@/ui/brand'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { visualStateOf } from './BlockCard'
-import { COMMAND_CARD_WIDTH } from './layout'
+import { DOCKED_WIDTH } from './layout'
 import { TypeMark } from './TypeMark'
 
 const s = strings.steps
@@ -81,7 +81,7 @@ export function StepsLane({
   }
   const label = (state: NodeState | null, off: boolean) => (off ? s.off : state ? strings.canvas.stateLabel[state] : hasRun ? s.notInTask : '')
   return (
-    <div data-testid="steps-view" style={{ position: 'absolute', inset: 0, overflowY: 'auto', padding: `28px ${COMMAND_CARD_WIDTH + 36}px 56px 36px`, display: 'grid', gap: 28, alignContent: 'start', backgroundColor: brand.bg, backgroundImage: 'radial-gradient(circle, #2b2b2b 1px, transparent 1.5px)', backgroundSize: '24px 24px', backgroundAttachment: 'local', color: brand.text, fontFamily: brand.sans, scrollbarWidth: 'thin', scrollbarColor: `${brand.line} transparent`, opacity: loading ? 0.4 : 1 }}>
+    <div data-testid="steps-view" style={{ position: 'absolute', inset: 0, overflowY: 'auto', padding: `28px ${DOCKED_WIDTH + 36}px 56px 36px`, display: 'grid', gap: 28, alignContent: 'start', backgroundColor: brand.bg, backgroundImage: 'radial-gradient(circle, #2b2b2b 1px, transparent 1.5px)', backgroundSize: '24px 24px', backgroundAttachment: 'local', color: brand.text, fontFamily: brand.sans, scrollbarWidth: 'thin', scrollbarColor: `${brand.line} transparent`, opacity: loading ? 0.4 : 1 }}>
       {/* The title places itself for the canvas (from the top left corner): this box is the corner it starts from here. */}
       {title && <div style={{ position: 'relative', height: 44, margin: '-18px 0 14px -24px' }}>{title}</div>}
       {!blank && (
