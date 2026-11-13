@@ -37,6 +37,18 @@ test('the request is a large box in the command card, and the sidebar starts ope
   expect(screen.queryByTestId('sidebar-rail')).toBeNull()
 })
 
+test('a project made from scratch opens with its first task in the box, once', async () => {
+  window.sessionStorage.setItem('factory.firstTask.w1', 'Create the project "Shop".')
+  const first = page()
+  await vi.waitFor(() => expect(screen.getByLabelText(strings.run.requestLabel)).toHaveValue('Create the project "Shop".'))
+  // Typing makes the text the person's own: the app's copy is forgotten, so it never comes back.
+  fireEvent.change(screen.getByLabelText(strings.run.requestLabel), { target: { value: 'A landing page for my shop' } })
+  expect(window.sessionStorage.getItem('factory.firstTask.w1')).toBeNull()
+  first.unmount()
+  page()
+  expect(screen.getByLabelText(strings.run.requestLabel)).toHaveValue('')
+})
+
 test('closing the sidebar leaves a rail of named icons, and the choice is remembered', () => {
   const { unmount } = page()
   fireEvent.click(screen.getByRole('button', { name: strings.sidebar.close }))

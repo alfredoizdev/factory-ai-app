@@ -116,7 +116,7 @@ export const strings = {
   projectSwitcher: {
     settings: 'Settings',
     loading: 'Projects…',
-    add: 'Add project',
+    add: 'New project',
     rename: 'Rename',
     save: 'Save',
     cancel: 'Cancel',

@@ -7,6 +7,7 @@ import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
 import type { FailureActions } from './FailurePanel'
 import { PROMPT_BLOCK, usePrompts } from './PromptCards'
+import { firstTaskKey } from './AddProjectDialog'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { SettingsIcon } from './SettingsIcon'
@@ -86,7 +87,30 @@ export function CanvasScreen({
   // A project with a folder is worked on by Claude by default; without one only the demo can run.
   const [agent, setAgent] = useState<Agent>(initialSettings?.repoPath ? CLAUDE_PROVIDER_ID : DEMO_PROVIDER_ID)
   const claudeBlocked = agent === CLAUDE_PROVIDER_ID && !settings?.repoPath
-  const [request, setRequest] = useState('')
+  // What the person typed, or null while they have typed nothing in this page.
+  const [typed, setTyped] = useState<string | null>(null)
+  // A project made from scratch arrives with its first task written by the wizard. It is shown in the box until the
+  // person types or starts it; read after hydration so the server's page still matches.
+  const firstTask = useSyncExternalStore(
+    noSubscription,
+    () => {
+      try {
+        return window.sessionStorage.getItem(firstTaskKey(workflowId))
+      } catch {
+        return null
+      }
+    },
+    () => null,
+  )
+  const request = typed ?? firstTask ?? ''
+  const setRequest = (text: string) => {
+    try {
+      window.sessionStorage.removeItem(firstTaskKey(workflowId))
+    } catch {
+      // No storage: nothing to forget.
+    }
+    setTyped(text)
+  }
   const [images, setImages] = useState<ComposerImage[]>([])
   // The box on a fresh task: stop for the person on this one. It clears once a run starts.
   const [stopForMe, setStopForMe] = useState(false)
