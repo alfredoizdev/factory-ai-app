@@ -20,7 +20,8 @@ export type NodeRunView = {
   /** What a non-model process measured (a test run). Absent: nothing was measured for this block. */
   evidence?: RunEvidence
   /** The measured risk of the run's change, on the human check. Absent: not measured (a demo run). */
-  risk?: { level: 'low' | 'high'; reasons: string[] }
+  /** `stopForMe`: the task was asked to stop for the person, so even a low-risk change waits. */
+  risk?: { level: 'low' | 'high'; reasons: string[]; stopForMe?: true }
   /** The plan block: what the app made of the planner's plan, and why it stopped for the person or started on its own. */
   planMeasure?: { simple: boolean; reasons: string[]; entries: string[]; question?: string }
   /** The plan block: it started on its own, without the person. */

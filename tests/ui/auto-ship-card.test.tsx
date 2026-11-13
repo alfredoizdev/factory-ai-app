@@ -145,17 +145,53 @@ test('when only opening the pull request failed, the card says it was sent, what
 })
 
 test('the "not connected" line goes away once the project is connected', async () => {
-  serve({ ...kept, passedBy: 'app', hasRemote: true, autoShip: { state: 'stopped', step: 'send', reason: 'no_connection', message: 'x' } })
+  serve({ ...kept, passedBy: 'app', hasRemote: true, autoShip: { state: 'stopped', step: 'send', reason: 'no_connection', message: d.noRemote } })
   render(<Card />)
   await screen.findByTestId('ship-section')
   expect(screen.queryByTestId('auto-line')).toBeNull()
   expect(screen.getByRole('button', { name: new RegExp(strings.ship.shipIt) })).toBeInTheDocument()
 })
 
+test('a stop because gh is missing or signed out stays said, though the project has an origin', async () => {
+  for (const message of [strings.ship.noGh, strings.ship.notLoggedIn]) {
+    serve({ ...kept, passedBy: 'app', hasRemote: true, autoShip: { state: 'stopped', step: 'send', reason: 'no_connection', message } })
+    const view = render(<Card />)
+    expect(await screen.findByTestId('auto-line')).toHaveTextContent(d.auto.stopped.noConnection)
+    fireEvent.click(screen.getByRole('button', { name: d.auto.whatHappened }))
+    expect(screen.getByTestId('auto-message')).toHaveTextContent(message)
+    view.unmount()
+  }
+})
+
+test('the first step says "Passed on its own" for a change the app passed, and "Approved" for one the person approved', async () => {
+  serve({ ...kept, passedBy: 'app' })
+  const first = render(<Card />)
+  expect(await screen.findByTestId('steps')).toHaveTextContent(d.passedStep)
+  expect(screen.getByTestId('steps')).not.toHaveTextContent(d.steps[0]!)
+  first.unmount()
+  serve({ ...kept, passedBy: 'person' })
+  render(<Card />)
+  expect(await screen.findByTestId('steps')).toHaveTextContent(d.steps[0]!)
+  expect(screen.getByTestId('steps')).not.toHaveTextContent(d.passedStep)
+})
+
+test('"publish it when you are ready" is said only once the checks passed', async () => {
+  const running = { ...withPr, checksDone: false, checks: [{ name: 'CI', state: 'pending', url: null }] }
+  serve({ ...kept, passedBy: 'app', pushed: true, autoShip: opened }, running)
+  const first = render(<Card />)
+  const line = await screen.findByTestId('auto-line')
+  expect(line).toHaveTextContent(d.auto.openedByApp)
+  expect(line).not.toHaveTextContent(d.auto.publishWhenReady)
+  first.unmount()
+  serve({ ...kept, passedBy: 'app', pushed: true, autoShip: opened }, withPr)
+  render(<Card />)
+  expect(await screen.findByText(`${d.auto.openedByApp} ${d.auto.publishWhenReady}`)).toBeInTheDocument()
+})
+
 test('connecting GitHub from the card makes the "not connected" line go away', async () => {
   let remote = false
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-    if (url.endsWith('/delivery')) return new Response(JSON.stringify({ ...kept, passedBy: 'app', hasRemote: remote, autoShip: { state: 'stopped', step: 'send', reason: 'no_connection', message: 'x' } }))
+    if (url.endsWith('/delivery')) return new Response(JSON.stringify({ ...kept, passedBy: 'app', hasRemote: remote, autoShip: { state: 'stopped', step: 'send', reason: 'no_connection', message: d.noRemote } }))
     if (url.endsWith('/ship')) return new Response(JSON.stringify(noPr))
     if (url.endsWith('/connect-github') && !remote) { remote = true; return new Response(JSON.stringify({ url: 'https://github.com/me/p' })) }
     return new Response('{}')
@@ -181,24 +217,40 @@ test('"publish it when you are ready" is not said while checks failed or there a
 describe('a send that was never ended', () => {
   const started = (ageMs: number) => ({ state: 'started', step: null, reason: null, message: null, at: new Date(Date.now() - ageMs).toISOString() })
 
-  test('after 3 minutes the working line goes, the buttons come back, and one sentence says it stopped part-way', async () => {
-    serve({ ...kept, passedBy: 'app', autoShip: started(4 * 60_000) })
-    render(<Card />)
-    expect(await screen.findByTestId('auto-line')).toHaveTextContent(d.auto.seemsStopped)
-    expect(screen.getByTestId('next-step')).not.toHaveTextContent(d.auto.working)
-    expect(await screen.findByRole('button', { name: new RegExp(strings.ship.shipIt) })).toBeInTheDocument()
-  })
-
-  test('before 3 minutes it is still working, with no buttons; it gives up by itself as time passes', async () => {
+  test('3 minutes after this browser first saw it, the working line goes, the buttons come back, and one sentence says it stopped part-way', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      serve({ ...base, passedBy: 'app', autoShip: started(2 * 60_000 + 55_000) })
+      serve({ ...kept, passedBy: 'app', autoShip: started(0) })
       render(<Card />)
       expect(await screen.findByTestId('next-step')).toHaveTextContent(d.auto.working)
-      expect(screen.queryByRole('button', { name: new RegExp(d.keepButton) })).toBeNull()
-      await vi.advanceTimersByTimeAsync(9_000)
+      await vi.advanceTimersByTimeAsync(3 * 60_000 + 6_000)
       expect(await screen.findByTestId('auto-line')).toHaveTextContent(d.auto.seemsStopped)
-      expect(screen.getByRole('button', { name: new RegExp(d.keepButton) })).toBeInTheDocument()
+      expect(screen.getByTestId('next-step')).not.toHaveTextContent(d.auto.working)
+      expect(await screen.findByRole('button', { name: new RegExp(strings.ship.shipIt) })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('the server\'s clock does not count: a start stamped far in the past is still working when first seen', async () => {
+    serve({ ...base, passedBy: 'app', autoShip: started(60 * 60_000) })
+    render(<Card />)
+    expect(await screen.findByTestId('next-step')).toHaveTextContent(d.auto.working)
+    expect(screen.queryByRole('button', { name: new RegExp(d.keepButton) })).toBeNull()
+  })
+
+  test('after it gave up calling it working, the card still asks, and a late ending reaches it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let autoShip: object = started(0)
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/delivery') ? new Response(JSON.stringify({ ...kept, passedBy: 'app', pushed: true, autoShip })) : url.endsWith('/ship') ? new Response(JSON.stringify(withPr)) : new Response('{}'))))
+      render(<Card />)
+      expect(await screen.findByTestId('next-step')).toHaveTextContent(d.auto.working)
+      await vi.advanceTimersByTimeAsync(3 * 60_000 + 6_000)
+      expect(await screen.findByTestId('auto-line')).toHaveTextContent(d.auto.seemsStopped)
+      autoShip = opened
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(await screen.findByTestId('auto-line')).toHaveTextContent(d.auto.openedByApp)
     } finally {
       vi.useRealTimers()
     }

@@ -112,7 +112,7 @@ export function foldEvent(prev: StreamState, event: Wire): StreamState {
     const level = payload.level === 'low' || payload.level === 'high' ? payload.level : undefined
     const reasons = Array.isArray(payload.reasons) ? payload.reasons.filter((r): r is string => typeof r === 'string') : []
     if (!node || !level) return moved
-    return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, risk: { level, reasons } } }, lastSequence: event.sequence }
+    return { ...prev, nodes: { ...prev.nodes, [blockId]: { ...node, risk: { level, reasons, ...(payload.stopForMe === true ? { stopForMe: true as const } : {}) } } }, lastSequence: event.sequence }
   }
 
   if (event.type === 'node.plan_measured') {

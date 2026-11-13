@@ -647,12 +647,14 @@ export const strings = {
     unreadable: 'What it changed could not be read, so it is treated as high risk.',
     lowBecause: (files: number, lines: number) =>
       `${files} ${files === 1 ? 'file' : 'files'}, ${lines} ${lines === 1 ? 'line' : 'lines'}, nothing sensitive, tests passed and untouched.`,
-    passedLow: 'Not needed: a low-risk change, and you chose not to be asked for those.',
+    passedLow: 'Not needed: a low-risk change, and this project does not ask you about those.',
     label: { low: 'Low risk', high: 'Needs you' },
   },
   gate: {
     title: 'Your call',
     waiting: 'The work is done. Nothing goes further without your yes.',
+    // A low-risk change that waits anyway, because the person ticked "Stop for me on this one" for the task.
+    stopForMe: 'It is low risk, but it waits for you because you asked the app to stop for you on this task.',
     filesChanged: (n: number) => `${n} ${n === 1 ? 'file' : 'files'} changed`,
     noFiles: 'This run changed no files.',
     showChanges: 'Show the changes',
@@ -708,6 +710,8 @@ export const strings = {
     finished: 'Done. This change is published. There is nothing else to do for it.',
     nowPublishing: 'Publishing your change. This takes a moment.',
     steps: ['Approved', 'Save', 'Check', 'Publish'],
+    // The first step, for a change the app passed on its own (see passedOnItsOwn): nobody approved it.
+    passedStep: 'Passed on its own',
     stepsLabel: 'Where this change is',
     nowSave: 'Save it to keep it. Nothing is sent anywhere yet.',
     nowSend: 'Saved. Next, send it so GitHub checks it. Nothing is published yet.',
@@ -800,8 +804,10 @@ export const strings = {
       /** The app began sending it on its own but never finished, and nothing says why. */
       seemsStopped: 'It seems to have stopped part-way. The buttons below can finish it.',
       working: 'Sending it to GitHub and opening a pull request for you…',
-      openedByApp: 'It passed on its own, so it was sent to GitHub and a pull request is open. Publish it when you are ready.',
-      openedAfterYes: 'You approved it, so it was sent to GitHub and a pull request is open. Publish it when you are ready.',
+      openedByApp: 'It passed on its own, so it was sent to GitHub and a pull request is open.',
+      openedAfterYes: 'You approved it, so it was sent to GitHub and a pull request is open.',
+      // Added only once GitHub's checks are done and passed: before that, there is nothing to publish yet.
+      publishWhenReady: 'Publish it when you are ready.',
       passedReady: 'It passed on its own. It is ready, but not in your project yet.',
       stopped: {
         keep: 'It passed, but it could not be saved on its own branch. Nothing was sent.',
@@ -967,14 +973,15 @@ export const strings = {
     leaveMeans: 'The planner picks what it thinks is best, and the plan is checked like any other.',
     reasons: {
       // Put first when the project's setting (or the task's own box) says every plan is checked with the person.
-      everything: 'You chose to be asked about every plan.',
+      everything: 'This project asks you about every plan.',
       smallChanges: 'This project still checks every plan with you.',
       stopForMe: 'You asked the app to stop for you on this task.',
       asks: 'The planner needs you to decide something.',
       questionUnreadable: 'The planner wanted to ask you something, but its question could not be read.',
       noPaths: 'The planner did not say which files it expects to change.',
-      unmeasurable: (p: string) => `The planner named “${p}” in a way the app cannot measure.`,
-      tooWide: (p: string) => `“${p}” is too large a part of the project to call simple.`,
+      unmeasurable: 'The planner named some files in a way the app cannot measure.',
+      tooWide: 'It expects to change a whole top-level part of the project, which is too large to call simple.',
+      rootName: 'It names something at the top of the project that the app cannot tell from a whole folder.',
       sensitive: (area: string) => `It expects to change files that deal with ${area}.`,
       core: 'It expects to change a part of the project you marked as a core area.',
       decision: (text: string) => `It expects to change files that one of your decisions covers: “${text}”.`,
@@ -1175,7 +1182,7 @@ export const strings = {
     ask: {
       title: 'When should the app stop for you?',
       whatMatters: 'Ask me only about what matters',
-      whatMattersHelp: 'Simple changes go on their own, up to a pull request on GitHub. The app stops for you when a change touches sign-in, payments, the database, a core area you marked or one of your decisions. Publishing is always your click.',
+      whatMattersHelp: 'Simple changes go on their own, up to a pull request on GitHub. The app stops for you when a change touches sign-in, payments, the database, the server, settings or deploy files, a core area you marked or one of your decisions; when it is large; or when the project\'s tests did not run and pass. Publishing is always your click.',
       everything: 'Ask me about everything',
       everythingHelp: 'The app stops for you at every plan and before every change is kept.',
       smallChanges: 'Small changes skip my final check',
@@ -1199,7 +1206,7 @@ export const strings = {
   composer: {
     stopForMe: 'Stop for me on this one',
     stopForMeWhat: 'What is this?',
-    stopForMeWhy: 'The app waits for you at the plan and before the change is kept, even when it is simple. Tasks that continue this one wait too.',
+    stopForMeWhy: 'The app waits for you at the plan and before the change is kept, even when it is simple, and nothing is sent to GitHub until you press the button. Tasks that continue this one wait too.',
   },
   run: {
     skippedDisabled: 'This block is switched off, so it was skipped.',

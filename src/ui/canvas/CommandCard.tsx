@@ -38,7 +38,7 @@ export const CommandCard = forwardRef<
   {
     mode: CardMode
     runId: string | null
-    risk?: { level: 'low' | 'high'; reasons: string[] }
+    risk?: { level: 'low' | 'high'; reasons: string[]; stopForMe?: true }
     text: string
     onText: (v: string) => void
     images: ComposerImage[]

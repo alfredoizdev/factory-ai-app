@@ -43,11 +43,11 @@ test('sensitive files that only a file name shows are caught', () => {
 })
 
 test.each(['src/**/*.tsx', '/etc/x', '../x.ts', '.', './', 'src/../x.ts', 'a/{b,c}.ts', ''])('%j cannot be measured', entry => {
-  expect(measure([job(entry)])).toMatchObject({ simple: false, reasons: [r.unmeasurable(entry)] })
+  expect(measure([job(entry)])).toMatchObject({ simple: false, reasons: [r.unmeasurable] })
 })
 
 test('a top-level folder is too wide', () => {
-  expect(measure([job('src/')]).reasons).toEqual([r.tooWide('src/')])
+  expect(measure([job('src/')]).reasons).toEqual([r.tooWide])
   expect(measure([job('src/ui/')]).simple).toBe(true)
 })
 
@@ -87,16 +87,28 @@ test('reasons come in the agreed order', () => {
     { core: ['src/ledger/'], decisions: [{ text: 'D', paths: ['src/pricing/'] }] },
     'unreadable',
   )
+  // The most useful first: what the change touches, then what the app could not measure, then its size.
   expect(v.reasons).toEqual([
     r.questionUnreadable,
-    r.unmeasurable('src/**/x'),
-    r.tooWide('lib/'),
     r.sensitive(strings.risk.areas.auth),
     r.sensitive(strings.risk.areas.payments),
     r.core,
     r.decision('D'),
+    r.unmeasurable,
+    r.tooWide,
     r.tooMany(9, 8),
   ])
+})
+
+test('no reason names a path, and a reason about how paths were written is said once', () => {
+  const v = measure([job('src/**/x', 'a/{b,c}.ts', 'lib/', 'docs/', 'Makefile')])
+  expect(v.reasons).toEqual([r.unmeasurable, r.tooWide, r.rootName])
+  for (const reason of v.reasons) for (const p of ['src/**/x', 'lib/', 'Makefile']) expect(reason).not.toContain(p)
+})
+
+test('a lone name at the top of the project with no extension is not called "too large": the app cannot tell what it is', () => {
+  for (const name of ['Makefile', 'LICENSE', 'src']) expect(measure([job(name)]).reasons).toEqual([r.rootName])
+  expect(measure([job('lib/')]).reasons).toEqual([r.tooWide])
 })
 
 test('pathsOverlap', () => {
@@ -110,7 +122,7 @@ test('pathsOverlap', () => {
 test.each(['src\\api\\x.ts', '.github\\workflows\\ci.yml', 'C:\\x', 'C:/x', '~', '~/x', 'src//ledger/x.ts', 'src/./ledger/x.ts', 'src/./', 'src/a\nb.ts', 'src/a\tb.ts', ' /etc/x', 'src/ x.ts', 'src/x.ts '])(
   'a path written oddly (%j) cannot be measured',
   entry => {
-    expect(measure([job(entry)])).toMatchObject({ simple: false, reasons: [r.unmeasurable(entry)] })
+    expect(measure([job(entry)])).toMatchObject({ simple: false, reasons: [r.unmeasurable] })
   },
 )
 
@@ -118,7 +130,7 @@ test('an entry without a trailing slash may be a folder, so it is also judged as
   expect(measure([job('src/app/api')]).reasons).toEqual([r.sensitive(strings.risk.areas.server)])
   expect(measure([job('src/db')]).reasons).toEqual([r.sensitive(strings.risk.areas.database)])
   expect(measure([job('.github/workflows')]).reasons).toEqual([r.sensitive(strings.risk.areas.deploy)])
-  expect(measure([job('src')]).reasons).toEqual([r.tooWide('src')])
+  expect(measure([job('src')]).reasons).toEqual([r.rootName])
   expect(measure([job('src/ledger')], { core: ['src/ledger/'], decisions: [] }).reasons).toEqual([r.core])
   expect(measure([job('src/rounding')], { core: [], decisions: [{ text: 'D', paths: ['src/rounding/'] }] }).reasons).toEqual([r.decision('D')])
   expect(measure([job('src/ui/Footer.tsx')]).simple).toBe(true)

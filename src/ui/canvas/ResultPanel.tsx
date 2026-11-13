@@ -18,7 +18,7 @@ const AUTO_POLL_MS = 3000
 const AUTO_GIVE_UP_MS = 3 * 60_000
 
 /**
- * A finished, approved run: where its change is, how to bring it into the project, and how to ask for another change
+ * A finished run that passed the human check (the person's yes, or on its own): where its change is, how to bring it into the project, and how to ask for another change
  * on top of it. Bringing it over writes into the person's folder, so the button says exactly what it will do.
  */
 type Mode = 'branch' | 'apply' | 'switch' | 'back' | 'push'
@@ -47,7 +47,14 @@ export function ResultSection({
   onFollowUp: (runId: string) => void
   onShipState?: (state: ShipState) => void
 }) {
-  const [delivery, setDelivery] = useState<Delivery | null>(null)
+  const [delivery, setDeliveryState] = useState<Delivery | null>(null)
+  // When this browser first saw the app's start of sending it, on this browser's own clock (the server's may differ).
+  const [firstSeen, setFirstSeen] = useState<{ key: string; at: number } | null>(null)
+  const setDelivery = useCallback((d: Delivery) => {
+    setDeliveryState(d)
+    const key = d.autoShip?.state === 'started' ? (d.autoShip.at ?? 'started') : null
+    if (key !== null) setFirstSeen(seen => (seen?.key === key ? seen : { key, at: Date.now() }))
+  }, [])
   // Whether the delivery state has been asked for yet: until then, placeholders where the card will be.
   const [asked, setAsked] = useState(false)
   const [busy, setBusy] = useState<Mode | 'follow' | null>(null)
@@ -80,7 +87,7 @@ export function ResultSection({
   async function recheckRemote(url: string | null) {
     setConnected((url ?? '').replace(/^https:\/\/github\.com\/|^git@github\.com:/, '').replace(/\.git$/, ''))
     // Known already: GitHub has it. Reading the rest again must not be what makes the notice leave.
-    setDelivery(now => now && { ...now, hasRemote: true })
+    setDeliveryState(now => now && { ...now, hasRemote: true })
     const res = await fetch(`/api/runs/${runId}/delivery`).catch(() => null)
     if (res?.ok) setDelivery((await res.json()) as Delivery)
   }
@@ -95,16 +102,20 @@ export function ResultSection({
     return () => {
       live = false
     }
-  }, [runId])
+  }, [runId, setDelivery])
 
   // The app is keeping, sending and opening it on its own: read again until it says where it got to.
   // Read again with each poll, so a send that never ends is noticed without a second timer.
+  // Measured on this browser's own clock, from when it first saw this start (see setDelivery).
   const [clock, setClock] = useState(() => Date.now())
-  const startedAt = delivery?.autoShip?.at ? Date.parse(delivery.autoShip.at) : NaN
-  const neverEnded = delivery?.autoShip?.state === 'started' && Number.isFinite(startedAt) && clock - startedAt > AUTO_GIVE_UP_MS
-  const autoWorking = delivery?.autoShip?.state === 'started' && !neverEnded
+  const startedKey = delivery?.autoShip?.state === 'started' ? (delivery.autoShip.at ?? 'started') : null
+  const started = startedKey !== null
+  const neverEnded = started && firstSeen?.key === startedKey && clock - firstSeen.at > AUTO_GIVE_UP_MS
+  const autoWorking = started && !neverEnded
+  // Asked again for as long as it is a start with no ending, also after the card gave up calling it "working", so a
+  // late ending still reaches the card.
   useEffect(() => {
-    if (!autoWorking) return
+    if (!started) return
     const t = setInterval(() => {
       setClock(Date.now())
       void fetch(`/api/runs/${runId}/delivery`)
@@ -113,7 +124,7 @@ export function ResultSection({
         .catch(() => undefined)
     }, AUTO_POLL_MS)
     return () => clearInterval(t)
-  }, [autoWorking, runId])
+  }, [started, runId, setDelivery])
   const [whatHappened, setWhatHappened] = useState(false)
 
   // Before it is saved, a name is suggested from what changed, so saving is one click. It is only used when the person
@@ -190,14 +201,15 @@ export function ResultSection({
   const d = strings.delivery
   // What the app did on its own, in one sentence: where it got to, and who passed the change.
   const auto = delivery.autoShip
-  const stoppedStale = auto?.state === 'stopped' && ((auto.step === 'keep' && kept) || (auto.step === 'send' && (shipped || delivery.pushed || (auto.reason === 'no_connection' && (delivery.hasRemote === true || connected !== null)))) || (auto.step === 'open' && shipped))
+  // A "not connected" stop goes once connected, but only when what was missing was origin itself: gh missing or
+  // signed out is not cured by an origin, and the person must still be told why it was not sent.
+  const noOriginThen = auto?.reason === 'no_connection' && auto.message === d.noRemote
+  const stoppedStale = auto?.state === 'stopped' && ((auto.step === 'keep' && kept) || (auto.step === 'send' && (shipped || delivery.pushed || (noOriginThen && (delivery.hasRemote === true || connected !== null)))) || (auto.step === 'open' && shipped))
   // Chosen from where the change is NOW, never from the event alone: a line that is no longer true is not shown.
   const autoLine =
     auto?.state === 'opened'
       ? ship?.pr?.state === 'open' && !ship.checksFailed && !ship.pr.conflicts
-        ? delivery.passedBy === 'app'
-          ? d.auto.openedByApp
-          : d.auto.openedAfterYes
+        ? `${delivery.passedBy === 'app' ? d.auto.openedByApp : d.auto.openedAfterYes}${checksOk ? ` ${d.auto.publishWhenReady}` : ''}`
         : null
       : auto?.state === 'stopped' && !stoppedStale
         ? // The step first: at "open" the change was already sent, whatever the reason.
@@ -240,7 +252,7 @@ export function ResultSection({
 
   return (
     <>
-      <Steps current={step} />
+      <Steps current={step} passedByApp={delivery.passedBy === 'app'} />
       <div data-testid="next-step" role={autoWorking ? 'status' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: '#d6dce6', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
         {autoWorking && <WorkingSpinner blockId="auto-ship" size={16} />}
         <span style={{ minWidth: 0 }}>{headline}</span>
@@ -415,9 +427,10 @@ export function ResultSection({
 
 type Step = 1 | 2 | 3 | 4
 
-/** Where the change is on its way: Approved, Save, Check, Publish. Done steps are ticked, the current one is lit. */
-function Steps({ current }: { current: Step }) {
-  const names = strings.delivery.steps
+/** Where the change is on its way: Approved (or passed on its own), Save, Check, Publish. Done steps are ticked, the current one is lit. */
+function Steps({ current, passedByApp }: { current: Step; passedByApp: boolean }) {
+  // Nobody approved a change the app passed on its own: its first step says so.
+  const names = passedByApp ? [strings.delivery.passedStep, ...strings.delivery.steps.slice(1)] : strings.delivery.steps
   return (
     <ol data-testid="steps" aria-label={strings.delivery.stepsLabel} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
       {names.map((name, i) => {

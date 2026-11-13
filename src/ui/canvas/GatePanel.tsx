@@ -46,7 +46,7 @@ export function GateSection({
   findings?: readonly FindingView[]
   /** What the decisions named in a reason say, in their own words. */
   touched?: readonly Touched[]
-  risk?: { level: 'low' | 'high'; reasons: string[] }
+  risk?: { level: 'low' | 'high'; reasons: string[]; stopForMe?: true }
   /** The shared composer's text: the note recorded with a decision, and what a request for changes asks for. */
   note: string
   imageIds: string[]
@@ -145,6 +145,7 @@ export function GateSection({
         <div style={{ fontSize: 12.5, color: risk.level === 'low' ? theme.passed : theme.waiting, lineHeight: 1.4 }}>
           <strong>{strings.risk.label[risk.level]}:</strong>
           <Reasons reasons={risk.reasons} touched={touched} />
+          {risk.level === 'low' && risk.stopForMe && <div data-testid="stop-for-me-why" style={{ color: theme.waiting }}>{strings.gate.stopForMe}</div>}
         </div>
       )}
 
@@ -307,7 +308,7 @@ export function ChangesBox({ review, roomy = false }: { review: Review; roomy?: 
 }
 
 /** What is being decided on, for the Human check window: why it needs the person, the change, and a way to try it. */
-export function ChangeUnderCheck({ runId, risk, away = null }: { runId: string; risk?: { level: 'low' | 'high'; reasons: string[] }; away?: { machine: string | null } | null }) {
+export function ChangeUnderCheck({ runId, risk, away = null }: { runId: string; risk?: { level: 'low' | 'high'; reasons: string[]; stopForMe?: true }; away?: { machine: string | null } | null }) {
   const [review, setReview] = useState<Review | null>(null)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
@@ -328,6 +329,7 @@ export function ChangeUnderCheck({ runId, risk, away = null }: { runId: string; 
         <div style={{ fontSize: 13.5, color: risk.level === 'low' ? theme.passed : theme.waiting, lineHeight: 1.5 }}>
           <strong>{strings.risk.label[risk.level]}:</strong>
           <Reasons reasons={risk.reasons} />
+          {risk.level === 'low' && risk.stopForMe && <div data-testid="stop-for-me-why" style={{ color: theme.waiting }}>{strings.gate.stopForMe}</div>}
         </div>
       )}
       <ChangesBox review={review} roomy />

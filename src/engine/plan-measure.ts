@@ -34,6 +34,8 @@ function tooWide(p: string): boolean {
   if (p.split('/').filter(Boolean).length >= 2) return false
   return p.endsWith('/') || !/[^.]\.[a-z0-9]+$/i.test(p)
 }
+/** A lone name at the top with no slash and no extension ("Makefile", "src"): a file or a whole folder, the app cannot tell. */
+const lonely = (p: string) => !p.endsWith('/')
 
 /** The sensitive area a planned path falls in. A folder is judged by its own path, the way a file inside it would be:
  *  a folder that merely contains a sensitive folder deeper down cannot be seen from here. */
@@ -51,16 +53,13 @@ export function measurePlan(
     const key = p.endsWith('/') ? p.slice(0, -1) : p
     return !seen.has(key) && !!seen.add(key)
   })
+  // The most useful reason first, as the card leads with it: the question, what the change would touch, then what
+  // could not be measured, then its size. No reason names a path: the paths are listed under the plan already.
   const reasons: string[] = []
   if (answer.question === 'unreadable') reasons.push(r.questionUnreadable)
   else if (answer.question) reasons.push(r.asks)
 
-  if (entries.length === 0 || answer.jobs.some(j => j.paths === undefined)) reasons.push(r.noPaths)
-
   const measurable = entries.filter(p => !unmeasurable(p))
-  for (const p of entries) if (unmeasurable(p)) reasons.push(r.unmeasurable(p))
-  for (const p of measurable) if (tooWide(p)) reasons.push(r.tooWide(p))
-
   const areas = new Set<string>()
   for (const p of measurable) {
     for (const q of readings(p)) {
@@ -74,6 +73,11 @@ export function measurePlan(
   for (const d of register.decisions) {
     if (d.paths.some(dp => measurable.some(p => readings(p).some(q => pathsOverlap(q, dp))))) reasons.push(r.decision(d.text))
   }
+  if (entries.length === 0 || answer.jobs.some(j => j.paths === undefined)) reasons.push(r.noPaths)
+  if (entries.some(unmeasurable)) reasons.push(r.unmeasurable)
+  const wide = measurable.filter(tooWide)
+  if (wide.some(p => !lonely(p))) reasons.push(r.tooWide)
+  if (wide.some(lonely)) reasons.push(r.rootName)
   if (entries.length > MAX_PLAN_ENTRIES) reasons.push(r.tooMany(entries.length, MAX_PLAN_ENTRIES))
 
   return reasons.length === 0 ? { simple: true, reasons: [r.simple(entries.length)], entries } : { simple: false, reasons, entries }
