@@ -167,8 +167,8 @@ export const strings = {
       addTestsHint: 'Without tests the app always stops for you before finishing a change.',
     },
     found: {
-      askBefore: 'Ask me before changing (optional)',
-      askBeforeHint: 'Tick the folders you want a say on. Sign-in, payments and the database already stop for you.',
+      askBefore: 'Advanced: parts of the project the app must ask you about first',
+      askBeforeHint: 'You can skip this. Sign-in, payments and the database already stop for your yes. Tick a folder only if nothing in it should change without asking you.',
     },
     models: {
       lead: 'Which model does each step use?',

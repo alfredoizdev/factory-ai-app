@@ -110,8 +110,10 @@ export function ExistingStep({
             </div>
           )}
           {folders.length > 0 && (
-            <div data-testid="ask-before" role="group" aria-label={strings.wizard.found.askBefore} style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: 14.5, color: brand.quiet }}>{strings.wizard.found.askBefore}</span>
+            // Folded away: most people never need it, since sign-in, payments and the database already stop for them.
+            <details data-testid="ask-before" style={{ fontSize: 13.5, color: brand.quiet }}>
+              <summary style={{ cursor: 'pointer' }}>{strings.wizard.found.askBefore}</summary>
+              <div role="group" aria-label={strings.wizard.found.askBefore} style={{ display: 'grid', gap: 6, marginTop: 8 }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
                 {folders.map(f => (
                   <label key={f} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13.5 }}>
@@ -121,7 +123,8 @@ export function ExistingStep({
                 ))}
               </div>
               <span style={hint}>{strings.wizard.found.askBeforeHint}</span>
-            </div>
+              </div>
+            </details>
           )}
           <span style={{ fontSize: 12, color: brand.quiet, lineHeight: 1.45 }}>{s.installNote(analysis.packageManager)}</span>
           {analysis.defaultBranch === null && (
