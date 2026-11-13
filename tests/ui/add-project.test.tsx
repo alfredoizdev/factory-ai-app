@@ -148,7 +148,7 @@ test('from scratch: five named steps, logos to pick from, a folder named after t
   // Balanced is the preset already marked; Best quality fills every step, and one step can then be changed by hand.
   expect(screen.getByTestId('preset-balanced')).toHaveAttribute('aria-pressed', 'true')
   fireEvent.click(screen.getByTestId('preset-best'))
-  expect(screen.getByLabelText(w.models.modelFor('Build'))).toHaveValue('opus')
+  expect(screen.getByLabelText(w.models.modelFor('Build'))).toHaveValue('fable')
   fireEvent.change(screen.getByLabelText(w.models.modelFor('Plan')), { target: { value: 'sonnet' } })
   expect(screen.getByTestId('preset-best')).toHaveAttribute('aria-pressed', 'false')
   expect(screen.getByText(w.models.testsNote)).toBeInTheDocument()
@@ -156,7 +156,7 @@ test('from scratch: five named steps, logos to pick from, a folder named after t
   const summary = screen.getByTestId('wizard-summary')
   expect(summary).toHaveTextContent('Next.js, Prisma and PostgreSQL')
   expect(summary).toHaveTextContent('/Users/me/Desktop/shop')
-  expect(summary).toHaveTextContent('Plan Sonnet · Build Opus · Review Opus')
+  expect(summary).toHaveTextContent('Plan Sonnet · Build Fable (most capable) · Review Opus')
   fireEvent.click(screen.getByRole('button', { name: new RegExp(strings.setup.create) }))
   await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith('w1'))
   expect(sentTo(fetchMock, '/api/projects/scratch')).toEqual({
@@ -166,7 +166,7 @@ test('from scratch: five named steps, logos to pick from, a folder named after t
     stack: { frontEnd: 'nextjs', backEnds: ['prisma', 'postgres'] },
     addTests: true,
     askMode: 'what_matters',
-    models: { plan: 'sonnet', build: 'opus', review: 'opus' },
+    models: { plan: 'sonnet', build: 'fable', review: 'opus' },
   })
   // The first task waits for the canvas to put it in the task box.
   expect(window.sessionStorage.getItem('factory.firstTask.w1')).toBe('Create the project')

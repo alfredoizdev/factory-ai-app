@@ -4,7 +4,9 @@
 export const MODEL_STEPS = ['plan', 'build', 'review'] as const
 export type ModelStep = (typeof MODEL_STEPS)[number]
 
-export const MODEL_CHOICES = ['default', 'haiku', 'sonnet', 'opus'] as const
+// The models of the one agent the app drives today (Claude), least to most capable. When a second agent is added
+// (a local one, say), this list is what has to come from the chosen agent instead of being written here.
+export const MODEL_CHOICES = ['default', 'haiku', 'sonnet', 'opus', 'fable'] as const
 export type ModelChoice = (typeof MODEL_CHOICES)[number]
 
 export type StepModels = Record<ModelStep, ModelChoice>
@@ -12,7 +14,8 @@ export type StepModels = Record<ModelStep, ModelChoice>
 export const PRESETS = {
   fast: { plan: 'haiku', build: 'sonnet', review: 'sonnet' },
   balanced: { plan: 'default', build: 'default', review: 'default' },
-  best: { plan: 'opus', build: 'opus', review: 'opus' },
+  // The most capable model plans and builds; another one reviews, since a model tends to agree with itself.
+  best: { plan: 'fable', build: 'fable', review: 'opus' },
 } as const satisfies Record<string, StepModels>
 
 export type PresetName = keyof typeof PRESETS
