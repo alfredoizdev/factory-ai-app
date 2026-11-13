@@ -96,6 +96,8 @@ function ghFailure(e: unknown): ShipError {
   const said = redact(String(err.message ?? '')).replace(/[a-z]+:\/\/[^\s]*@/gi, '')
   if (/auth login|not logged|authentication/i.test(said)) return new ShipError(strings.ship.notLoggedIn, 409, 'no_connection')
   if (/no git remotes|not a github|none of the git remotes/i.test(said)) return new ShipError(strings.ship.notGitHub, 409, 'no_connection')
+  // git's own usage text: the branch the pull request goes into is not on GitHub. Said in plain words instead.
+  if (/separate paths from revisions|unknown revision|ambiguous argument|bad revision/i.test(said)) return new ShipError(strings.ship.noBase)
   return new ShipError(strings.ship.ghSaid(clip(said.trim().split('\n').filter(Boolean).slice(-2).join(' '), 300)))
 }
 

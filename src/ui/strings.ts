@@ -329,6 +329,8 @@ export const strings = {
     notLoggedIn: 'The GitHub command line is not signed in. Run gh auth login in a terminal, then try again.',
     notGitHub: 'This project\'s origin is not on GitHub, so it cannot open a pull request there. Send to GitHub pushes the branch only.',
     ghSaid: (said: string) => `GitHub refused: ${said}`,
+    // gh could not compare the change with the main branch, because GitHub does not have that branch.
+    noBase: 'GitHub does not have this project\'s main branch yet, so the pull request has nowhere to go. Press the button again: the app sends the main branch first.',
     openFirst: 'Open the pull request first.',
     closed: 'That pull request was closed on GitHub.',
     conflicts: 'The pull request conflicts with main. It cannot be merged as it is.',
