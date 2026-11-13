@@ -18,10 +18,16 @@ export function pathsOverlap(a: string, b: string): boolean {
   return insideCoreArea(x, y) || insideCoreArea(y, x)
 }
 
+const ROUTE_VALUE = /^\[(\[\.\.\.[\w-]+\]|(\.\.\.)?[\w-]+)\](\.[a-z0-9]+)*$/i
+
 function unmeasurable(p: string): boolean {
   if (p === '' || p === '.' || p === './' || p.startsWith('/') || p.startsWith('~') || /^[a-z]:/i.test(p)) return true
-  if (/[*?[\]{}\\]/.test(p) || /[\u0000-\u001f\u007f]/.test(p)) return true
-  return (p.endsWith('/') ? p.slice(0, -1) : p).split('/').some(seg => seg === '' || seg === '.' || seg === '..' || seg !== seg.trim())
+  if (/[*?{}\\]/.test(p) || /[\u0000-\u001f\u007f]/.test(p)) return true
+  // Square brackets are a pattern, except as a whole folder or file name the way Next.js writes a page that takes a
+  // value: "[team]", "[...slug]", "[[...slug]]", "[id].tsx". Those are real names and are read as they are.
+  const segs = (p.endsWith('/') ? p.slice(0, -1) : p).split('/')
+  if (segs.some(seg => /[[\]]/.test(seg) && !ROUTE_VALUE.test(seg))) return true
+  return segs.some(seg => seg === '' || seg === '.' || seg === '..' || seg !== seg.trim())
 }
 
 /** The app cannot tell a file from a folder written without its slash, so such an entry is read both ways. */

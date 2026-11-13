@@ -42,6 +42,17 @@ test('sensitive files that only a file name shows are caught', () => {
   expect(measure([job('src/app/x/route.ts')]).reasons).toEqual([r.sensitive(strings.risk.areas.server)])
 })
 
+test.each(['src/app/[team]/page.tsx', 'src/app/[...slug]/page.tsx', 'src/app/[[...slug]]/layout.tsx', 'src/pages/[id].tsx', 'src/app/(shop)/[item]/'])(
+  'a Next.js page that takes a value (%j) is a real name and is measured',
+  entry => {
+    expect(measure([job(entry)])).toMatchObject({ simple: true })
+  },
+)
+
+test.each(['src/x[0-9]/y.ts', 'src/app/[team/page.tsx', 'src/a]b/c.ts'])('square brackets used as a pattern (%j) cannot be measured', entry => {
+  expect(measure([job(entry)])).toMatchObject({ simple: false, reasons: [r.unmeasurable] })
+})
+
 test.each(['src/**/*.tsx', '/etc/x', '../x.ts', '.', './', 'src/../x.ts', 'a/{b,c}.ts', ''])('%j cannot be measured', entry => {
   expect(measure([job(entry)])).toMatchObject({ simple: false, reasons: [r.unmeasurable] })
 })
