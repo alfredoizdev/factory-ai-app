@@ -86,9 +86,11 @@ const list = (items: readonly string[]): string => (items.length <= 1 ? (items[0
 // The planner's prompt line for the person's answer to its own question: an answer, not a request to change a plan.
 const answerLine = (note: string) => `Before this plan, you asked the person a question. ${note} That question is settled: do not ask it again.`
 
+const APP_NAME = 'AI Factory'
+
 export const strings = {
   app: {
-    name: 'AI Factory',
+    name: APP_NAME,
     tagline: 'Design a flow of blocks and watch AI agents run it.',
   },
   blocks: {
@@ -447,7 +449,19 @@ export const strings = {
           ? ({ keep: 'you chose to keep the fix', undo: 'you chose to undo the fix', leave: 'you were not sure, so the fix was undone' } as Record<string, string>)[option] ?? null
           : ({ fix: 'you chose to have it fixed', leave: 'you chose to leave it as it is' } as Record<string, string>)[option] ?? null,
   },
+  tell: {
+    waitingTitle: (n: number) => `${n} waiting for you`,
+    readyTitle: 'Ready to publish',
+    tabTitle: (part: string | null) => (part ? `${part} \u00b7 ${APP_NAME}` : APP_NAME),
+    needsAnswer: 'A task needs your answer',
+    readyToPublish: 'A change is ready to publish',
+    offer: 'Get a notice from this browser when a task needs you',
+    on: 'This browser will tell you when a task needs you.',
+    blocked: 'This browser is set not to show notices from the app. You can change that in its site settings.',
+  },
   history: {
+    wentOnItsOwn: 'Went on its own',
+    waitingForYou: 'Waiting for you',
     title: 'Past tasks',
     newTaskTitle: 'New task',
     newTaskText: 'Describe the change you want in the card at the bottom right, then press Run. The flow below is what it will go through.',

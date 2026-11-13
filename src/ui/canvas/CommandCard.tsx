@@ -85,8 +85,10 @@ export const CommandCard = forwardRef<
     onRecordChanged?: () => void
     /** The reviewers ran on this task: the human check lists what they found. */
     showFindings?: boolean
+    /** The browser's notices: whether to offer them, and what pressing the offer does. Shown while the task works. */
+    notice?: { offer: 'ask' | 'on' | 'blocked' | 'none'; onAllow: () => void }
   }
->(function CommandCard({ planMeasure, stopForMe = false, onStopForMe, onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
+>(function CommandCard({ planMeasure, stopForMe = false, onStopForMe, onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, notice, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : mode === 'failed' ? strings.failure.label : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : mode === 'failed' ? strings.failure.placeholder : strings.run.requestPlaceholder
@@ -185,6 +187,7 @@ export const CommandCard = forwardRef<
           {strings.card.working}
         </div>
       )}
+      {!loading && mode === 'working' && notice && <NoticeOffer notice={notice} />}
       {!loading && mode === 'plan' && runId && <PlanSection measure={planMeasure} away={away} runId={runId} note={text} composer={withSend} onSent={onSent} />}
       {!loading && mode === 'question' && runId && <QuestionSection runId={runId} record={record} failed={recordFailed} mark={recordMark} readMark={recordReadMark} askedId={askedId} onChanged={() => onRecordChanged?.()} />}
       {!loading && mode === 'waiting' && runId && (
@@ -248,4 +251,26 @@ function StopForMe({ checked, onChange }: { checked: boolean; onChange: (v: bool
       )}
     </div>
   )
+}
+
+/** Once, while the task works: the button that lets the browser tell the person; after the press, what the browser answered. */
+function NoticeOffer({ notice }: { notice: { offer: 'ask' | 'on' | 'blocked' | 'none'; onAllow: () => void } }) {
+  const [pressed, setPressed] = useState(false)
+  const note = { fontSize: 12, lineHeight: 1.4, color: theme.dim, margin: 0 }
+  if (notice.offer === 'ask')
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setPressed(true)
+          notice.onAllow()
+        }}
+        style={{ justifySelf: 'start', textAlign: 'left', padding: '5px 10px', borderRadius: 8, border: `1px solid ${theme.border}`, background: 'transparent', color: 'inherit', fontSize: 12.5, cursor: 'pointer' }}
+      >
+        {strings.tell.offer}
+      </button>
+    )
+  if (pressed && notice.offer === 'on') return <p style={note}>{strings.tell.on}</p>
+  if (pressed && notice.offer === 'blocked') return <p style={note}>{strings.tell.blocked}</p>
+  return null
 }

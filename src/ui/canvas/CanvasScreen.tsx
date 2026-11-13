@@ -1,6 +1,7 @@
 'use client'
 
 import { PastTasks } from './PastTasks'
+import { attentionOf, useAttention } from './attention'
 import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
 import type { FailureActions } from './FailurePanel'
@@ -248,6 +249,8 @@ export function CanvasScreen({
   // How many tasks the project has, once known: with none, the screen invites the first one instead of pointing
   // at past tasks that do not exist.
   const [taskCount, setTaskCount] = useState<number | null>(noTasksYet ? 0 : null)
+  // How many of this project's tasks wait for the person, from the list the screen already reads.
+  const [waitingCount, setWaitingCount] = useState(0)
   // Nothing open and nothing being started (the open task was deleted, or the project was just opened): the screen
   // says so in its middle, without the flow. A project with no tasks at all keeps its flow and invites the first one.
   const nothingOpen = run === null && taskCount !== 0 && emptyBecause !== 'new'
@@ -381,6 +384,12 @@ export function CanvasScreen({
           : run && runStatus === 'failed' && run.providerId !== DEMO_PROVIDER_ID
             ? 'failed'
             : 'idle'
+
+  // Telling the person when a task needs them: the tab's title, and a notice from the browser if they allowed it.
+  // Ready to publish reads the ship state the result card already read; nothing new is asked for.
+  const shipState = shipFor && shipFor.runId === runIdNow ? shipFor.state : null
+  const shipReady = !!shipState && shipState.pr?.state === 'open' && shipState.checksDone && !shipState.checksFailed
+  const { offer: noticeOffer, allow: allowNotice } = useAttention({ attention: attentionOf(mode, shipReady), waitingCount, taskTitle: run?.title ?? null })
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -645,6 +654,7 @@ export function CanvasScreen({
               void watchRun(id)
             }}
             onCount={setTaskCount}
+            onWaiting={setWaitingCount}
             onDeleted={id => {
               // The open task is gone: leave it, and close the list so the "No task open" screen is seen.
               if (id === run?.runId) {
@@ -693,6 +703,7 @@ export function CanvasScreen({
           askedId={askedIdOf(events)}
           onRecordChanged={reloadRecord}
           showFindings={reviewRan}
+          notice={{ offer: noticeOffer, onAllow: allowNotice }}
         />
         <Canvas
           graph={graph}

@@ -316,3 +316,49 @@ test('a task made with "stop for me" keeps it, and the default is off', async ()
   expect((await getRun(plain.runId)).stopForMe).toBe(false)
   expect((await getRun(stopped.runId)).stopForMe).toBe(true)
 })
+
+describe('passedOnItsOwn in the list of tasks', () => {
+  async function listed() {
+    const { listRuns } = await import('@/engine/run')
+    const { appendEvent } = await import('@/engine/events')
+    const { approvals, nodeRuns } = await import('@/db/schema')
+    const { and } = await import('drizzle-orm')
+    const workflowId = await newWorkflow()
+    await saveDraft(workflowId, defaultGraph())
+    await publishVersion(workflowId)
+    const make = async (status: string) => {
+      const { runId } = await createRun({ workflowId, request: status })
+      await db.update(runs).set({ status }).where(eq(runs.id, runId))
+      const node = (await db.select().from(nodeRuns).where(and(eq(nodeRuns.runId, runId), eq(nodeRuns.blockId, 'human'))))[0]!
+      return { runId, node }
+    }
+    // The way the executor writes a gate the app passed (passLowRiskGate).
+    const appPasses = async (r: { runId: string; node: { id: string } }) => {
+      await db.update(nodeRuns).set({ state: 'passed' }).where(eq(nodeRuns.id, r.node.id))
+      await appendEvent({ runId: r.runId, nodeRunId: r.node.id, type: 'node.completed', payload: { blockId: 'human', summary: 'x', autoApproved: true } })
+    }
+    const byApp = await make('completed')
+    await appPasses(byApp)
+    const byPerson = await make('completed')
+    await appPasses(byPerson)
+    const [projectRow] = await db.select().from(runs).where(eq(runs.id, byPerson.runId))
+    await db.insert(approvals).values({ id: ulid(), projectId: projectRow!.projectId, runId: byPerson.runId, nodeRunId: byPerson.node.id, decision: 'approved', actor: 'me', diffHash: 'h', createdAt: new Date().toISOString(), consumedAt: new Date().toISOString() })
+    const plain = await make('completed')
+    const failed = await make('failed')
+    await appPasses(failed)
+    const running = await make('running')
+    await appPasses(running)
+    const list = await listRuns(workflowId)
+    const own = (r: { runId: string }) => list.find(x => x.runId === r.runId)!.passedOnItsOwn
+    return { own, byApp, byPerson, plain, failed, running }
+  }
+
+  test('true only for a finished task the app passed and no person approved', async () => {
+    const { own, byApp, byPerson, plain, failed, running } = await listed()
+    expect(own(byApp)).toBe(true)
+    expect(own(byPerson)).toBe(false)
+    expect(own(plain)).toBe(false)
+    expect(own(failed)).toBe(false)
+    expect(own(running)).toBe(false)
+  })
+})
