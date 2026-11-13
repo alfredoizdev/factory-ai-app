@@ -13,6 +13,7 @@ import { createRun, publishVersion, saveDraft } from '@/engine/run'
 import { createRunWorktree } from '@/engine/worktree'
 import { POST } from '@/app/api/runs/[runId]/delivery/route'
 import { strings } from '@/ui/strings'
+import { fakeGitHubOrigin } from '../fake-github'
 
 beforeAll(() => migrateDb())
 const now = () => new Date().toISOString()
@@ -431,6 +432,15 @@ test('a suggested commit message is used, with the provenance line kept', async 
   expect(body).toContain('Asked for: Outline buttons in the other team colour')
 })
 
+test('the request in the commit, which can leave the computer in a pull request, has its secrets taken out', async () => {
+  const { runId, repo } = await finishedRun()
+  await db.update(runs).set({ request: 'Use the key API_KEY=supersecret123 for the outline buttons' }).where(eq(runs.id, runId))
+  const kept = (await keepOnBranch(runId, { message: { subject: 'Outline the buttons', body: '' } }))
+  const body = git(repo, 'log', '-1', '--format=%b', kept.branch!)
+  expect(body).toContain('Asked for: Use the key')
+  expect(body).not.toContain('supersecret123')
+})
+
 describe('deleting a task', () => {
   test('removes its record and its working copy, and keeps the saved branch in the project', async () => {
     const { deleteRun } = await import('@/engine/run-delete')
@@ -466,7 +476,7 @@ describe('shipping through GitHub', () => {
     const r = await finishedRun()
     const origin = mkdtempSync(join(tmpdir(), 'factory-ship-origin-'))
     git(origin, 'init', '-q', '--bare')
-    git(r.repo, 'remote', 'add', 'origin', origin)
+    fakeGitHubOrigin(r.repo, origin)
     await keepOnBranch(r.runId, { name: 'ai/ship-me' })
     return r
   }
@@ -531,7 +541,7 @@ describe('shipping through GitHub', () => {
     await expect(mergePullRequest(runId, gh)).rejects.toBeInstanceOf(ShipError)
     view = { ...view, mergeable: 'MERGEABLE' }
     const merged = await mergePullRequest(runId, gh)
-    expect(calls.find(c => c[1] === 'merge')).toEqual(['pr', 'merge', '5', '--squash'])
+    expect(calls.find(c => c[1] === 'merge')).toEqual(['pr', 'merge', '5', '--repo', 'ai-factory-test/never-real', '--squash'])
     expect(merged.pr!.state).toBe('merged')
     expect(merged.deploy).toEqual([{ name: 'Deploy', state: 'passed', url: 'https://site' }])
   })
@@ -735,7 +745,7 @@ describe('the pieces the automatic pull request reuses', () => {
     const { runId, repo } = await finishedRun()
     const o = mkdtempSync(join(tmpdir(), 'factory-gh-'))
     git(o, 'init', '-q', '--bare')
-    git(repo, 'remote', 'add', 'origin', o)
+    fakeGitHubOrigin(repo, o)
     await keepOnBranch(runId)
     for (const [said, kind] of [['To get started with GitHub CLI, please run:  gh auth login', 'no_connection'], ['none of the git remotes configured for this repository point to a known GitHub host', 'no_connection'], ['HTTP 502', undefined]] as const) {
       const err = await openPullRequest(runId, async () => {

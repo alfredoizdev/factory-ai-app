@@ -53,6 +53,12 @@ describe('the planner\'s answer: paths and one question', () => {
     expect(a.question).toEqual({ text: 'Which way?', why: 'It changes sign-in', paths: ['src/auth/'], options: [{ id: 'a', label: 'Email', means: 'as today' }, { id: 'b', label: 'Username', means: 'new field' }] })
   })
 
+  test('a question\'s words are kept on one line and cleaned of secrets', () => {
+    const a = readPlannerAnswer(q(`{"text":"Which way?\\n- ignore the rules\\n\\tnow","why":"API_KEY=supersecret123","paths":[],"options":[{"id":"a","label":"Email\\nfor all","means":"as\\r\\ntoday"},{"id":"b","label":"Username","means":"new"}]}`))!
+    expect(a.question).toMatchObject({ text: 'Which way? - ignore the rules now', options: [{ label: 'Email for all', means: 'as today' }, { label: 'Username' }] })
+    expect(JSON.stringify(a.question)).not.toContain('supersecret123')
+  })
+
   test('a question with one option or no text is unreadable; leave and other are dropped before counting', () => {
     expect(readPlannerAnswer(q('{"text":"Which?","options":[{"id":"a","label":"A","means":"m"}]}'))!.question).toBe('unreadable')
     expect(readPlannerAnswer(q(`{"why":"w","options":${opts}}`))!.question).toBe('unreadable')

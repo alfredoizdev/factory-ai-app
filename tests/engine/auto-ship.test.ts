@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { db, migrateDb } from '@/db/client'
 import { runs } from '@/db/schema'
 import type { AskMode } from '@/domain/ask-mode'
@@ -21,6 +21,7 @@ import { createDemoProvider } from '@/providers/demo'
 import type { AgentProvider } from '@/providers/types'
 import type { TestRun } from '@/engine/test-runner'
 import { strings } from '@/ui/strings'
+import { fakeGitHubOrigin } from '../fake-github'
 
 // After a change passes, in "only what matters": kept on its branch, sent to GitHub and opened as a pull request, each
 // on its own, each safe to run twice, and every missing piece or refusal said softly with the change still kept.
@@ -30,18 +31,13 @@ beforeAll(() => migrateDb())
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
 
 /**
- * `github`: an origin that reads as GitHub when the app judges it, while every push lands in a bare repository in a
- * temporary folder (its pushurl), and this repository may use no network protocol at all, so nothing can reach a real
- * host. `plain`: that bare repository as the origin itself, which is not GitHub. `missing`: GitHub-looking, but pushes
- * go to a folder that does not exist. `none`: no origin.
+ * `github`: an origin that is GitHub by both its fetch and its push address, while git only ever talks to a bare
+ * repository in a temporary folder (see fake-github.ts), and this repository may use no network protocol at all, so
+ * nothing can reach a real host. `plain`: that bare repository as the origin itself, which is not GitHub. `missing`:
+ * GitHub, but what is sent goes to a folder that does not exist. `none`: no origin.
  */
 type Origin = 'github' | 'plain' | 'missing' | 'none'
-const NEVER_REAL = 'https://github.com/ai-factory-test/never-real.git'
-function githubLooking(dir: string, pushTo: string) {
-  git(dir, 'remote', 'add', 'origin', NEVER_REAL)
-  git(dir, 'config', 'remote.origin.pushurl', pushTo)
-  for (const p of ['https', 'http', 'ssh', 'git']) git(dir, 'config', `protocol.${p}.allow`, 'never')
-}
+const githubLooking = (dir: string, pushTo: string) => fakeGitHubOrigin(dir, pushTo)
 /** A project made the way the app makes one, on a real folder with one commit, and where its origin points. */
 async function project(origin: Origin, askMode: AskMode = 'everything') {
   const dir = mkdtempSync(join(tmpdir(), 'factory-auto-'))
@@ -158,7 +154,9 @@ test('kept, sent and opened, once each', async () => {
   expect(git(bare, 'rev-parse', state.branch!)).toBe(state.commit)
   expect(git(bare, 'log', '-1', '--format=%s', state.branch!)).toBe('Add a footer with the year')
   expect(git(bare, 'branch', '--list', 'main')).toBe('') // their main was not sent
-  expect(gh.calls).toContainEqual(['pr', 'create', '--base', 'main', '--head', state.branch, '--fill-first'])
+  // The pull request goes to origin's repository by name, never to whichever repository gh would pick itself.
+  expect(gh.calls).toContainEqual(['pr', 'create', '--repo', 'ai-factory-test/never-real', '--base', 'main', '--head', state.branch, '--fill-first'])
+  expect(gh.calls.filter(c => c[0] === 'pr').every(c => c[c.indexOf('--repo') + 1] === 'ai-factory-test/never-real')).toBe(true)
   expect(state.autoShip).toEqual({ state: 'opened', step: null, reason: null, message: null, at: expect.any(String) })
   expect(gh.calls.some(c => c.includes('merge'))).toBe(false)
 })
@@ -206,9 +204,9 @@ test('no origin: it is kept, nothing is sent, and the run is still completed', a
   expect(await statusOf(runId)).toBe('completed')
 })
 
-test('the test origin cannot reach any network host', async () => {
+test('the test origin cannot reach any network host: without the stand-in for GitHub, git refuses to connect', async () => {
   const { dir } = await project('github')
-  expect(() => execFileSync('git', ['ls-remote', 'origin'], { cwd: dir, stdio: 'pipe' })).toThrow()
+  expect(() => execFileSync('git', ['-c', 'remote.origin.vcs=', 'ls-remote', 'origin'], { cwd: dir, stdio: 'pipe' })).toThrow()
 })
 
 describe('nothing is sent without the whole way to a pull request', () => {
@@ -237,6 +235,27 @@ describe('nothing is sent without the whole way to a pull request', () => {
     const gh = fakeGh('You are not logged into any GitHub hosts. To log in, run: gh auth login')
     await sentNothing('github', gh, strings.ship.notLoggedIn)
     expect(gh.calls).toEqual([['auth', 'status', '--hostname', 'github.com']])
+  })
+
+  test('an origin that reads from GitHub but sends somewhere else is judged by where it sends', async () => {
+    const gh = fakeGh()
+    const { runId, bare, dir } = await approvedRun('github')
+    git(dir, 'config', 'remote.origin.pushurl', bare)
+    await autoKeep(runId, { gh, ask: fakeAsk })
+    expect(await autoSend(runId, { gh })).toEqual({ ok: false })
+    expect((await autoShips(runId)).at(-1)).toMatchObject({ step: 'send', reason: 'no_connection', message: strings.ship.notGitHub })
+    expect(branchesIn(bare)).toBe('')
+    expect(gh.calls).toEqual([])
+  })
+
+  test('opening checks the whole way again before it sends anything, even when the send step was skipped', async () => {
+    const { runId, bare } = await approvedRun('github')
+    await autoKeep(runId, { ask: fakeAsk })
+    const gh = fakeGh('You are not logged into any GitHub hosts. To log in, run: gh auth login')
+    expect(await autoOpen(runId, { gh })).toEqual({ ok: false })
+    expect((await autoShips(runId)).at(-1)).toMatchObject({ state: 'stopped', step: 'open', reason: 'no_connection', message: strings.ship.notLoggedIn })
+    expect(branchesIn(bare)).toBe('')
+    expect((await deliveryState(runId)).pushed).toBe(false)
   })
 })
 
@@ -343,6 +362,40 @@ describe('when a step keeps failing until the run gives up', () => {
     await afterRunGaveUp(runId)
     expect(await autoShips(runId)).toEqual([])
     expect(await statusOf(runId)).toBe('failed')
+  })
+
+  test('a pull request recorded before the step failed is said to be open, not stopped', async () => {
+    const { runId } = await approvedRun('github')
+    const deps = { gh: fakeGh(), ask: fakeAsk }
+    await autoKeep(runId, deps)
+    await autoSend(runId, deps)
+    const { openPullRequest } = await import('@/engine/ship')
+    await openPullRequest(runId, deps.gh)
+    // The open step then failed for good before it said "opened".
+    await afterRunGaveUp(runId)
+    expect((await autoShips(runId)).map(a => a.state)).toEqual(['started', 'opened'])
+    expect(await statusOf(runId)).toBe('completed')
+  })
+
+  test('the second cleanup runs when the first throws, and each error is logged', async () => {
+    const { runId } = await approvedRun('github')
+    await autoKeep(runId, { ask: fakeAsk })
+    // As if the run were still going, so failing it is tried, and the database refuses that one update.
+    await db.update(runs).set({ status: 'running' }).where(eq(runs.id, runId))
+    await db.execute(sql.raw(`create function refuse_fail() returns trigger language plpgsql as $$ begin raise exception 'refused in the test'; end $$`))
+    await db.execute(sql.raw(`create trigger refuse_fail before update on runs for each row when (new.status = 'failed' and old.id = '${runId}') execute function refuse_fail()`))
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      // The first cleanup's own error is what Inngest is given.
+      await expect(afterRunGaveUp(runId)).rejects.toThrow(/update "runs"/)
+      expect((await autoShips(runId)).at(-1)).toMatchObject({ state: 'stopped', step: 'send', reason: 'failed' })
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(String(logged.mock.calls[0]![0])).toContain('could not be marked as failed')
+    } finally {
+      logged.mockRestore()
+      await db.execute(sql.raw('drop trigger refuse_fail on runs'))
+      await db.execute(sql.raw('drop function refuse_fail()'))
+    }
   })
 
   test('a run that was opened is left as it is', async () => {

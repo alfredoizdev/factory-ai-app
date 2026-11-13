@@ -9,7 +9,7 @@ import { keepOptionsFor } from '@/engine/delivery-options'
 import { appendEvent } from '@/engine/events'
 import { projectHere } from '@/engine/machine'
 import { humanCheckPassedBy } from '@/engine/passed-check'
-import { clip } from '@/engine/redact'
+import { clip, redact } from '@/engine/redact'
 import { gitHubConnectionProblem, openPullRequest, ShipError, type Gh } from '@/engine/ship'
 import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
@@ -43,7 +43,8 @@ async function softly(runId: string, step: Step, work: () => Promise<void>): Pro
 }
 
 async function stop(runId: string, step: Step, reason: 'no_connection' | 'failed', message: string): Promise<void> {
-  await record(runId, { state: 'stopped', step, reason, message: clip(message, 300) })
+  // The last step before the browser gets it: cleaned here too, whatever a caller already did.
+  await record(runId, { state: 'stopped', step, reason, message: clip(redact(message).replace(/[a-z]+:\/\/[^\s]*@/gi, ''), 300) })
 }
 
 /**
@@ -113,10 +114,15 @@ async function prRecorded(runId: string): Promise<boolean> {
 
 /**
  * When a step kept failing until the run gave up: a start with no ending is ended, at the step it got to, so the card
- * never says it is still sending. Nothing else changes; the run keeps its status.
+ * never says it is still sending. A pull request already recorded is open, whatever failed after it: it is said to be
+ * open. Nothing else changes; the run keeps its status.
  */
 export async function endAutoShipAfterError(runId: string): Promise<void> {
   if ((await latest(runId))?.state !== 'started') return
+  if (await prRecorded(runId)) {
+    await record(runId, { state: 'opened', step: null, reason: null, message: null })
+    return
+  }
   const state = await deliveryState(runId)
   await stop(runId, !state.kept ? 'keep' : !state.pushed ? 'send' : 'open', 'failed', strings.run.internalFailure)
 }

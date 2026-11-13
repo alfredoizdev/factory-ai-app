@@ -728,7 +728,8 @@ export async function unreadableInLatestReview(runId: string): Promise<number> {
   return [...latest.values()].reduce((n, v) => n + v.unreadable, 0)
 }
 
-async function assessGate(runId: string, block: PlannedBlock, workspace: Workspace): Promise<RiskAssessment | null> {
+/** `stopForMe`: recorded with the measure, so the gate card can say why a low-risk change still waits. */
+async function assessGate(runId: string, block: PlannedBlock, workspace: Workspace, stopForMe = false): Promise<RiskAssessment | null> {
   if (!workspace.workdir || !workspace.baseCommit) return null
   // The change as it stands now, recorded for any computer that shows the gate (and binds a decision to its hash).
   await changeUnderReview(runId).catch(() => null) // unreadable now: the gate reads it again when shown
@@ -750,6 +751,7 @@ async function assessGate(runId: string, block: PlannedBlock, workspace: Workspa
           reasons: assessment.reasons.map(r => clip(r, 200)),
           filesCount: assessment.files.length,
           linesChanged: assessment.linesChanged,
+          ...(stopForMe ? { stopForMe: true } : {}),
         },
       },
       tx,
@@ -1226,8 +1228,8 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     } else if (block.kind === 'human') {
       // A run that changed files is measured before the gate, so the card can say what it would be waved through or
       // stopped for. It passes on its own only when the person turned that on and the measurement says low risk.
-      const risk = prepared.workdir && prepared.baseCommit ? await step.run(id(`assess-${block.id}`), () => assessGate(runId, block, prepared)) : null
       const { mode, stopForMe } = modeOf(plan)
+      const risk = prepared.workdir && prepared.baseCommit ? await step.run(id(`assess-${block.id}`), () => assessGate(runId, block, prepared, stopForMe)) : null
       if (risk?.level === 'low' && passesLowRisk(mode, stopForMe)) {
         result = await step.run(id(`node-${block.id}`), () => passLowRiskGate(runId, block))
       } else {
@@ -1364,16 +1366,19 @@ export async function failRunAfterError(runId: string): Promise<void> {
  * saying "sending" is ended where it got to. Both are tried; an error in either is logged and thrown, for Inngest.
  */
 export async function afterRunGaveUp(runId: string): Promise<void> {
+  const said = (e: unknown) => redact(e instanceof Error ? e.message : String(e))
   let first: unknown = null
   try {
     await failRunAfterError(runId)
   } catch (e) {
     first = e
+    console.error(`Run ${runId}: the run could not be marked as failed after it gave up:`, said(e))
   }
+  // Tried even when the first failed: each cleanup is on its own, and both errors are logged.
   try {
     await endAutoShipAfterError(runId)
   } catch (e) {
-    console.error(`Run ${runId}: the automatic pull request could not be ended after the run gave up:`, redact(e instanceof Error ? e.message : String(e)))
+    console.error(`Run ${runId}: the automatic pull request could not be ended after the run gave up:`, said(e))
     throw e
   }
   if (first) throw first

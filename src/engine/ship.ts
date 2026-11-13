@@ -3,7 +3,8 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { events, projects, runs } from '@/db/schema'
 import { defaultBranch } from '@/engine/branches'
-import { DeliveryError, deliveryState, githubPullUrl, originUrl, pushBranch } from '@/engine/delivery'
+import { DeliveryError, deliveryState, originPushUrl, originUrl, pushBranch } from '@/engine/delivery'
+import { githubRepoOf } from '@/engine/project-setup'
 import { appendEventSync } from '@/engine/events'
 import { clip, redact } from '@/engine/redact'
 import { strings } from '@/ui/strings'
@@ -99,13 +100,28 @@ function ghFailure(e: unknown): ShipError {
 }
 
 /**
- * What stands between this project and a pull request on GitHub, read before anything is sent: an origin, on
- * github.com, and gh installed and signed in. Null when all are there; otherwise the refusal that says which is missing.
+ * The GitHub repository ("owner/name") that origin sends to, read from its push address; null when that is not on
+ * github.com. Every gh call names it, because gh left to itself prefers a remote called "upstream" (or "github") over
+ * origin, and the pull request belongs where the branch was sent.
+ */
+export function originRepo(repo: string): string | null {
+  const push = originPushUrl(repo)
+  return push ? githubRepoOf(push) : null
+}
+/** `--repo owner/name` for gh when origin is on GitHub; nothing otherwise (gh then says what it finds). */
+const named = (repo: string): string[] => {
+  const r = originRepo(repo)
+  return r ? ['--repo', r] : []
+}
+
+/**
+ * What stands between this project and a pull request on GitHub, read before anything is sent: an origin, that sends
+ * to github.com (judged by where it pushes, not where it reads from), and gh installed and signed in. Null when all
+ * are there; otherwise the refusal that says which is missing.
  */
 export async function gitHubConnectionProblem(repo: string, gh: Gh = defaultGh): Promise<ShipError | null> {
-  const remote = originUrl(repo)
-  if (remote === null) return new ShipError(strings.delivery.noRemote, 409, 'no_connection')
-  if (githubPullUrl(remote, 'x') === null) return new ShipError(strings.ship.notGitHub, 409, 'no_connection')
+  if (originUrl(repo) === null) return new ShipError(strings.delivery.noRemote, 409, 'no_connection')
+  if (originRepo(repo) === null) return new ShipError(strings.ship.notGitHub, 409, 'no_connection')
   try {
     await gh(['auth', 'status', '--hostname', 'github.com'], repo)
   } catch (e) {
@@ -115,14 +131,17 @@ export async function gitHubConnectionProblem(repo: string, gh: Gh = defaultGh):
 }
 
 /**
- * Pushes the kept branch and opens a pull request for it into the main branch, titled and described by its commit.
- * Once: a pull request already open for the branch is reused.
+ * Pushes the kept branch and opens a pull request for it into the main branch of origin's repository, titled and
+ * described by its commit. Nothing is pushed unless the whole way to the pull request is there first (see
+ * gitHubConnectionProblem). Once: a pull request already open for the branch is reused.
  */
 export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promise<ShipState> {
   const away = await elsewhere(runId)
   if (away) throw new ShipError(away)
   const { repo, branch } = (await repoOf(runId))
   if (!(await recordOf(runId, 'run.pr_opened'))) {
+    const missing = await gitHubConnectionProblem(repo, gh)
+    if (missing) throw missing
     try {
       await pushBranch(runId)
     } catch (e) {
@@ -131,12 +150,12 @@ export async function openPullRequest(runId: string, gh: Gh = defaultGh): Promis
     const base = defaultBranch(repo) ?? 'main'
     let pr: { number: number; url: string }
     try {
-      pr = JSON.parse(await gh(['pr', 'view', branch, '--json', 'number,url,state'], repo)) as { number: number; url: string }
+      pr = JSON.parse(await gh(['pr', 'view', branch, ...named(repo), '--json', 'number,url,state'], repo)) as { number: number; url: string }
       if ((pr as { state?: string }).state !== 'OPEN') throw new Error('not open')
     } catch {
       try {
-        await gh(['pr', 'create', '--base', base, '--head', branch, '--fill-first'], repo)
-        pr = JSON.parse(await gh(['pr', 'view', branch, '--json', 'number,url'], repo)) as { number: number; url: string }
+        await gh(['pr', 'create', ...named(repo), '--base', base, '--head', branch, '--fill-first'], repo)
+        pr = JSON.parse(await gh(['pr', 'view', branch, ...named(repo), '--json', 'number,url'], repo)) as { number: number; url: string }
       } catch (e) {
         throw ghFailure(e)
       }
@@ -157,7 +176,7 @@ async function adoptPullRequest(runId: string, gh: Gh): Promise<Record<string, u
   const { repo, branch } = (await repoOf(runId))
   let found: { number: number; url: string; baseRefName?: string }[]
   try {
-    found = JSON.parse(await gh(['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,url,baseRefName', '--limit', '1'], repo))
+    found = JSON.parse(await gh(['pr', 'list', ...named(repo), '--head', branch, '--state', 'all', '--json', 'number,url,baseRefName', '--limit', '1'], repo))
   } catch {
     return null
   }
@@ -178,7 +197,7 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
   const { repo } = (await repoOf(runId))
   let view: { number: number; url: string; state: string; mergeable: string; statusCheckRollup: Rollup[]; mergeCommit: { oid: string } | null; mergedAt: string | null }
   try {
-    view = JSON.parse(await gh(['pr', 'view', String(opened.number), '--json', 'number,url,state,mergeable,statusCheckRollup,mergeCommit,mergedAt'], repo))
+    view = JSON.parse(await gh(['pr', 'view', String(opened.number), ...named(repo), '--json', 'number,url,state,mergeable,statusCheckRollup,mergeCommit,mergedAt'], repo))
   } catch (e) {
     throw ghFailure(e)
   }
@@ -187,9 +206,11 @@ export async function shipState(runId: string, gh: Gh = defaultGh): Promise<Ship
   const state = view.state === 'MERGED' ? 'merged' : view.state === 'CLOSED' ? 'closed' : 'open'
   let deploy: Check[] = []
   if (state === 'merged' && view.mergeCommit?.oid) {
+    // Origin's repository by name; gh fills in {owner}/{repo} itself only when origin is not on GitHub.
+    const where = originRepo(repo) ?? '{owner}/{repo}'
     try {
-      const commit = JSON.parse(await gh(['api', `repos/{owner}/{repo}/commits/${view.mergeCommit.oid}/status`], repo)) as { statuses?: { context: string; state: string; target_url: string | null }[] }
-      const runsOf = JSON.parse(await gh(['api', `repos/{owner}/{repo}/commits/${view.mergeCommit.oid}/check-runs`], repo)) as { check_runs?: { name: string; status: string; conclusion: string | null; details_url: string | null }[] }
+      const commit = JSON.parse(await gh(['api', `repos/${where}/commits/${view.mergeCommit.oid}/status`], repo)) as { statuses?: { context: string; state: string; target_url: string | null }[] }
+      const runsOf = JSON.parse(await gh(['api', `repos/${where}/commits/${view.mergeCommit.oid}/check-runs`], repo)) as { check_runs?: { name: string; status: string; conclusion: string | null; details_url: string | null }[] }
       deploy = [
         ...(commit.statuses ?? []).map(s => checkOf({ __typename: 'StatusContext', context: s.context, state: s.state, targetUrl: s.target_url ?? undefined })),
         ...(runsOf.check_runs ?? []).map(r => checkOf({ __typename: 'CheckRun', name: r.name, status: r.status, conclusion: r.conclusion, detailsUrl: r.details_url ?? undefined })),
@@ -265,7 +286,7 @@ export async function mergePullRequest(runId: string, gh: Gh = defaultGh): Promi
   if (current.checksFailed) throw new ShipError(strings.ship.checksFailed)
   const { repo } = (await repoOf(runId))
   try {
-    await gh(['pr', 'merge', String(current.pr.number), '--squash'], repo)
+    await gh(['pr', 'merge', String(current.pr.number), ...named(repo), '--squash'], repo)
   } catch (e) {
     throw ghFailure(e)
   }

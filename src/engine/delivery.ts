@@ -15,13 +15,13 @@ import { elsewhere, runPlace } from '@/engine/machine'
 import { serialized } from '@/engine/serial'
 import { humanCheckPassedBy } from '@/engine/passed-check'
 
-// Bringing an approved change into the person's own project. Two things, both local, nothing pushed anywhere:
+// Bringing a change that passed the human check (by the person's yes, or on its own) into the person's own project. Two things, both local, nothing pushed anywhere:
 // the change is committed on the run's own branch (factory/<run>), so it is kept and can be merged or pushed later;
 // and the same change is applied to the person's checkout, uncommitted, for them to look at and commit themselves.
 // Their checkout must be clean: their own unsaved work is never mixed with the agent's.
 
 export type Delivery = {
-  /** True once a person approved this run and it finished: only then can it be brought over. */
+  /** True once this run passed the human check (the person's yes, or on its own) and finished: only then can it be brought over. */
   eligible: boolean
   /** Who opened the human check: the person, or the app on its own. Null while nobody has. */
   passedBy: 'person' | 'app' | null
@@ -101,6 +101,14 @@ export function originUrl(repo: string): string | null {
     return null
   }
 }
+/** Where git really sends to origin: its push address, with any pushurl or insteadOf of the person's applied. */
+export function originPushUrl(repo: string): string | null {
+  try {
+    return git(repo, ['remote', 'get-url', '--push', 'origin']).trim() || null
+  } catch {
+    return null
+  }
+}
 /** Whether the repository has a remote called origin; null when there is no repository here to ask. */
 function hasOrigin(repo: string | null): boolean | null {
   return repo ? originUrl(repo) !== null : null
@@ -165,9 +173,11 @@ export function keepCommit(
       passedBy === 'app'
         ? `Made by an agent in AI Factory, run ${run.id}. ${strings.delivery.passedOnItsOwn}`
         : `Made by an agent in AI Factory, run ${run.id}, and approved by a person.`
+    // The request leaves the computer with the commit (in the pull request, too): anything secret in it is taken out.
+    const said = redact(asked)
     const message = described
-      ? `${described.subject}\n\n${described.body ? `${described.body}\n\n` : ''}Asked for: ${clip(asked, 500)}\n\n${provenance}`
-      : `${clip(asked, 72)}\n\n${provenance}`
+      ? `${described.subject}\n\n${described.body ? `${described.body}\n\n` : ''}Asked for: ${clip(said, 500)}\n\n${provenance}`
+      : `${clip(said, 72)}\n\n${provenance}`
     git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
   }
   return git(wt, ['rev-parse', 'HEAD'])
@@ -182,7 +192,7 @@ export function unfinishedCommit(run: { id: string; request: string; worktreePat
   git(wt, ['add', '-A'])
   if (git(wt, ['diff', '--cached', '--name-only']) !== '') {
     const asked = run.request.replace(/\s+/g, ' ').trim()
-    const message = `Unfinished: ${clip(asked, 60)}\n\nLeft by an agent in AI Factory, run ${run.id}, which stopped before a person approved it.`
+    const message = `Unfinished: ${clip(redact(asked), 60)}\n\nLeft by an agent in AI Factory, run ${run.id}, which stopped before a person approved it.`
     git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
   }
   return git(wt, ['rev-parse', 'HEAD'])

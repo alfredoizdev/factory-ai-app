@@ -26,6 +26,7 @@ import type { TestRun } from '@/engine/test-runner'
 import type { AgentEvent, AgentProvider, BlockRoute } from '@/providers/types'
 import { createClaudeProvider } from '@/providers/claude'
 import { strings } from '@/ui/strings'
+import { fakeGitHubOrigin } from '../fake-github'
 
 // M3a: a provider that works on files gets the run's worktree first; what it reports is stored by kind —
 // evidence, usage and claims each in their own place — and nothing it prints reaches the log unredacted.
@@ -1098,6 +1099,45 @@ describe('the plan follows the project\'s ask mode', () => {
       }
     })
 
+    test('the measure says when the task asked to stop for the person, so the card can say why it waits', async () => {
+      const stopped = await passes({ askMode: 'what_matters', stopForMe: true })
+      expect((await payloadOf(stopped, 'node.assessed', 'human'))[0]).toMatchObject({ level: 'low', stopForMe: true })
+      const plain = await passes({ askMode: 'everything' })
+      expect((await payloadOf(plain, 'node.assessed', 'human'))[0]).not.toHaveProperty('stopForMe')
+    })
+
+    test('a project from before the modes (ask_mode empty, the old switch on) keeps its stops and sends nothing on its own', async () => {
+      const { runId, projectId } = await projectRun({ askMode: 'what_matters' })
+      // The row as an existing project really has it: no mode written, the old switch on.
+      await db.update(projects).set({ askMode: null, autoApproveLowRisk: true }).where(eq(projects.id, projectId))
+      const p = planner([{ jobs: footer }])
+      const t = withTests()
+      const provider: AgentProvider = { ...p, execute: (input, c) => (input.blockKind === 'plan' ? p.execute(input, c) : t.execute(input, c)) }
+      const s = recordingStep(async event => {
+        if (event !== PLAN_DECIDED) return false
+        await decidePlan(runId, { action: 'build', jobs: footer })
+        return true
+      })
+      const shipCheck: unknown[] = []
+      const run = s.run
+      s.run = async (id, fn) => {
+        const out = await run(id, fn)
+        if (id === 'auto-ship-check') shipCheck.push(out)
+        return out
+      }
+      await go(runId, provider, s, change())
+      // The plan stopped for the person, saying the project still checks every plan.
+      const [m] = await measured(runId)
+      expect(m).toMatchObject({ simple: true, mode: 'small_changes' })
+      expect((m!.reasons as string[])[0]).toBe(strings.plan.reasons.smallChanges)
+      expect(s.waits).toContain('plan-decided-plan-0')
+      // The low-risk change passed the final check, as the old switch said; nothing was kept or sent on its own.
+      expect((await node(runId, 'human')).state).toBe('passed')
+      expect(shipCheck).toEqual([false])
+      expect(await payloadOf(runId, 'run.kept')).toEqual([])
+      expect(await payloadOf(runId, 'run.auto_ship')).toEqual([])
+    })
+
     test('a run already in flight keeps its old setting', async () => {
       expect(modeOf({ autoApproveLowRisk: true } as Plan)).toEqual({ mode: 'small_changes', stopForMe: false })
       expect(modeOf({ autoApproveLowRisk: false } as Plan)).toEqual({ mode: 'everything', stopForMe: false })
@@ -1154,10 +1194,8 @@ describe('after a change passes in "only what matters"', () => {
     const bare = mkdtempSync(join(tmpdir(), 'factory-ship-origin-'))
     g(bare, 'init', '-q', '--bare', '-b', 'main')
     if (origin) {
-      // Reads as GitHub when the app judges it; every push lands in the bare folder, and no network protocol is allowed.
-      g(dir, 'remote', 'add', 'origin', 'https://github.com/ai-factory-test/never-real.git')
-      g(dir, 'config', 'remote.origin.pushurl', bare)
-      for (const p of ['https', 'http', 'ssh', 'git']) g(dir, 'config', `protocol.${p}.allow`, 'never')
+      // GitHub by both its addresses; git only ever talks to the bare folder, and no network protocol is allowed.
+      fakeGitHubOrigin(dir, bare)
     }
     const { workflowId } = await createProject({ path: dir, name: 'Shop', testCommand: 'npm test', checks: [], askMode })
     const { runId } = await createRun({ workflowId, request: 'add a footer' })

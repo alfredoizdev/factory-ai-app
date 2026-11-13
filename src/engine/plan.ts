@@ -54,7 +54,8 @@ export function cleanJobs(raw: unknown): Job[] | null {
   return jobs.length > 0 ? jobs : null
 }
 
-const asText = (v: unknown, max: number): string => (typeof v === 'string' ? clip(redact(v.trim()), max) : '')
+// On one line: a question's words become part of a decision, given to later agents as one line of what was agreed.
+const asText = (v: unknown, max: number): string => (typeof v === 'string' ? clip(redact(v.replace(/\s+/g, ' ').trim()), max) : '')
 
 /** The planner's question: null when it asked none; 'unreadable' when it asked one the person could not be given. */
 function cleanQuestion(raw: unknown): PlanQuestion | 'unreadable' | null {
