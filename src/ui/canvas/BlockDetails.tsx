@@ -11,6 +11,7 @@ import { theme } from '@/ui/theme'
 import { useSnapshots } from './BeforeAfter'
 import { ChangeUnderCheck } from './GatePanel'
 import { visualStateOf, WorkingSpinner, type CardView } from './BlockCard'
+import { Bone } from './Skeleton'
 import { TypeMark } from './TypeMark'
 
 const d = strings.details
@@ -351,7 +352,7 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
         aria-label={d.title(label)}
         data-testid="block-details"
         onClick={e => e.stopPropagation()}
-        style={{ width: 'min(1080px, calc(100% - 32px))', maxHeight: 'calc(100% - 48px)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.border}`, borderTop: `3px solid ${accent}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14.5 }}
+        style={{ width: 'min(920px, calc(100% - 32px))', height: 'min(780px, calc(100% - 96px))', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.border}`, borderTop: `3px solid ${accent}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14.5 }}
       >
         <header style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '18px 26px', borderBottom: `1px solid ${theme.border}` }}>
           {kind && KINDS.includes(kind) && <TypeMark kind={kind as BlockKind} colour={accent} size={40} />}
@@ -368,8 +369,32 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
             ✕
           </button>
         </header>
-        <div style={{ overflowY: 'auto', padding: '22px 26px 28px', display: 'grid', gap: 26, ...thin }}>
-          {details === undefined && <div style={{ color: theme.dim }}>{d.loading}</div>}
+        <div style={{ overflowY: 'auto', padding: '22px 26px 28px', display: 'grid', gap: 26, alignContent: 'start', ...thin }}>
+          {details === undefined && (
+            // The shape of what is coming, at its size: the window is already as large as it will be.
+            <div role="status" aria-label={d.loading} data-testid="details-loading" style={{ display: 'grid', gap: 26 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+                <Bone height={78} radius={12} />
+                <Bone height={78} radius={12} />
+                <Bone height={78} radius={12} />
+              </div>
+              <div style={{ display: 'grid', gap: 12 }}>
+                <Bone width={170} height={18} />
+                <Bone height={58} radius={12} />
+              </div>
+              <div style={{ display: 'grid', gap: 12 }}>
+                <Bone width={210} height={18} />
+                <Bone width="72%" height={13} />
+                <Bone width="58%" height={13} />
+                <Bone width="64%" height={13} />
+              </div>
+              <div style={{ display: 'grid', gap: 12 }}>
+                <Bone width={150} height={18} />
+                <Bone height={110} radius={10} />
+                <Bone height={110} radius={10} />
+              </div>
+            </div>
+          )}
           {details === null && <div style={{ color: theme.dim }}>{d.unreadable}</div>}
           {details && (
             <>
