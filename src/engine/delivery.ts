@@ -173,10 +173,11 @@ export function keepCommit(
       passedBy === 'app'
         ? `Made by an agent in AI Factory, run ${run.id}. ${strings.delivery.passedOnItsOwn}`
         : `Made by an agent in AI Factory, run ${run.id}, and approved by a person.`
-    // The request leaves the computer with the commit (in the pull request, too): anything secret in it is taken out.
+    // The request and the written description leave the computer with the commit (in the pull request, too):
+    // anything secret in them is taken out.
     const said = redact(asked)
     const message = described
-      ? `${described.subject}\n\n${described.body ? `${described.body}\n\n` : ''}Asked for: ${clip(said, 500)}\n\n${provenance}`
+      ? `${redact(described.subject)}\n\n${described.body ? `${redact(described.body)}\n\n` : ''}Asked for: ${clip(said, 500)}\n\n${provenance}`
       : `${clip(said, 72)}\n\n${provenance}`
     git(wt, ['-c', 'user.name=AI Factory', '-c', 'user.email=ai-factory@localhost', 'commit', '-q', '--no-verify', '-m', message])
   }
