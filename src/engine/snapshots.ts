@@ -111,6 +111,65 @@ export function linkFor(page: string, links: readonly string[], fixedPages: read
   return null
 }
 
+const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\(\s*)['"]([^'"]+)['"]/g
+const ENDINGS = ['', '.tsx', '.ts', '.jsx', '.js', '.mjs', '.mdx', '/index.tsx', '/index.ts', '/index.jsx', '/index.js']
+
+/**
+ * The pages that show the changed files, when none of them is a page itself: a changed component is followed to
+ * whatever uses it, and on from there, until pages are reached. The nearest pages only, so a button used by one page
+ * is not photographed on every page of the site. `sources` is each code file of the project with what it holds.
+ */
+export function pagesShowing(changed: readonly string[], sources: ReadonlyMap<string, string>): string[] {
+  const fileAt = (path: string) => ENDINGS.map(e => path + e).find(f => sources.has(f)) ?? null
+  const usedBy = new Map<string, string[]>()
+  for (const [file, text] of sources) {
+    const dir = file.split('/').slice(0, -1)
+    for (const m of text.matchAll(IMPORT)) {
+      const spec = m[1]!
+      const tries = spec.startsWith('.')
+        ? [spec.split('/').reduce((at, seg) => (seg === '.' || seg === '' ? at : seg === '..' ? at.slice(0, -1) : [...at, seg]), dir).join('/')]
+        : /^[@~]\//.test(spec)
+          ? [`src/${spec.slice(2)}`, spec.slice(2)]
+          : []
+      const target = tries.map(fileAt).find(Boolean)
+      if (target && target !== file) usedBy.set(target, [...(usedBy.get(target) ?? []), file])
+    }
+  }
+  const seen = new Set(changed)
+  let level = [...changed]
+  while (level.length > 0) {
+    const pages = level.filter(f => addressOf(f) !== null)
+    if (pages.length > 0) return pages
+    level = [...new Set(level.flatMap(f => usedBy.get(f) ?? []))].filter(f => !seen.has(f))
+    for (const f of level) seen.add(f)
+  }
+  return []
+}
+
+/**
+ * A real address for a page that takes a value, looked for by following links the way a visitor would: on the home
+ * page first, then on the pages it links to ("/" shows "/girls", and "/girls" shows "/girls/42"). A few pages at most.
+ */
+export async function addressFor(page: string, base: string, links: Links, fixedPages: readonly string[], most = 6): Promise<string | null> {
+  const clean = (l: string) => l.split(/[?#]/)[0]!.replace(/(.)\/$/, '$1')
+  const seen = new Set(['/'])
+  let level = ['/']
+  let visits = 0
+  // Two steps from the home page reach an item of a list, which is as deep as a page of this kind usually sits.
+  for (let depth = 0; depth < 3 && level.length > 0; depth++) {
+    const next: string[] = []
+    for (const at of level) {
+      if (visits++ >= most) return null
+      const found = await links(new URL(at, base).toString()).catch(() => [])
+      const hit = linkFor(page, found, fixedPages)
+      if (hit) return hit
+      for (const l of found.map(clean)) if (!seen.has(l) && !fixedPages.includes(l)) (seen.add(l), next.push(l))
+    }
+    level = next
+  }
+  return null
+}
+
 // Files that never change what a visitor sees: tests, notes, tooling settings and the list of installed packages.
 const UNSEEN = [
   /(^|\/)(__tests__|__mocks__|tests?|e2e|cypress|playwright|docs?|\.github|\.husky|\.vscode)\//,
@@ -177,6 +236,25 @@ export const playwrightLinks: Links = async url => {
   }
 }
 
+/** Every code file of a working copy with what it holds, for following a changed component to the pages that use it. */
+function sourcesOf(worktree: string): Map<string, string> {
+  const out = new Map<string, string>()
+  try {
+    const listed = git(worktree, ['ls-files', '--cached', '--others', '--exclude-standard']).split('\n')
+    for (const f of listed.filter(f => /\.(?:[cm]?[jt]sx?|mdx)$/.test(f)).slice(0, 4000)) {
+      try {
+        const text = readFileSync(join(worktree, f), 'utf8')
+        if (text.length < 400_000) out.set(f, text)
+      } catch {
+        // Listed but gone: not part of what is shown.
+      }
+    }
+  } catch {
+    // Not readable: the home page is photographed, as before.
+  }
+  return out
+}
+
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
 /**
@@ -197,9 +275,11 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
   const files = await changedFiles(runId)
   if (!changesTheLook(files)) return UNNEEDED
   const change = (await changeHash(runId))
-  let route = routeFor(files)
-  const valuePage = valuePageFor(files)
   const worktree = run.worktreePath
+  // No page was changed itself (a component was): the pages that show the changed files are the ones to photograph.
+  const pageFiles = files.some(f => addressOf(f) !== null) ? files : pagesShowing(files, sourcesOf(worktree))
+  let route = routeFor(pageFiles)
+  const valuePage = valuePageFor(pageFiles)
   const dir = join(root, runId)
   const beforeTree = join(dir, 'before-tree')
   const beforeKey = `${runId}:before`
@@ -220,11 +300,11 @@ export async function captureBeforeAfter(runId: string, shoot: Shoot = playwrigh
       await Promise.all([startPreview(runId), hadBefore ? startServer(beforeKey, beforeTree, repo) : null])
       working.set(runId, strings.snapshots.waiting)
       const [afterUrl, beforeUrl] = await Promise.all([untilReady(runId), hadBefore ? untilReady(beforeKey) : null])
-      // The changed page takes a value in its address ("/[team]"): a real one is looked for among the home page's links.
+      // The page takes a value in its address ("/[team]"): a real one is looked for among the links a visitor would follow.
       if (valuePage && afterUrl) {
         try {
           const fixedPages = git(worktree, ['ls-files']).split('\n').map(addressOf).filter((p): p is string => p !== null && !p.includes('['))
-          route = linkFor(valuePage, await links(afterUrl), fixedPages) ?? route
+          route = (await addressFor(valuePage, afterUrl, links, fixedPages)) ?? route
         } catch {
           // The home page is photographed, as before.
         }
