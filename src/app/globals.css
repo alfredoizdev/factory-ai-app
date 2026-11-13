@@ -207,3 +207,62 @@ select {
     animation: none;
   }
 }
+
+/* The steps view: the step where the work is right now breathes in its state's colour, a bar runs along its top
+   edge, and the line that leads into it carries a moving light. Still under reduced motion; the colour stays. */
+@keyframes factory-step-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(var(--pulse), 0.55), 0 0 0 0 rgba(var(--pulse), 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(var(--pulse), 0.9), 0 0 22px 4px rgba(var(--pulse), 0.3);
+  }
+}
+.factory-step-live {
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(var(--pulse), 0.7);
+  animation: factory-step-pulse 1.8s ease-in-out infinite;
+}
+@keyframes factory-step-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+.factory-step-live::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(var(--pulse)), transparent);
+  animation: factory-step-sweep 1.6s linear infinite;
+}
+@keyframes factory-step-flow {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+.factory-step-flow {
+  background-image: linear-gradient(90deg, rgba(var(--pulse), 0.2) 0%, rgb(var(--pulse)) 50%, rgba(var(--pulse), 0.2) 100%);
+  background-size: 200% 100%;
+  animation: factory-step-flow 1.1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .factory-step-live,
+  .factory-step-live::before,
+  .factory-step-flow {
+    animation: none;
+  }
+  .factory-step-live::before {
+    display: none;
+  }
+}

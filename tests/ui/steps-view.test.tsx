@@ -45,6 +45,14 @@ describe('the steps view', () => {
     expect(picked).toEqual(['plan', 'tests'])
   })
 
+  it('shows where the work is: the working step is marked live with the turning ring, and no other step is', () => {
+    render(<StepsLane blocks={blocks} stateOf={states({ input: 'passed', plan: 'running' })} hasRun pickedId="plan" onPick={() => undefined} />)
+    expect(screen.getByTestId('step-plan').closest('[data-live]')).not.toBeNull()
+    expect(screen.getByTestId('spinner-step-plan')).toBeTruthy()
+    expect(screen.getByTestId('step-input').closest('[data-live]')).toBeNull()
+    expect(document.querySelectorAll('[data-live]').length).toBe(1)
+  })
+
   it('says what the row is for before any task runs', () => {
     render(<StepsLane blocks={blocks} stateOf={() => null} hasRun={false} pickedId="ship" onPick={() => undefined} />)
     expect(screen.getByText(strings.steps.beforeRun)).toBeTruthy()

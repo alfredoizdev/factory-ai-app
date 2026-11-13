@@ -1,12 +1,12 @@
 'use client'
 
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, type CSSProperties, type ReactNode } from 'react'
 import { STAGE_ORDER, type Block } from '@/domain/graph'
 import type { NodeState } from '@/domain/states'
 import { brand } from '@/ui/brand'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
-import { visualStateOf } from './BlockCard'
+import { visualStateOf, WorkingSpinner } from './BlockCard'
 import { DOCKED_WIDTH } from './layout'
 import { TypeMark } from './TypeMark'
 
@@ -34,12 +34,17 @@ export function stepToShow(blocks: readonly Block[], stateOf: (id: string) => No
 
 const colourOf = (state: NodeState | null) => (state === 'passed' ? brand.green : state === null || state === 'queued' || state === 'skipped' || state === 'cancelled' ? brand.faint : theme[visualStateOf(state)])
 
-function Mark({ state, size = 22 }: { state: NodeState | null; size?: number }) {
+/** The colour a working or waiting step breathes in, as "r, g, b"; null for a step where nothing is happening now. */
+const pulseOf = (state: NodeState | null) => (state === 'running' ? '59, 130, 246' : state === 'waiting_approval' ? '245, 158, 11' : null)
+
+function Mark({ state, size = 22, id = 'step' }: { state: NodeState | null; size?: number; id?: string }) {
+  // Working: the same turning ring the canvas uses, so "working" looks the same everywhere.
+  if (state === 'running') return <WorkingSpinner blockId={`step-${id}`} size={size} />
   const colour = colourOf(state)
   const done = state === 'passed'
   return (
     <span aria-hidden="true" style={{ width: size, height: size, flex: 'none', borderRadius: '50%', display: 'grid', placeItems: 'center', background: done ? colour : 'transparent', border: `1.5px solid ${colour}`, color: done ? brand.onGreen : colour, fontSize: size * 0.55, fontWeight: 900, lineHeight: 1 }}>
-      {done ? '✓' : state === 'failed' ? '!' : state === 'running' || state === 'waiting_approval' ? '•' : ''}
+      {done ? '✓' : state === 'failed' ? '!' : state === 'waiting_approval' ? '•' : ''}
     </span>
   )
 }
@@ -93,11 +98,12 @@ export function StepsLane({
             const on = st.blocks.some(b => b.id === pickedId)
             const group = st.blocks.length > 1
             const before = i > 0 ? stepState(steps[i - 1]!) : null
+            const pulse = off ? null : pulseOf(state)
             return (
               <Fragment key={st.id}>
-                {i > 0 && <li aria-hidden="true" style={{ flex: '0 1 22px', minWidth: 8, height: 2, marginTop: 34, background: before === 'passed' ? brand.green : brand.line, opacity: before === 'passed' ? 0.55 : 1 }} />}
+                {i > 0 && <li aria-hidden="true" className={state === 'running' ? 'factory-step-flow' : undefined} style={{ flex: '0 1 22px', minWidth: 8, height: 2, marginTop: 34, ...(state === 'running' ? ({ '--pulse': pulse } as CSSProperties) : { background: before === 'passed' ? brand.green : brand.line, opacity: before === 'passed' ? 0.55 : 1 }) }} />}
                 <li style={{ flex: '1 1 104px', maxWidth: 170, minWidth: 104, display: 'grid', opacity: off ? 0.5 : 1 }}>
-                  <div style={{ display: 'grid', gap: 12, alignContent: 'start', padding: 14, borderRadius: 14, border: `1px solid ${on ? brand.green : brand.line}`, background: on ? '#1c1f1c' : brand.card, boxShadow: on ? '0 0 0 3px rgba(121, 220, 139, 0.12)' : 'none' }}>
+                  <div data-live={pulse ? 'true' : undefined} className={pulse ? 'factory-step-live' : undefined} style={{ display: 'grid', gap: 12, alignContent: 'start', padding: 14, borderRadius: 14, border: `1px solid ${pulse ? `rgb(${pulse})` : on ? brand.green : brand.line}`, background: on ? '#1c1f1c' : brand.card, ...(pulse ? ({ '--pulse': pulse } as CSSProperties) : { boxShadow: on ? '0 0 0 3px rgba(121, 220, 139, 0.12)' : 'none' }) }}>
                     <button
                       type="button"
                       data-testid={`step-${st.id}`}
@@ -107,7 +113,7 @@ export function StepsLane({
                     >
                       <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <TypeMark kind={st.blocks[0]!.kind} colour={brand.text} size={34} />
-                        <Mark state={state} />
+                        <Mark state={state} id={st.id} />
                       </span>
                       <span style={{ display: 'grid', gap: 4 }}>
                         <strong style={{ fontSize: 16, letterSpacing: '-0.01em', overflowWrap: 'anywhere' }}>{st.label}</strong>
@@ -126,7 +132,7 @@ export function StepsLane({
                               onClick={() => onPick(b.id)}
                               style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', borderRadius: 7, background: pickedId === b.id ? '#262a26' : 'none', border: 'none', color: b.enabled ? brand.quiet : brand.faint, font: 'inherit', fontSize: 13.5, textAlign: 'left', cursor: 'pointer' }}
                             >
-                              <Mark state={b.enabled ? stateOf(b.id) : null} size={15} />
+                              <Mark state={b.enabled ? stateOf(b.id) : null} size={15} id={`check-${b.id}`} />
                               {b.label}
                             </button>
                           </li>
