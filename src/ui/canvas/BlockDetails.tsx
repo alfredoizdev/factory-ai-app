@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { BlockCommand, BlockDetails } from '@/engine/block-details'
 import type { Shot, SnapshotState } from '@/engine/snapshots'
 import type { BlockKind } from '@/domain/graph'
 import type { NodeState } from '@/domain/states'
 import { strings } from '@/ui/strings'
+import { brand } from '@/ui/brand'
 import { theme } from '@/ui/theme'
 import { useSnapshots } from './BeforeAfter'
 import { ChangeUnderCheck } from './GatePanel'
@@ -57,7 +58,7 @@ export function Prose({ text }: { text: string }) {
           <p key={i} style={{ margin: 0 }}>
             {para.split('`').map((part, k) =>
               k % 2 === 1 ? (
-                <code key={k} style={{ padding: '1px 6px', borderRadius: 5, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: '0.86em', color: '#cfe0ff' }}>
+                <code key={k} style={{ padding: '1px 6px', borderRadius: 5, background: brand.bg, border: `1px solid ${brand.line}`, fontFamily: mono, fontSize: '0.86em', color: brand.text }}>
                   {part}
                 </code>
               ) : (
@@ -107,11 +108,11 @@ const ICON = {
 
 function Fact({ icon, label, value, help }: { icon: ReactNode; label: string; value: ReactNode; help?: string }) {
   return (
-    <div style={{ display: 'grid', gap: 5, padding: '13px 15px', borderRadius: 12, background: '#0f141c', border: `1px solid ${theme.border}`, minWidth: 0 }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: theme.dim }}>
+    <div style={{ display: 'grid', gap: 5, padding: '13px 15px', borderRadius: 12, background: '#141414', border: `1px solid ${brand.line}`, minWidth: 0 }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: brand.quiet }}>
         <Icon path={icon} size={14} /> {label}
       </span>
-      <span style={{ fontSize: 19, fontWeight: 700, color: theme.ink, overflowWrap: 'anywhere' }}>{value}</span>
+      <span style={{ fontSize: 19, fontWeight: 700, color: brand.text, overflowWrap: 'anywhere' }}>{value}</span>
       {help && <span style={{ fontSize: 11.5, color: theme.skipped }}>{help}</span>}
     </div>
   )
@@ -124,7 +125,7 @@ function Section({ title, help, children }: { title: string; help?: string; chil
         <strong className="factory-display" style={{ fontSize: 17 }}>
           {title}
         </strong>
-        {help && <span style={{ fontSize: 13, color: theme.dim }}>{help}</span>}
+        {help && <span style={{ fontSize: 13, color: brand.quiet }}>{help}</span>}
       </div>
       {children}
     </section>
@@ -152,7 +153,7 @@ function PlanWhy({ measure, startedOnItsOwn }: { measure: { reasons: string[]; e
             ))}
           </ul>
         ) : (
-          <span style={{ color: theme.dim }}>{strings.plan.noneExpected}</span>
+          <span style={{ color: brand.quiet }}>{strings.plan.noneExpected}</span>
         )}
       </Section>
     </>
@@ -164,25 +165,25 @@ function Command({ c }: { c: BlockCommand }) {
   const [open, setOpen] = useState(false)
   const ok = c.exitCode === 0
   return (
-    <div style={{ display: 'grid', gap: 8, padding: '11px 13px', borderRadius: 10, background: '#0f141c', border: `1px solid ${ok ? theme.border : theme.tint('failed', 0.5)}` }}>
+    <div style={{ display: 'grid', gap: 8, padding: '11px 13px', borderRadius: 10, background: '#141414', border: `1px solid ${ok ? brand.line : theme.tint('failed', 0.5)}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 999, background: theme.tint(ok ? 'passed' : 'failed', 0.16), color: ok ? theme.passed : theme.failed, fontSize: 12.5, fontWeight: 700 }}>
           <Icon path={ok ? ICON.check : ICON.cross} size={13} /> {ok ? d.commandPassed : d.commandFailed}
         </span>
         <code style={{ fontFamily: mono, fontSize: 13, color: '#e6e9ef' }}>{c.command}</code>
-        {c.durationMs !== null && <span style={{ marginLeft: 'auto', fontSize: 13, color: theme.dim }}>{howLong(c.durationMs)}</span>}
+        {c.durationMs !== null && <span style={{ marginLeft: 'auto', fontSize: 13, color: brand.quiet }}>{howLong(c.durationMs)}</span>}
       </div>
       {!ok && <span style={{ fontSize: 13, color: theme.failed }}>{strings.failure.ended(c.exitCode, c.signal)}</span>}
       {c.output && (
         <>
-          <button type="button" aria-expanded={open} onClick={() => setOpen(o => !o)} style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 5, padding: 0, background: 'none', border: 'none', color: '#9cc2ff', fontSize: 13, cursor: 'pointer' }}>
+          <button type="button" aria-expanded={open} onClick={() => setOpen(o => !o)} style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 5, padding: 0, background: 'none', border: 'none', color: brand.green, fontSize: 13, cursor: 'pointer' }}>
             <span style={{ display: 'inline-flex', transform: open ? 'rotate(90deg)' : 'none' }}>
               <Icon path={ICON.chevron} size={13} />
             </span>
             {open ? d.hideOutput : d.showOutput}
           </button>
           {open && (
-            <pre style={{ margin: 0, maxHeight: 280, overflow: 'auto', padding: 12, borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', ...thin }}>
+            <pre style={{ margin: 0, maxHeight: 280, overflow: 'auto', padding: 12, borderRadius: 8, background: brand.bg, border: `1px solid ${brand.line}`, fontFamily: mono, fontSize: 12.5, lineHeight: 1.5, color: '#d6dce6', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', ...thin }}>
               {c.output}
             </pre>
           )}
@@ -214,7 +215,7 @@ function TaskPictures({ runId, name }: { runId: string; name: string }) {
   if (state.status === 'unneeded') return <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNothingToSee}</span>
   if (state.status === 'working' || (asked && state.status === 'none' && !error)) {
     return (
-      <span role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: theme.dim }}>
+      <span role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: brand.quiet }}>
         <WorkingSpinner blockId={`pictures-${runId}`} size={14} /> {state.message ?? d.historyTaking}
       </span>
     )
@@ -222,7 +223,7 @@ function TaskPictures({ runId, name }: { runId: string; name: string }) {
   if (state.status !== 'ready' || state.shots.length === 0) {
     return (
       <span style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
-        <button type="button" onClick={() => { setAsked(true); void take() }} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bg, color: '#cfe0ff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+        <button type="button" onClick={() => { setAsked(true); void take() }} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${brand.line}`, background: brand.bg, color: brand.text, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
           {d.historyTake}
         </button>
         {(error ?? (state.status === 'failed' ? state.message : null)) && <span style={{ fontSize: 12.5, color: theme.failed }}>{error ?? state.message}</span>}
@@ -235,16 +236,16 @@ function TaskPictures({ runId, name }: { runId: string; name: string }) {
       <button type="button" data-testid="history-thumbs" aria-label={d.historyPicturesOf(name)} onClick={() => setOpen(true)} style={{ display: 'flex', gap: 10, padding: 0, border: 'none', background: 'none', cursor: 'zoom-in', justifySelf: 'start' }}>
         {thumbs.map(side => (
           <span key={side} style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
-            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? theme.dim : theme.passed }}>{strings.snapshots[side]}</span>
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? brand.quiet : theme.passed }}>{strings.snapshots[side]}</span>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`/api/runs/${runId}/snapshots/${side}-desktop`} alt="" style={{ display: 'block', width: 150, height: 96, objectFit: 'cover', objectPosition: 'top', borderRadius: 8, border: `1px solid ${theme.border}` }} />
+            <img src={`/api/runs/${runId}/snapshots/${side}-desktop`} alt="" style={{ display: 'block', width: 'min(var(--thumb-w, 150px), 34vw)', height: 'auto', aspectRatio: '25 / 16', objectFit: 'cover', objectPosition: 'top', borderRadius: 8, border: `1px solid ${brand.line}` }} />
           </span>
         ))}
       </button>
       {open &&
         createPortal(
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 110, display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', placeItems: 'center', background: 'rgba(5, 7, 11, 0.8)' }}>
-            <div role="dialog" aria-modal="true" aria-label={d.historyPicturesOf(name)} onClick={e => e.stopPropagation()} style={{ width: 'min(1100px, calc(100% - 32px))', maxHeight: 'calc(100% - 64px)', overflowY: 'auto', display: 'grid', gap: 14, padding: 22, background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, ...thin }}>
+            <div role="dialog" aria-modal="true" aria-label={d.historyPicturesOf(name)} onClick={e => e.stopPropagation()} style={{ width: 'min(1100px, calc(100% - 32px))', maxHeight: 'calc(100% - 64px)', overflowY: 'auto', display: 'grid', gap: 14, padding: 22, background: brand.card, border: `1px solid ${brand.line}`, borderRadius: 14, ...thin }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <strong className="factory-display" style={{ fontSize: 18 }}>{d.historyPicturesOf(name)}</strong>
                 <button type="button" aria-label={d.close} onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 18 }}>✕</button>
@@ -263,12 +264,12 @@ const FEW_FILES = 6
 /** A line of time: every task of the change with its pictures and what it changed, and last where it stands on GitHub. */
 function History({ tasks, github }: { tasks: NonNullable<BlockDetails['history']>; github?: BlockDetails['github'] }) {
   const dot = (colour: string, n: number | string) => (
-    <span style={{ width: 26, height: 26, borderRadius: 999, display: 'grid', placeItems: 'center', background: '#0f141c', border: `2px solid ${colour}`, color: colour, fontSize: 12.5, fontWeight: 800, zIndex: 1 }}>{n}</span>
+    <span style={{ width: 26, height: 26, borderRadius: 999, display: 'grid', placeItems: 'center', background: '#141414', border: `2px solid ${colour}`, color: colour, fontSize: 12.5, fontWeight: 800, zIndex: 1 }}>{n}</span>
   )
   const when = (at: string) => new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
   const row = { position: 'relative', display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 14, paddingBottom: 22 } as const
   // The line that joins one moment to the next, behind the numbered dots.
-  const rail = { position: 'absolute', left: 12, top: 26, bottom: 0, width: 2, background: theme.border } as const
+  const rail = { position: 'absolute', left: 12, top: 26, bottom: 0, width: 2, background: brand.line } as const
   return (
     <Section title={d.history} help={d.historyHelp}>
       <ol data-testid="details-history" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
@@ -286,10 +287,10 @@ function History({ tasks, github }: { tasks: NonNullable<BlockDetails['history']
               {t.look ? <TaskPictures runId={t.runId} name={t.name} /> : <span style={{ fontSize: 13, color: theme.skipped }}>{d.historyNothingToSee}</span>}
               {t.files.length > 0 && (
                 <div style={{ display: 'grid', gap: 4, fontSize: 12.5 }}>
-                  <span style={{ color: theme.dim, fontWeight: 700 }}>{d.historyFiles(t.files.length)}</span>
+                  <span style={{ color: brand.quiet, fontWeight: 700 }}>{d.historyFiles(t.files.length)}</span>
                   <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     {t.files.slice(0, FEW_FILES).map(f => (
-                      <code key={f} style={{ padding: '2px 7px', borderRadius: 6, background: '#0f141c', border: `1px solid ${theme.border}`, color: '#c9d0db', fontSize: 12 }}>{f}</code>
+                      <code key={f} style={{ padding: '2px 7px', borderRadius: 6, background: '#141414', border: `1px solid ${brand.line}`, color: '#c9d0db', fontSize: 12 }}>{f}</code>
                     ))}
                     {t.files.length > FEW_FILES && <span style={{ color: theme.skipped, alignSelf: 'center' }}>{d.historyMoreFiles(t.files.length - FEW_FILES)}</span>}
                   </span>
@@ -307,11 +308,11 @@ function History({ tasks, github }: { tasks: NonNullable<BlockDetails['history']
                 <span style={{ padding: '2px 9px', borderRadius: 999, background: theme.tint(github.published ? 'passed' : 'waiting', 0.18), color: github.published ? theme.passed : theme.waiting, fontSize: 11.5, fontWeight: 800 }}>{github.published ? d.historyPublished : d.historyWaiting}</span>
                 <span style={{ fontSize: 12.5, color: theme.skipped }}>{when(github.at)}</span>
               </div>
-              <span style={{ fontSize: 13, color: theme.dim, overflowWrap: 'anywhere' }}>
+              <span style={{ fontSize: 13, color: brand.quiet, overflowWrap: 'anywhere' }}>
                 {d.historyBranch} <code style={{ color: '#c9d0db' }}>{github.branch}</code>
               </span>
               {github.pr && (
-                <a href={github.pr.url} target="_blank" rel="noreferrer" style={{ justifySelf: 'start', color: '#9cc2ff', fontSize: 13.5 }}>
+                <a href={github.pr.url} target="_blank" rel="noreferrer" style={{ justifySelf: 'start', color: brand.green, fontSize: 13.5 }}>
                   {d.historyPr(github.pr.number)} ↗
                 </a>
               )}
@@ -328,19 +329,19 @@ function PicturesBody({ runId, state }: { runId: string; state: SnapshotState })
   const [large, setLarge] = useState<Shot | null>(null)
   if (state.status === 'working') {
     return (
-      <span role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, color: theme.dim }}>
+      <span role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, color: brand.quiet }}>
         <WorkingSpinner blockId="pictures" size={15} /> {d.picturesWorking}
       </span>
     )
   }
-  if (state.status !== 'ready' || state.shots.length === 0) return <span style={{ color: theme.dim }}>{d.noPictures}</span>
+  if (state.status !== 'ready' || state.shots.length === 0) return <span style={{ color: brand.quiet }}>{d.noPictures}</span>
   const src = (shot: Shot) => `/api/runs/${runId}/snapshots/${shot}`
   const tab = (value: 'desktop' | 'mobile') => ({
     padding: '7px 16px',
     borderRadius: 999,
-    border: `1px solid ${screen === value ? theme.running : theme.border}`,
+    border: `1px solid ${screen === value ? theme.running : brand.line}`,
     background: screen === value ? theme.tint('running', 0.18) : 'transparent',
-    color: screen === value ? '#cfe0ff' : theme.dim,
+    color: screen === value ? brand.text : brand.quiet,
     fontSize: 13.5,
     fontWeight: 700,
     cursor: 'pointer',
@@ -354,7 +355,7 @@ function PicturesBody({ runId, state }: { runId: string; state: SnapshotState })
           </button>
         ))}
         {/* Which page these pictures are of, so nobody takes the home page for the page that changed. */}
-        {state.route && <span data-testid="pictures-page" style={{ alignSelf: 'center', marginLeft: 'auto', fontSize: 13, color: theme.dim }}>{strings.snapshots.page(state.route)}</span>}
+        {state.route && <span data-testid="pictures-page" style={{ alignSelf: 'center', marginLeft: 'auto', fontSize: 13, color: brand.quiet }}>{strings.snapshots.page(state.route)}</span>}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
         {(['before', 'after'] as const).map(side => {
@@ -362,19 +363,19 @@ function PicturesBody({ runId, state }: { runId: string; state: SnapshotState })
           const label = `${strings.snapshots[side]} · ${strings.snapshots[screen]}`
           return (
             <figure key={side} style={{ margin: 0, display: 'grid', gap: 6 }}>
-              <figcaption style={{ justifySelf: 'start', fontSize: 13, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? theme.dim : theme.passed }}>{strings.snapshots[side]}</figcaption>
+              <figcaption style={{ justifySelf: 'start', fontSize: 13, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? brand.quiet : theme.passed }}>{strings.snapshots[side]}</figcaption>
               {state.shots.includes(shot) ? (
                 // The frame is the same size on either tab, so the window does not jump: a picture fits inside it,
                 // and a click opens it large.
-                <button type="button" aria-label={d.enlarge(label)} title={d.enlargeHint} onClick={() => setLarge(shot)} style={{ position: 'relative', height: PICTURE_HEIGHT, boxSizing: 'border-box', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflow: 'hidden', borderRadius: 8, background: '#0b0e14', border: `1px solid ${theme.border}`, padding: 8, cursor: 'zoom-in' }}>
+                <button type="button" aria-label={d.enlarge(label)} title={d.enlargeHint} onClick={() => setLarge(shot)} style={{ position: 'relative', height: PICTURE_HEIGHT, boxSizing: 'border-box', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflow: 'hidden', borderRadius: 8, background: brand.bg, border: `1px solid ${brand.line}`, padding: 8, cursor: 'zoom-in' }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src(shot)} alt={label} style={{ display: 'block', maxWidth: '100%', maxHeight: '100%', borderRadius: 6, border: `1px solid ${side === 'before' ? theme.border : theme.tint('passed', 0.5)}` }} />
-                  <span style={{ position: 'absolute', right: 10, bottom: 10, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 999, background: 'rgba(11, 14, 20, 0.88)', border: `1px solid ${theme.border}`, color: '#e6e9ef', fontSize: 12.5, fontWeight: 700 }}>
+                  <img src={src(shot)} alt={label} style={{ display: 'block', maxWidth: '100%', maxHeight: '100%', borderRadius: 6, border: `1px solid ${side === 'before' ? brand.line : theme.tint('passed', 0.5)}` }} />
+                  <span style={{ position: 'absolute', right: 10, bottom: 10, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 999, background: 'rgba(11, 14, 20, 0.88)', border: `1px solid ${brand.line}`, color: '#e6e9ef', fontSize: 12.5, fontWeight: 700 }}>
                     <Icon path={ICON.enlarge} size={14} /> {d.enlargeHint}
                   </span>
                 </button>
               ) : (
-                <div style={{ height: PICTURE_HEIGHT, display: 'grid', placeItems: 'center', padding: 16, textAlign: 'center', borderRadius: 8, border: `1px dashed ${theme.border}`, color: theme.dim, fontSize: 13.5, lineHeight: 1.45 }}>
+                <div style={{ height: PICTURE_HEIGHT, display: 'grid', placeItems: 'center', padding: 16, textAlign: 'center', borderRadius: 8, border: `1px dashed ${brand.line}`, color: brand.quiet, fontSize: 13.5, lineHeight: 1.45 }}>
                   {side === 'before' ? d.noBefore : d.noAfter}
                 </div>
               )}
@@ -415,14 +416,14 @@ function LargePicture({ src, label, phone, onClose }: { src: string; label: stri
         <strong className="factory-display" style={{ fontSize: 17 }}>
           {label}
         </strong>
-        <button type="button" onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: '#e6e9ef', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
+        <button type="button" onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 8, border: `1px solid ${brand.line}`, background: '#141414', color: '#e6e9ef', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
           <Icon path={ICON.cross} size={14} /> {d.close}
         </button>
       </header>
       <div style={{ overflow: 'auto', display: 'grid', justifyItems: 'center', alignItems: 'start', padding: '0 20px 24px', ...thin }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={src} alt={label} onClick={e => e.stopPropagation()} // A phone picture is taken at twice its size for sharpness: shown at a phone's own width, not doubled.
-          style={{ display: 'block', width: phone ? 'min(100%, 420px)' : undefined, maxWidth: '100%', borderRadius: 8, border: `1px solid ${theme.border}`, cursor: 'default' }}
+          style={{ display: 'block', width: phone ? 'min(100%, 420px)' : undefined, maxWidth: '100%', borderRadius: 8, border: `1px solid ${brand.line}`, cursor: 'default' }}
         />
       </div>
     </div>,
@@ -474,9 +475,9 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
         aria-label={d.title(label)}
         data-testid="block-details"
         onClick={e => e.stopPropagation()}
-        style={{ width: inline ? '100%' : 'min(920px, calc(100% - 32px))', height: inline ? undefined : 'min(780px, calc(100% - 96px))', boxSizing: 'border-box', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: theme.card, border: `1px solid ${theme.border}`, borderTop: `3px solid ${accent}`, borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontSize: 14.5 }}
+        style={{ width: inline ? '100%' : 'min(920px, calc(100% - 32px))', height: inline ? undefined : 'min(780px, calc(100% - 96px))', boxSizing: 'border-box', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', background: brand.card, border: `1px solid ${brand.line}`, borderTop: inline ? `1px solid ${brand.line}` : `3px solid ${accent}`, borderRadius: 16, boxShadow: inline ? 'none' : '0 24px 60px rgba(0,0,0,0.6)', fontSize: inline ? 15 : 14.5, ...(inline ? ({ '--thumb-w': '380px', '--thumb-h': '236px' } as CSSProperties) : null) }}
       >
-        <header style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '18px 26px', borderBottom: `1px solid ${theme.border}` }}>
+        <header style={{ display: 'flex', alignItems: 'center', gap: 14, padding: inline ? '26px 28px 0' : '18px 26px', borderBottom: inline ? 'none' : `1px solid ${brand.line}` }}>
           {kind && KINDS.includes(kind) && <TypeMark kind={kind as BlockKind} colour={accent} size={40} />}
           <div style={{ display: 'grid', gap: 4, flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -485,7 +486,7 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
               </h2>
               {details && <span style={{ padding: '3px 11px', borderRadius: 999, background: `${accent}26`, color: accent, fontSize: 12.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{strings.canvas.stateLabel[state]}</span>}
             </div>
-            {kind && d.purpose[kind] && <span style={{ fontSize: 14, color: theme.dim }}>{d.purpose[kind]}</span>}
+            {kind && d.purpose[kind] && <span style={{ fontSize: 14, color: brand.quiet }}>{d.purpose[kind]}</span>}
           </div>
           {!inline && (
             <button type="button" aria-label={d.close} onClick={onClose} style={{ background: 'none', border: 'none', color: theme.skipped, cursor: 'pointer', fontSize: 18 }}>
@@ -519,7 +520,7 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
               </div>
             </div>
           )}
-          {details === null && <div style={{ color: theme.dim }}>{d.unreadable}</div>}
+          {details === null && <div style={{ color: brand.quiet }}>{d.unreadable}</div>}
           {details && (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
@@ -532,11 +533,11 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
               </div>
 
               <Section title={d.said} help={view?.summaryIsClaim ? d.saidByAi : undefined}>
-                <div data-testid="details-summary" style={{ display: 'grid', gap: 10, padding: '14px 16px', borderRadius: 12, background: '#0f141c', borderLeft: `3px solid ${accent}`, fontSize: 15.5, lineHeight: 1.6, color: '#e6e9ef', overflowWrap: 'anywhere' }}>
-                  {summary ? <Prose text={summary} /> : <span style={{ color: theme.dim }}>{d.nothingSaid}</span>}
+                <div data-testid="details-summary" style={{ display: 'grid', gap: 10, padding: '14px 16px', borderRadius: 12, background: '#141414', borderLeft: `3px solid ${accent}`, fontSize: 15.5, lineHeight: 1.6, color: '#e6e9ef', overflowWrap: 'anywhere' }}>
+                  {summary ? <Prose text={summary} /> : <span style={{ color: brand.quiet }}>{d.nothingSaid}</span>}
                 </div>
                 {pr && kind === 'ship' && (
-                  <a href={pr.url} target="_blank" rel="noreferrer" style={{ justifySelf: 'start', color: '#9cc2ff', fontSize: 14 }}>
+                  <a href={pr.url} target="_blank" rel="noreferrer" style={{ justifySelf: 'start', color: brand.green, fontSize: 14 }}>
                     {d.seeOnGithub(pr.number)} ↗
                   </a>
                 )}
@@ -559,7 +560,7 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
                 <Section title={d.jobs(details.jobs.length)}>
                   <div style={{ display: 'grid', gap: 10 }}>
                     {details.jobs.map((j, i) => (
-                      <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 12, padding: '12px 14px', borderRadius: 10, background: '#0f141c', border: `1px solid ${theme.border}` }}>
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 12, padding: '12px 14px', borderRadius: 10, background: '#141414', border: `1px solid ${brand.line}` }}>
                         <span style={{ width: 26, height: 26, borderRadius: 999, display: 'grid', placeItems: 'center', background: theme.tint('waiting', 0.18), color: theme.waiting, fontSize: 13, fontWeight: 800 }}>{i + 1}</span>
                         <div style={{ display: 'grid', gap: 6 }}>
                           <span style={{ fontSize: 15, fontWeight: 600, color: '#e6e9ef', lineHeight: 1.45 }}>{j.title}</span>
@@ -604,7 +605,7 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
                           <span style={{ paddingTop: 2, fontFamily: mono, fontSize: 12, color: theme.skipped, textAlign: 'right' }}>{sinceStart(details.startedAt, s.at)}</span>
                           <span aria-hidden="true" style={{ display: 'grid', justifyItems: 'center', alignSelf: 'stretch', gridTemplateRows: 'auto 1fr' }}>
                             <span style={{ width: 9, height: 9, marginTop: 6, borderRadius: 999, background: last ? accent : theme.skipped }} />
-                            {!last && <span style={{ width: 2, minHeight: 14, background: theme.border }} />}
+                            {!last && <span style={{ width: 2, minHeight: 14, background: brand.line }} />}
                           </span>
                           <span style={{ paddingBottom: 12, fontSize: 14, lineHeight: 1.5, color: '#d6dce6', overflowWrap: 'anywhere', ...(ran ? { fontFamily: mono, fontSize: 12.5 } : {}) }}>{s.text}</span>
                         </li>
@@ -612,7 +613,7 @@ export function BlockDetailsDialog({ runId, blockId, label, view, pr, away = nul
                     })}
                   </ol>
                   {steps.length > FEW_STEPS && (
-                    <button type="button" onClick={() => setAllSteps(a => !a)} style={{ justifySelf: 'start', padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: '#e6e9ef', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                    <button type="button" onClick={() => setAllSteps(a => !a)} style={{ justifySelf: 'start', padding: '6px 12px', borderRadius: 8, border: `1px solid ${brand.line}`, background: '#141414', color: '#e6e9ef', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                       {allSteps ? d.showFewer : d.showAll(steps.length)}
                     </button>
                   )}

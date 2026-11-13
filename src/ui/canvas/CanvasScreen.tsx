@@ -3,7 +3,6 @@
 import { PastTasks } from './PastTasks'
 import { attentionOf, useAttention } from './attention'
 import { readyToPublish } from './shipReady'
-import { StepsView } from './StepsView'
 import { TasksDrawer } from './TasksDrawer'
 import { TaskTitle } from './TaskTitle'
 import type { FailureActions } from './FailurePanel'
@@ -455,6 +454,21 @@ export function CanvasScreen({
     askKey: run ? `${run.runId}:${mode}:${askedIdOf(events) ?? ''}` : null,
   })
 
+  // The switch between the two layouts and the list of tasks: floating over the canvas, or in the top bar.
+  const topButtons = (floating: boolean) => {
+    const place = (right: number) => (floating ? { position: 'absolute' as const, top: 12, right, zIndex: 6, background: theme.card, boxShadow: '0 6px 18px rgba(0,0,0,0.35)' } : null)
+    return (
+      <>
+        <button type="button" data-testid="view-switch" title={strings.steps.viewHint} onClick={() => pickLayout(layout === 'canvas' ? 'steps' : 'canvas')} style={{ ...headerButton, fontWeight: 600, ...place(112) }}>
+          {layout === 'canvas' ? strings.steps.viewSteps : strings.steps.viewCanvas}
+        </button>
+        <button type="button" aria-expanded={tasksOpen} onClick={() => setTasksOpen(o => !o)} style={{ ...headerButton, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8, ...place(16) }}>
+          {floating ? `☰ ${strings.history.open}` : strings.history.open}
+          {!floating && (taskCount ?? 0) > 0 && <span style={{ padding: '1px 8px', borderRadius: 999, background: theme.border, fontSize: 12 }}>{taskCount}</span>}
+        </button>
+      </>
+    )
+  }
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* The controls stay in the top bar, visible with the sidebar closed: which agent, run, stop, and the run's state. */}
@@ -592,6 +606,7 @@ export function CanvasScreen({
             </span>
           )
         )}
+        {layout === 'steps' && <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>{topButtons(false)}</span>}
       </header>
       {suggested && dismissedSuggestion !== suggested && (
         <div data-testid="test-suggestion" role="status" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: `1px solid ${theme.border}`, background: 'rgba(121, 220, 139, 0.07)', fontSize: 13 }}>
@@ -611,25 +626,9 @@ export function CanvasScreen({
       {/* clip, not hidden: a hidden box can still be scrolled by the browser (find in page, scrollIntoView), which would
           slide the whole canvas sideways to show the closed drawer. A clipped one cannot scroll at all. */}
       <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'clip' }}>
-        {/* Top right of the canvas, where the list it opens slides in from. */}
-        <button
-          type="button"
-          aria-expanded={tasksOpen}
-          onClick={() => setTasksOpen(o => !o)}
-          style={{ ...headerButton, position: 'absolute', top: 12, right: 16, zIndex: 6, fontWeight: 600, background: theme.card, boxShadow: '0 6px 18px rgba(0,0,0,0.35)' }}
-        >
-          ☰ {strings.history.open}
-        </button>
-        {/* The switch between the two layouts, beside the Tasks button. */}
-        <button
-          type="button"
-          data-testid="view-switch"
-          title={strings.steps.viewHint}
-          onClick={() => pickLayout(layout === 'canvas' ? 'steps' : 'canvas')}
-          style={{ ...headerButton, position: 'absolute', top: 12, right: 112, zIndex: 6, fontWeight: 600, background: theme.card, boxShadow: '0 6px 18px rgba(0,0,0,0.35)' }}
-        >
-          {layout === 'canvas' ? strings.steps.viewSteps : strings.steps.viewCanvas}
-        </button>
+        {/* Top right of the canvas, where the list it opens slides in from. In the steps layout the right edge is the
+            command panel's, so the two buttons are in the top bar instead. */}
+        {layout === 'canvas' && topButtons(true)}
         {run === null && (
           // No task is open (a new one not started yet, or the open one was deleted): say so, and where to go next.
           // The flow below stays visible: it is what the next task will run through.
@@ -739,6 +738,7 @@ export function CanvasScreen({
           />
         </TasksDrawer>
         <CommandCard
+          docked={layout === 'steps'}
           key={`${run?.runId ?? 'none'}-${loading ? 'loading' : mode}`}
           ref={cardRef}
           mode={mode}
@@ -779,21 +779,13 @@ export function CanvasScreen({
           showFindings={reviewRan}
           notice={{ offer: noticeOffer, onAllow: allowNotice }}
         />
-        {layout === 'steps' && (
-          <StepsView
-            blocks={run?.blocks ?? graph.blocks}
-            views={run ? withAsked(withShip) : {}}
-            runId={loading ? null : (run?.runId ?? null)}
-            blank={nothingOpen}
-            title={run && !loading ? <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} /> : undefined}
-            log={run ? <EventBarList events={events} blocks={run.blocks} onPoint={() => undefined} /> : undefined}
-            pr={run && shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null}
-            away={run && run.here === false ? { machine: run.machine ?? null } : null}
-            onEditFlow={() => pickLayout('canvas')}
-          />
-        )}
-        {layout === 'canvas' && (
         <Canvas
+          layout={layout}
+          stepDetails={id =>
+            run ? (
+              <BlockDetailsDialog key={`inline-${run.runId}-${id}`} inline runId={run.runId} blockId={id} label={run.blocks.find(b => b.id === id)?.label ?? id} view={withAsked(withShip)[id]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} away={run.here === false ? { machine: run.machine ?? null } : null} onClose={() => undefined} />
+            ) : null
+          }
           graph={graph}
           save={save}
           nodeRuns={Object.values(withAsked(withShip))}
@@ -815,7 +807,6 @@ export function CanvasScreen({
           }
           sidebarLog={run ? <EventBarList events={events} blocks={run.blocks} onPoint={setHighlightedId} /> : undefined}
         />
-        )}
         {run && detailsOf && (
           <BlockDetailsDialog key={`details-${run.runId}-${detailsOf}`} runId={run.runId} blockId={detailsOf} label={run.blocks.find(b => b.id === detailsOf)?.label ?? detailsOf} view={withShip[detailsOf]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} away={run.here === false ? { machine: run.machine ?? null } : null} onClose={() => setDetailsOf(null)} />
         )}

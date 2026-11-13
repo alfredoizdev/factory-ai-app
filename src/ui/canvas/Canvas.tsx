@@ -7,10 +7,13 @@ import { derivedEdges, STAGE_ORDER, type Block, type Graph, type ValidationIssue
 import { summarize } from '@/domain/summary'
 import { BlockInspector } from './BlockInspector'
 import { addBlock, addableKinds, canDisable, canRemove, chainTo, moveBlock, removeBlock, updateBlock } from './editing'
+import type { NodeState } from '@/domain/states'
+import { brand } from '@/ui/brand'
 import { theme } from '@/ui/theme'
 import { Logo } from '@/ui/Logo'
 import { strings } from '@/ui/strings'
 import { Depth } from './Depth'
+import { StepsLane, stepToShow } from './StepsView'
 import { ParticleLayer, type Cable } from './FlowParticles'
 import { useReducedMotion } from './useReducedMotion'
 import { COMMAND_CARD_WIDTH } from './layout'
@@ -232,7 +235,13 @@ export function Canvas({
   onFailedClick,
   onDetails,
   canRetry = false,
+  layout = 'canvas',
+  stepDetails,
 }: {
+  /** 'steps': the flow is drawn as one row of steps with the picked step's details under it, instead of as a canvas. */
+  layout?: 'canvas' | 'steps'
+  /** In the steps layout: the details of one block of the run on screen. */
+  stepDetails?: (blockId: string) => ReactNode
   /** Asked from a block that failed: to see what went wrong, or to try again. */
   onFailedClick?: (what: 'see' | 'again') => void
   /** While a run is on screen: opens the details of one of its blocks. */
@@ -362,7 +371,6 @@ export function Canvas({
   const runById = new Map(nodeRuns.map(r => [r.blockId, r]))
   const issuesFor = (id: string) => issues.filter(i => i.blockId === id).map(i => i.message)
   const unattributed = issues.filter(i => i.blockId === null || !graph.blocks.some(b => b.id === i.blockId))
-  const selected = graph.blocks.find(b => b.id === selectedId) ?? null
   const addable = addableKinds(graph)
   const flow = useRef<ReactFlowInstance<CardNode> | null>(null)
   // Each card's size as the flow last measured it.
@@ -450,9 +458,9 @@ export function Canvas({
   const mustStayFull = new Set(
     ordered.filter(b => issuesFor(b.id).length > 0 || (hasRun && ((draftIds.has(b.id) && !inRun(b)) || activeNow(b.id)))).map(b => b.id),
   )
-  const layout = hasRun ? fisheyeLayout(ordered, focusId, mustStayFull) : null
+  const lane = hasRun ? fisheyeLayout(ordered, focusId, mustStayFull) : null
   useEffect(() => {
-    layoutRef.current = layout
+    layoutRef.current = lane
   })
 
   // The lane is re-laid-out whenever the focus moves, so the view has to be re-fitted or the far end falls
@@ -463,7 +471,18 @@ export function Canvas({
     fitLane(reducedMotion ? 0 : 300)
   }, [fisheyeFocus, reducedMotion, fitLane])
 
-  const placementOf = (block: Block) => layout?.get(block.id)
+  const placementOf = (block: Block) => lane?.get(block.id)
+  // The steps layout always shows one step: the one picked by hand or pointed at from the log, else where the work is.
+  const steps = layout === 'steps'
+  const stateIn = (id: string): NodeState | null => {
+    const block = presented.blocks.find(b => b.id === id)
+    return hasRun && block && (inRun(block) || !draftIds.has(id)) ? (runById.get(id)?.state ?? 'queued') : null
+  }
+  const held = (hasRun ? focusOverride : null) ?? selectedId
+  const stepPick = steps ? (held && presented.blocks.some(b => b.id === held) ? held : stepToShow(presented.blocks, stateIn)) : null
+  const selected = graph.blocks.find(b => b.id === (steps ? stepPick : selectedId)) ?? null
+  // The steps layout wears the brand's colours; the canvas keeps its own.
+  const skin = steps ? { bg: brand.bg, line: brand.line, panel: brand.card, head: '#1e1e1e' } : { bg: theme.bg, line: theme.border, panel: '#0f141c', head: '#131a24' }
   const removeFromDraft = (id: string) => {
     edit(g => removeBlock(g, id))
     setSelectedId(null)
@@ -596,13 +615,13 @@ export function Canvas({
     <div
       data-testid="canvas"
       data-edges={edges.map(e => e.id).join(',')}
-      style={{ display: 'flex', width: '100%', height: '100%', background: theme.bg, color: 'inherit' }}
+      style={{ display: 'flex', width: '100%', height: '100%', background: skin.bg, color: 'inherit' }}
     >
       {!sidebarOpen && (
         <nav
           data-testid="sidebar-rail"
           aria-label={strings.sidebar.label}
-          style={{ width: RAIL_WIDTH, flexShrink: 0, padding: '10px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, borderRight: `1px solid ${theme.border}` }}
+          style={{ width: RAIL_WIDTH, flexShrink: 0, padding: '10px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, borderRight: `1px solid ${skin.line}` }}
         >
           <RailButton icon="expand" label={strings.sidebar.open} onClick={() => setSidebarOpen(true)} />
           <span aria-hidden="true" style={{ width: 24, height: 1, background: theme.border, margin: '4px 0' }} />
@@ -625,7 +644,7 @@ export function Canvas({
           display: sidebarOpen ? 'flex' : 'none',
           flexDirection: 'column',
           gap: 20,
-          borderRight: `1px solid ${theme.border}`,
+          borderRight: `1px solid ${skin.line}`,
           overflowY: 'auto',
           // A thin dark scrollbar: the system's light one is the brightest thing on screen otherwise.
           scrollbarWidth: 'thin',
@@ -641,16 +660,16 @@ export function Canvas({
         </div>
 
         {sidebarTop && (
-          <section id={RUN_SECTION} style={{ display: 'grid', gap: 10, paddingBottom: 20, borderBottom: `1px solid ${theme.border}` }}>
+          <section id={RUN_SECTION} style={{ display: 'grid', gap: 10, paddingBottom: 20, borderBottom: `1px solid ${skin.line}` }}>
             {sidebarTop}
           </section>
         )}
 
-        <section id={PALETTE_SECTION} data-testid="palette" style={{ display: 'grid', gap: 6 }}>
-          <h2 style={{ margin: 0, fontSize: 14 }}>{strings.editing.paletteTitle}</h2>
-          {addable.length === 0 && <p style={{ margin: 0, color: theme.skipped }}>{strings.editing.paletteEmpty}</p>}
+        <section id={PALETTE_SECTION} data-testid="palette" style={{ display: 'grid', gridTemplateColumns: steps ? 'repeat(2, minmax(0, 1fr))' : undefined, gap: 6 }}>
+          <h2 style={{ margin: 0, fontSize: 14, gridColumn: '1 / -1' }}>{strings.editing.paletteTitle}</h2>
+          {addable.length === 0 && <p style={{ margin: 0, gridColumn: '1 / -1', color: theme.skipped }}>{strings.editing.paletteEmpty}</p>}
           {addable.map(kind => (
-            <button key={kind} type="button" style={panelButton} onClick={() => {
+            <button key={kind} type="button" style={steps ? { ...panelButton, background: brand.card, border: `1px solid ${brand.line}`, textAlign: 'center' } : panelButton} onClick={() => {
                 // The new card is chosen at once, so it is plain which one was just added and its settings are open.
                 const before = new Set(graphRef.current.blocks.map(b => b.id))
                 edit(g => addBlock(g, kind, reservedIds))
@@ -660,7 +679,7 @@ export function Canvas({
                 if (hasRun) setFocusOverride(added.id)
                 else setExpandedId(added.id)
               }}>
-              {strings.blocks[kind]}
+              {steps ? `+ ${strings.blocks[kind]}` : strings.blocks[kind]}
             </button>
           ))}
         </section>
@@ -671,8 +690,8 @@ export function Canvas({
           data-testid="block-settings"
           style={{
             flexShrink: 0,
-            background: '#0f141c',
-            border: `1px solid ${theme.border}`,
+            background: skin.panel,
+            border: `1px solid ${skin.line}`,
             borderRadius: 10,
             overflow: 'hidden',
           }}
@@ -683,8 +702,8 @@ export function Canvas({
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '8px 10px',
-              background: '#131a24',
-              borderBottom: `1px solid ${theme.border}`,
+              background: skin.head,
+              borderBottom: `1px solid ${skin.line}`,
             }}
           >
             <h2
@@ -699,7 +718,7 @@ export function Canvas({
             >
               {strings.editing.inspectorTitle}
             </h2>
-            {selected && (
+            {selected && !steps && (
               <button
                 type="button"
                 aria-label={strings.editing.closeSettings}
@@ -761,7 +780,7 @@ export function Canvas({
           <section
             id={LOG_SECTION}
             data-testid="sidebar-log"
-            style={{ marginTop: 'auto', flexShrink: 0, background: '#0f141c', border: `1px solid ${theme.border}`, borderRadius: 10, overflow: 'hidden' }}
+            style={{ marginTop: steps ? 0 : 'auto', flexShrink: 0, background: skin.panel, border: `1px solid ${skin.line}`, borderRadius: 10, overflow: 'hidden' }}
           >
             <h2
               style={{
@@ -772,13 +791,13 @@ export function Canvas({
                 letterSpacing: '0.12em',
                 textTransform: 'uppercase',
                 color: theme.dim,
-                background: '#131a24',
-                borderBottom: `1px solid ${theme.border}`,
+                background: skin.head,
+                borderBottom: `1px solid ${skin.line}`,
               }}
             >
               {strings.events.barTitle}
             </h2>
-            <div style={{ maxHeight: LOG_MAX_HEIGHT, overflowY: 'auto', padding: 6, scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>
+            <div style={{ maxHeight: steps ? 'max(380px, calc(100vh - 560px))' : LOG_MAX_HEIGHT, overflowY: 'auto', padding: 6, scrollbarWidth: 'thin', scrollbarColor: `${theme.floorLine} transparent` }}>
               {sidebarLog}
             </div>
           </section>
@@ -786,6 +805,24 @@ export function Canvas({
       </aside>
 
       <div ref={pane} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+        {steps && (
+          <StepsLane
+            blocks={presented.blocks}
+            stateOf={stateIn}
+            hasRun={hasRun}
+            pickedId={stepPick}
+            onPick={id => {
+              setSelectedId(id)
+              if (hasRun) setFocusOverride(id)
+            }}
+            title={overlay}
+            detail={stepPick && stateIn(stepPick) !== null ? stepDetails?.(stepPick) : undefined}
+            blank={blank}
+            loading={loading}
+          />
+        )}
+        {!steps && (
+          <>
         <Depth floorRef={floorRef} />
         {overlay}
         {loading && <LaneSkeleton count={runBlocks?.length ?? graph.blocks.length} />}
@@ -840,6 +877,8 @@ export function Canvas({
             <ParticleLayer cables={cables} />
           </ViewportPortal>
         </ReactFlow>
+          </>
+        )}
       </div>
     </div>
   )

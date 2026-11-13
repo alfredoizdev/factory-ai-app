@@ -2,6 +2,7 @@
 
 import { FailedSection, type FailureActions } from './FailurePanel'
 import { forwardRef, useState } from 'react'
+import { brand } from '@/ui/brand'
 import { strings } from '@/ui/strings'
 import { theme } from '@/ui/theme'
 import { RUN_INPUT_ID } from './Canvas'
@@ -36,6 +37,8 @@ const FRAME: Record<CardMode, { tone: 'running' | 'waiting' | 'passed' | 'failed
 export const CommandCard = forwardRef<
   HTMLElement,
   {
+    /** Fixed to the right edge, the full height of the screen, instead of floating in the corner (the steps layout). */
+    docked?: boolean
     mode: CardMode
     runId: string | null
     risk?: { level: 'low' | 'high'; reasons: string[]; stopForMe?: true }
@@ -88,7 +91,7 @@ export const CommandCard = forwardRef<
     /** The browser's notices: whether to offer them, and what pressing the offer does. Shown while the task works. */
     notice?: { offer: 'ask' | 'on' | 'blocked' | 'none'; onAllow: () => void }
   }
->(function CommandCard({ planMeasure, stopForMe = false, onStopForMe, onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, notice, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
+>(function CommandCard({ docked = false, planMeasure, stopForMe = false, onStopForMe, onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, notice, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : mode === 'failed' ? strings.failure.label : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : mode === 'failed' ? strings.failure.placeholder : strings.run.requestPlaceholder
@@ -134,6 +137,7 @@ export const CommandCard = forwardRef<
         gridTemplateColumns: 'minmax(0, 1fr)',
         gap: 12,
         outline: 'none',
+        ...(docked ? { top: 0, right: 0, bottom: 0, maxWidth: '100%', maxHeight: 'none', padding: '20px 20px 24px', alignContent: 'start', background: brand.bg, border: 'none', borderLeft: `1px solid ${brand.line}`, borderRadius: 0, boxShadow: 'none' } : null),
       }}
     >
       {loading && <CardSkeleton />}
