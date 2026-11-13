@@ -115,6 +115,40 @@ test('with no task open the canvas says so and offers the past tasks', async () 
   expect(screen.getByTestId('no-task')).toHaveTextContent(strings.history.newTaskTitle)
 })
 
+test('each task says what it needs next, and one that is ready is sent or published from its row without opening it', async () => {
+  const list = [
+    { ...runs[0], runId: 'pub', next: 'publish' },
+    { ...runs[0], runId: 'snd', next: 'send' },
+    { ...runs[0], runId: 'pln', status: 'waiting_approval', next: 'plan' },
+    { ...runs[0], runId: 'don', next: 'published' },
+  ]
+  const fetchMock = vi.fn(async (_u: string, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {} : { runs: list })))
+  vi.stubGlobal('fetch', fetchMock)
+  const onOpen = vi.fn()
+  render(<PastTasks workflowId="w1" currentRunId={null} refreshKey="x" onOpen={onOpen} />)
+  expect(await screen.findByTestId('next-pub')).toHaveTextContent(strings.history.next.publish)
+  expect(screen.getByTestId('next-don')).toHaveTextContent(strings.history.next.published)
+  expect(screen.queryByTestId('task-action-don')).toBeNull()
+  const posted = () => fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').map(([u, i]) => [u, JSON.parse(String(i!.body))])
+
+  // Publishing asks first, on the row; "No, go back" sends nothing.
+  fireEvent.click(screen.getByRole('button', { name: strings.history.publishIt }))
+  fireEvent.click(screen.getByRole('button', { name: strings.history.noPublish }))
+  expect(posted()).toEqual([])
+  fireEvent.click(screen.getByRole('button', { name: strings.history.publishIt }))
+  fireEvent.click(screen.getByRole('button', { name: strings.history.yesPublish }))
+  await screen.findByRole('button', { name: strings.history.publishIt })
+  expect(posted()).toEqual([['/api/runs/pub/ship', { action: 'merge' }]])
+
+  fireEvent.click(screen.getByRole('button', { name: strings.history.sendIt }))
+  await vi.waitFor(() => expect(posted()).toContainEqual(['/api/runs/snd/ship', { action: 'open' }]))
+
+  // A plan has to be seen before a yes: its button opens the task.
+  fireEvent.click(screen.getByRole('button', { name: strings.history.openIt }))
+  expect(onOpen).toHaveBeenCalledWith('pln')
+  expect(onOpen).not.toHaveBeenCalledWith('pub')
+})
+
 test('a task whose pull request is on hold says so instead of its status', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ runs: [{ ...runs[0], onHold: true }, { ...runs[1], onHold: false }] }))))
   render(<PastTasks workflowId="w1" currentRunId={null} refreshKey="x" onOpen={() => {}} />)

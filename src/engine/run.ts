@@ -1,10 +1,10 @@
 import { baseIsStale, prepareBase } from '@/engine/base'
 import { branchCommit, defaultBranch, freshestStart } from '@/engine/branches'
 import { createHash } from 'node:crypto'
-import { desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db } from '@/db/client'
-import { nodeRuns, projects, runs, workflows, workflowVersions } from '@/db/schema'
+import { events, nodeRuns, projects, runs, workflows, workflowVersions } from '@/db/schema'
 import { STAGE_ORDER, validateGraph, type Graph, type ValidationIssue } from '@/domain/graph'
 import { canTransition, type NodeState } from '@/domain/states'
 import { appendEventSync, lockRun } from '@/engine/events'
@@ -302,6 +302,57 @@ export type RunSummary = {
   onHold: boolean
   /** The app passed the human check on its own; no person approved. */
   passedOnItsOwn: boolean
+  /** What the task needs next from the person, or where it ended up; null when nothing is asked of them. */
+  next: NextStep | null
+}
+
+/**
+ * plan: a plan waits for a yes. check: the finished change waits to be looked at (or a question waits for an answer).
+ * send: saved on this computer, not on GitHub yet. publish: on GitHub as a pull request, not part of the project yet.
+ * published: merged.
+ */
+export type NextStep = 'plan' | 'check' | 'send' | 'publish' | 'published'
+
+/** Each task's next step, from what was written down about it: one query, and GitHub is not asked. */
+export async function nextStepAmong(rows: readonly { runId: string; status: string }[]): Promise<Map<string, NextStep>> {
+  const out = new Map<string, NextStep>()
+  const ids = rows.filter(r => r.status === 'waiting_approval' || r.status === 'completed').map(r => r.runId)
+  if (ids.length === 0) return out
+  const types = ['node.plan_proposed', 'node.plan_decided', 'run.kept', 'run.pr_opened', 'run.merged']
+  const found = await db
+    .select({ runId: events.runId, type: events.type, payloadJson: events.payloadJson })
+    .from(events)
+    .where(and(inArray(events.runId, ids), inArray(events.type, types)))
+    .orderBy(asc(events.sequence))
+  const of = new Map<string, { planOpen: boolean; kept: boolean; pr: number | null; merged: boolean }>()
+  const mergedPrs = new Set<number>()
+  for (const e of found) {
+    const m = of.get(e.runId) ?? { planOpen: false, kept: false, pr: null, merged: false }
+    of.set(e.runId, m)
+    if (e.type === 'node.plan_proposed') m.planOpen = true
+    else if (e.type === 'node.plan_decided') m.planOpen = false
+    else if (e.type === 'run.kept') m.kept = true
+    else {
+      const number = (JSON.parse(e.payloadJson) as { number?: unknown }).number
+      if (typeof number === 'number') m.pr = number
+      if (e.type === 'run.merged') {
+        m.merged = true
+        if (typeof number === 'number') mergedPrs.add(number)
+      }
+    }
+  }
+  for (const r of rows) {
+    const m = of.get(r.runId)
+    if (r.status === 'waiting_approval') out.set(r.runId, m?.planOpen ? 'plan' : 'check')
+    else if (r.status === 'completed' && m) {
+      // Several tasks can share one pull request (something added to a change not published yet): once it is merged,
+      // all of them are published.
+      if (m.merged || (m.pr !== null && mergedPrs.has(m.pr))) out.set(r.runId, 'published')
+      else if (m.pr !== null) out.set(r.runId, 'publish')
+      else if (m.kept) out.set(r.runId, 'send')
+    }
+  }
+  return out
 }
 
 /** A workflow's past tasks, newest first: what was asked, when, how it ended, and the branch it was kept on. */
@@ -324,5 +375,6 @@ export async function listRuns(workflowId: string, limit = 50): Promise<RunSumma
     )
   const held = await onHoldAmong(rows.map(r => r.runId))
   const onItsOwn = await passedOnItsOwnAmong(rows.map(r => r.runId))
-  return rows.map(r => ({ ...r, title: titleOf(r), onHold: held.has(r.runId), passedOnItsOwn: onItsOwn.has(r.runId) }))
+  const next = await nextStepAmong(rows)
+  return rows.map(r => ({ ...r, title: titleOf(r), onHold: held.has(r.runId), passedOnItsOwn: onItsOwn.has(r.runId), next: next.get(r.runId) ?? null }))
 }

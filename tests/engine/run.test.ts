@@ -260,6 +260,33 @@ describe('where a fresh task starts', () => {
   })
 })
 
+test('the list says what each task needs next: a yes to its plan, sending, publishing, or nothing once published', async () => {
+  const { listRuns } = await import('@/engine/run')
+  const { appendEventSync } = await import('@/engine/events')
+  const workflowId = await newWorkflow()
+  await saveDraft(workflowId, defaultGraph())
+  await publishVersion(workflowId)
+  const note = async (runId: string, type: Parameters<typeof appendEventSync>[0]['type'], payload: Record<string, unknown> = {}) => db.transaction(async tx => void (await appendEventSync({ runId, type, payload } as Parameters<typeof appendEventSync>[0], tx)))
+  const make = async (status: string) => {
+    const { runId } = await createRun({ workflowId, request: status })
+    await db.update(runs).set({ status }).where(eq(runs.id, runId))
+    return runId
+  }
+  const [plan, check, send, publish, first, added, plain] = [await make('waiting_approval'), await make('waiting_approval'), await make('completed'), await make('completed'), await make('completed'), await make('completed'), await make('completed')]
+  await note(plan, 'node.plan_proposed', { blockId: 'plan' })
+  await note(check, 'node.plan_proposed', { blockId: 'plan' })
+  await note(check, 'node.plan_decided', { blockId: 'plan' })
+  await note(send, 'run.kept', { branch: 'ai/a' })
+  await note(publish, 'run.kept', { branch: 'ai/b' })
+  await note(publish, 'run.pr_opened', { number: 4 })
+  // Two tasks in one pull request: merging it publishes both, though only one was told.
+  await note(first, 'run.pr_opened', { number: 9 })
+  await note(added, 'run.pr_opened', { number: 9 })
+  await note(added, 'run.merged', { number: 9 })
+  const next = new Map((await listRuns(workflowId)).map(r => [r.runId, r.next]))
+  expect([plan, check, send, publish, first, added, plain].map(id => next.get(id))).toEqual(['plan', 'check', 'send', 'publish', 'published', 'published', null])
+})
+
 test('past tasks are listed newest first, with what was asked and how each ended', async () => {
   const { listRuns } = await import('@/engine/run')
   const workflowId = await newWorkflow()

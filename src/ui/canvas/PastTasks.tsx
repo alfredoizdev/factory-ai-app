@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import type { RunSummary } from '@/engine/run'
 import { DEMO_PROVIDER_ID } from '@/providers/ids'
 import { strings } from '@/ui/strings'
@@ -57,6 +57,10 @@ export function PastTasks({
   const [confirming, setConfirming] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The one-click step being asked of a task from its row: which task, and whether "publish" is still being confirmed.
+  const [acting, setActing] = useState<{ runId: string; what: 'open' | 'merge' } | null>(null)
+  const [asking, setAsking] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
 
   async function remove(runId: string) {
     setError(null)
@@ -76,6 +80,31 @@ export function PastTasks({
       setDeleting(null)
     }
   }
+  // Other tasks move on while the person looks at one: the list asks again now and then.
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 6000)
+    return () => clearInterval(t)
+  }, [])
+
+  /** Sends a task to GitHub, or publishes it, from its row. The task itself is not opened. */
+  async function act(runId: string, what: 'open' | 'merge') {
+    setError(null)
+    setActing({ runId, what })
+    try {
+      const res = await fetch(`/api/runs/${runId}/ship`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: what }) })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null
+        setError(body?.error ?? strings.history.actionFailed)
+      }
+    } catch {
+      setError(strings.history.actionFailed)
+    } finally {
+      setActing(null)
+      setAsking(null)
+      setTick(n => n + 1)
+    }
+  }
+
   useEffect(() => {
     let live = true
     fetch(`/api/workflows/${workflowId}/runs`)
@@ -85,7 +114,7 @@ export function PastTasks({
     return () => {
       live = false
     }
-  }, [workflowId, refreshKey])
+  }, [workflowId, refreshKey, tick])
 
   const count = runs?.length ?? null
   useEffect(() => {
@@ -176,6 +205,12 @@ export function PastTasks({
                     <PauseIcon />
                     {strings.history.onHold}
                   </span>
+                ) : r.next ? (
+                  // What it needs next, in words: the waiting colour while it is the person's turn, green once published.
+                  <span data-testid={`next-${r.runId}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: r.next === 'published' ? theme.passed : theme.waiting, fontWeight: 700 }}>
+                    <span aria-hidden="true" style={{ width: 7, height: 7, flex: 'none', borderRadius: '50%', background: r.next === 'published' ? theme.passed : theme.waiting }} />
+                    {strings.history.next[r.next]}
+                  </span>
                 ) : status === 'waiting_approval' ? (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: theme.waiting, fontWeight: 700 }}>
                     <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: theme.waiting }} />
@@ -193,6 +228,41 @@ export function PastTasks({
                 {r.providerId === DEMO_PROVIDER_ID && <span style={{ color: theme.waiting }}>· {strings.history.demo}</span>}
               </span>
             </button>
+            {/* The step one click can take, on the row itself: the person stays on the task they are working on. */}
+            {confirming !== r.runId && (r.next === 'send' || r.next === 'publish' || r.next === 'plan' || r.next === 'check') && (
+              <div data-testid={`task-action-${r.runId}`} style={{ display: 'grid', gap: 6, padding: '0 9px 9px', fontSize: 12, lineHeight: 1.4 }}>
+                {asking === r.runId ? (
+                  <div role="group" aria-label={strings.history.confirmPublish} style={{ display: 'grid', gap: 6 }}>
+                    {strings.history.confirmPublish}
+                    <span style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" disabled={acting !== null} onClick={() => void act(r.runId, 'merge')} style={rowButton(true)}>
+                        {acting?.runId === r.runId && <WorkingSpinner blockId={`publish-${r.runId}`} size={12} />}
+                        {acting?.runId === r.runId ? strings.history.publishing : strings.history.yesPublish}
+                      </button>
+                      <button type="button" disabled={acting !== null} onClick={() => setAsking(null)} style={rowButton(false)}>
+                        {strings.history.noPublish}
+                      </button>
+                    </span>
+                  </div>
+                ) : r.next === 'publish' ? (
+                  <button type="button" disabled={acting !== null} onClick={() => setAsking(r.runId)} style={{ ...rowButton(true), justifySelf: 'start' }}>
+                    {strings.history.publishIt}
+                  </button>
+                ) : r.next === 'send' ? (
+                  <button type="button" disabled={acting !== null} onClick={() => void act(r.runId, 'open')} style={{ ...rowButton(true), justifySelf: 'start' }}>
+                    {acting?.runId === r.runId && <WorkingSpinner blockId={`send-${r.runId}`} size={12} />}
+                    {acting?.runId === r.runId ? strings.history.sending : strings.history.sendIt}
+                  </button>
+                ) : (
+                  // A plan or a finished change has to be seen before saying yes: the button opens it.
+                  !current && (
+                    <button type="button" onClick={() => onOpen(r.runId)} style={{ ...rowButton(false), justifySelf: 'start' }}>
+                      {strings.history.openIt}
+                    </button>
+                  )
+                )}
+              </div>
+            )}
             {confirming === r.runId && (
               // Asked on the spot, inside this task's own card, never by a browser dialog: deleting cannot be undone.
               <div role="group" aria-label={strings.history.confirm} style={{ display: 'grid', gap: 6, padding: '8px 9px 9px', borderTop: `1px solid ${theme.tint('failed', 0.3)}`, fontSize: 11.5, lineHeight: 1.4 }}>
@@ -219,6 +289,24 @@ export function PastTasks({
     </ul>
     </>
   )
+}
+
+/** A small button on a task's row: green for the step that moves the task on, quiet for the other. */
+function rowButton(main: boolean): CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: '5px 12px',
+    borderRadius: 7,
+    border: `1px solid ${main ? theme.passed : theme.dim}`,
+    background: main ? theme.passed : theme.card,
+    color: main ? '#07110a' : theme.ink,
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+  }
 }
 
 /** Pause: two bars, in the text's own colour. */
