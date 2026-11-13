@@ -413,7 +413,7 @@ export function ResultSection({
         </div>
       )}
       <div style={{ display: waitingOnGithub ? 'none' : 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)', paddingTop: 10, borderTop: `1px solid ${theme.lineSoft}`, ...(docked ? { marginTop: 'auto', marginInline: -20, padding: '20px 20px 0', gap: 10, borderTop: `1px solid ${brand.line}` } : null) }}>
-        <div style={{ fontSize: 12, color: theme.dim }}>{strings.followUp.hint}</div>
+        <div style={{ fontSize: 12, color: theme.dim }}>{merged ? strings.followUp.hintPublished : strings.followUp.hint}</div>
         {composer({
           label: strings.followUp.start,
           onSend: () => void followUp(),

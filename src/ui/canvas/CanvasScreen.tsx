@@ -523,8 +523,9 @@ export function CanvasScreen({
           {strings.run.cancel}
         </button>
         {/* A finished run stays on screen until the person moves on: this clears it for a separate, fresh task. */}
-        {run && !live && layout === 'canvas' && (
-          <button type="button" style={{ ...headerButton, fontWeight: 600 }} onClick={() => newTask('new')}>
+        {run && !live && (
+          // In the steps layout it is the one green button of the top bar.
+          <button type="button" style={layout === 'steps' ? { ...headerButton, fontWeight: 700, background: theme.passed, borderColor: theme.passed, color: '#0d1f12' } : { ...headerButton, fontWeight: 600 }} onClick={() => newTask('new')}>
             ＋ {strings.delivery.newTask}
           </button>
         )}
@@ -609,12 +610,6 @@ export function CanvasScreen({
         {layout === 'steps' && (
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             {topButtons(false)}
-            {/* In the steps layout "New task" is the one green button of the top bar, at its right end. */}
-            {run && !live && (
-              <button type="button" style={{ ...headerButton, fontWeight: 700, background: theme.passed, borderColor: theme.passed, color: '#0d1f12' }} onClick={() => newTask('new')}>
-                + {strings.delivery.newTask}
-              </button>
-            )}
           </span>
         )}
       </header>

@@ -967,6 +967,8 @@ export const strings = {
   followUp: {
     title: 'Another change',
     hint: 'Forgot something? Ask for it here: it is added to this same change, and to its pull request while it is not published yet. For something separate, use New task in the top bar.',
+    /** Under a change that is already published: what is asked now cannot join it. */
+    hintPublished: 'This change is already published. What you ask for here starts a new task that builds on it, with its own steps and its own publish. This one stays in the history.',
     placeholder: 'What to change next. Press Enter to send it (Shift+Enter for a new line).',
     start: 'Continue from this change',
     starting: 'Starting the follow-up…',

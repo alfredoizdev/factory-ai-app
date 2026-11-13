@@ -376,7 +376,7 @@ test('done: after the merge the card says publishing until the site has answered
   expect(screen.queryByText(`✓ ${strings.ship.merged}`)).toBeNull()
   expect(screen.queryByText(strings.delivery.finished)).toBeNull()
   expect(screen.queryByRole('button', { name: new RegExp(strings.delivery.moreOptions) })).toBeNull()
-  expect(screen.getByText(strings.followUp.hint)).not.toBeVisible()
+  expect(screen.getByText(strings.followUp.hintPublished)).not.toBeVisible()
   unmount()
 
   deployPending = false
@@ -384,7 +384,9 @@ test('done: after the merge the card says publishing until the site has answered
   expect(await screen.findByText(`✓ ${strings.ship.merged}`)).toBeInTheDocument()
   expect(screen.getByTestId('next-step')).toHaveTextContent(strings.delivery.finished)
   expect(screen.queryByTestId('ship-publishing')).toBeNull()
-  expect(screen.getByText(strings.followUp.hint)).toBeVisible()
+  // Published: what is asked now is a new task that builds on this one, and the card says so.
+  expect(screen.getByText(strings.followUp.hintPublished)).toBeVisible()
+  expect(screen.queryByText(strings.followUp.hint)).toBeNull()
 })
 
 test('each reason is a line of its own and a full sentence, even one stored before reasons were', async () => {
