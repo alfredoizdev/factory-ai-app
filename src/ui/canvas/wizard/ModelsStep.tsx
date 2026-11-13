@@ -3,7 +3,7 @@
 import { MODEL_CHOICES, MODEL_STEPS, PRESETS, presetOf, type ModelChoice, type PresetName, type StepModels } from '@/domain/models'
 import { strings } from '@/ui/strings'
 import { brand } from '@/ui/brand'
-import { choice, field, hint, lead } from './parts'
+import { choice, choiceHint, field, hint, lead } from './parts'
 
 const w = strings.wizard.models
 
@@ -18,7 +18,7 @@ export function ModelsStep({ models, onChange }: { models: StepModels; onChange:
         {(Object.keys(PRESETS) as PresetName[]).map(name => (
           <button key={name} type="button" data-testid={`preset-${name}`} aria-pressed={current === name} onClick={() => onChange({ ...PRESETS[name] })} style={{ ...choice(current === name), padding: '10px 8px', display: 'grid', gap: 2 }}>
             <strong style={{ fontSize: 14 }}>{w.presets[name].name}</strong>
-            <span style={{ fontSize: 12.5, color: brand.quiet }}>{w.presets[name].hint}</span>
+            <span style={{ fontSize: 12.5, color: choiceHint(current === name) }}>{w.presets[name].hint}</span>
           </button>
         ))}
       </div>

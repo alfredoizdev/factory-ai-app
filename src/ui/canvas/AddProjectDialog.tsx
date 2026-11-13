@@ -13,7 +13,7 @@ import { WorkingSpinner } from './BlockCard'
 import { BuildStep } from './wizard/BuildStep'
 import { EXTRA, ExistingStep, type Existing } from './wizard/ExistingStep'
 import { ModelsStep } from './wizard/ModelsStep'
-import { button, choice, hint, lead, StepBar, SummaryRow } from './wizard/parts'
+import { button, choice, hint, lead, StepBar, SummaryRow, choiceHint } from './wizard/parts'
 import { folderName, WhereStep, type Where } from './wizard/WhereStep'
 
 const s = strings.setup
@@ -210,7 +210,7 @@ export function AddProjectDialog({
               {(['scratch', 'existing'] as const).map(k => (
                 <button key={k} type="button" data-testid={`way-${k}`} aria-pressed={way === k} onClick={() => setWay(k)} style={{ ...choice(way === k), padding: '18px 16px', display: 'grid', gap: 6, textAlign: 'left' }}>
                   <strong style={{ fontSize: 16 }}>{k === 'scratch' ? w.start.scratch : w.start.existing}</strong>
-                  <span style={{ fontSize: 13.5, lineHeight: 1.45, color: brand.quiet }}>{k === 'scratch' ? w.start.scratchHint : w.start.existingHint}</span>
+                  <span style={{ fontSize: 13.5, lineHeight: 1.45, color: choiceHint(way === k) }}>{k === 'scratch' ? w.start.scratchHint : w.start.existingHint}</span>
                 </button>
               ))}
             </div>

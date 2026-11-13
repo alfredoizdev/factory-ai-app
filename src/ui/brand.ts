@@ -10,8 +10,6 @@ export const brand = {
   green: '#79dc8b',
   /** Text and marks drawn on the green. */
   onGreen: '#0d1f12',
-  /** The green as a faint wash, behind something chosen. */
-  greenWash: 'rgba(121, 220, 139, 0.1)',
   mono: 'var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace',
   sans: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
 } as const

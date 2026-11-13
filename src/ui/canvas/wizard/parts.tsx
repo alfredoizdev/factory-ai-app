@@ -25,14 +25,17 @@ export const button = (primary: boolean, busy = false): CSSProperties => ({
   gap: 8,
 })
 
-/** A tile or card the person picks: outlined in the accent colour when chosen. */
+/** A tile or card the person picks: filled with the accent colour when chosen. */
+export const choiceHint = (picked: boolean): string => (picked ? brand.onGreen : brand.quiet)
+
 export const choice = (picked: boolean): CSSProperties => ({
   border: `${picked ? 2 : 1}px solid ${picked ? brand.green : brand.line}`,
-  background: picked ? brand.greenWash : brand.bg,
+  background: picked ? brand.green : brand.bg,
   // One pixel less padding when picked, so the thicker outline does not move what is inside.
   margin: picked ? 0 : 1,
   borderRadius: 10,
-  color: 'inherit',
+  // Chosen: flat green with dark words, like the main card of the welcome screen.
+  color: picked ? brand.onGreen : 'inherit',
   cursor: 'pointer',
   font: 'inherit',
 })
