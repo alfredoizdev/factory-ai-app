@@ -302,8 +302,8 @@ export function Composer({
                 placeItems: 'center',
                 padding: 0,
                 border: 'none',
-                background: send.enabled ? theme.running : theme.border,
-                color: send.enabled ? '#fff' : theme.skipped,
+                background: send.enabled ? theme.passed : theme.border,
+                color: send.enabled ? '#07110a' : theme.skipped,
                 cursor: send.enabled ? 'pointer' : 'not-allowed',
               }}
             >
