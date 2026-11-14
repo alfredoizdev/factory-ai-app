@@ -33,6 +33,8 @@ export type SnapshotState = {
   /** What was opened on that page to show the change (the name of a tab), when it does not show as the page opens. */
   opened?: string | null
   shots: Shot[]
+  /** Which taking these pictures are from. It goes in a picture's address, so the browser keeps a picture until it is taken again. */
+  taken?: string
   /** While working: what it is doing. Failed: why. */
   message: string | null
 }
@@ -325,7 +327,7 @@ export async function snapshotState(runId: string): Promise<SnapshotState> {
   if (p.change !== (await changeHash(runId))) return { status: 'none', route: null, shots: [], message: null }
   // Pictures live in R2 when it is set up (any computer can show them), otherwise on the computer that took them.
   const shots = p.shots.filter(s => storage() !== null || snapshotFile(runId, s) !== null)
-  return shots.length > 0 ? { status: 'ready', route: p.route, opened: p.opened ?? null, shots, message: null } : { status: 'failed', route: p.route, shots: [], message: p.message }
+  return shots.length > 0 ? { status: 'ready', route: p.route, opened: p.opened ?? null, shots, taken: String(row.sequence), message: null } : { status: 'failed', route: p.route, shots: [], message: p.message }
 }
 
 export type Links = (url: string) => Promise<string[]>

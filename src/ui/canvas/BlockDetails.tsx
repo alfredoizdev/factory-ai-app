@@ -9,7 +9,7 @@ import type { NodeState } from '@/domain/states'
 import { strings } from '@/ui/strings'
 import { brand } from '@/ui/brand'
 import { theme } from '@/ui/theme'
-import { useSnapshots } from './BeforeAfter'
+import { shotSrc, useSnapshots } from './BeforeAfter'
 import { ChangeUnderCheck } from './GatePanel'
 import { visualStateOf, WorkingSpinner, type CardView } from './BlockCard'
 import { Bone } from './Skeleton'
@@ -240,7 +240,7 @@ function TaskPictures({ runId, name, done }: { runId: string; name: string; done
           <span key={side} style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
             <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: side === 'before' ? brand.quiet : theme.passed }}>{strings.snapshots[side]}</span>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`/api/runs/${runId}/snapshots/${side}-desktop`} alt="" style={{ display: 'block', width: 'min(var(--thumb-w, 150px), 34vw)', height: 'auto', aspectRatio: '25 / 16', objectFit: 'cover', objectPosition: 'top', borderRadius: 8, border: `1px solid ${brand.line}` }} />
+            <img src={shotSrc(runId, `${side}-desktop` as Shot, state)} alt="" style={{ display: 'block', width: 'min(var(--thumb-w, 150px), 34vw)', height: 'auto', aspectRatio: '25 / 16', objectFit: 'cover', objectPosition: 'top', borderRadius: 8, border: `1px solid ${brand.line}` }} />
           </span>
         ))}
       </button>
@@ -337,7 +337,7 @@ function PicturesBody({ runId, state }: { runId: string; state: SnapshotState })
     )
   }
   if (state.status !== 'ready' || state.shots.length === 0) return <span style={{ color: brand.quiet }}>{d.noPictures}</span>
-  const src = (shot: Shot) => `/api/runs/${runId}/snapshots/${shot}`
+  const src = (shot: Shot) => shotSrc(runId, shot, state)
   const tab = (value: 'desktop' | 'mobile') => ({
     padding: '7px 16px',
     borderRadius: 999,

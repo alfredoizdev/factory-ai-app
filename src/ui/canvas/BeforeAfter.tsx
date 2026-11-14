@@ -9,6 +9,8 @@ import { WorkingSpinner } from './BlockCard'
 
 const POLL_MS = 3000
 const img = (runId: string, shot: Shot, at: string) => `/api/runs/${runId}/snapshots/${shot}?v=${encodeURIComponent(at)}`
+/** A picture's address. It names the taking it is from, so the browser keeps it and still shows a new one once retaken. */
+export const shotSrc = (runId: string, shot: Shot, state: SnapshotState) => img(runId, shot, state.taken ?? `${state.route ?? ''}-${state.shots.join(',')}`)
 
 /**
  * The before and after pictures of a run's change. When there are none for the change as it is now, `autoStart`
@@ -73,7 +75,7 @@ export function BeforeAfterCard({ runId, autoStart = false, compact = false, can
   const close = useCallback(() => setOpen(false), [])
   // A change that cannot be seen (tests, settings) has no before and after to show.
   if (!state || state.status === 'unneeded') return null
-  const at = `${state.route ?? ''}-${state.shots.join(',')}`
+  const at = state.taken ?? `${state.route ?? ''}-${state.shots.join(',')}`
   const hint = { fontSize: 11.5, color: theme.dim, lineHeight: 1.4 } as const
   return (
     <div
