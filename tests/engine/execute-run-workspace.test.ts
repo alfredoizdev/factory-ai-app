@@ -4,10 +4,10 @@ import { PassThrough } from 'node:stream'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
-import { claims, evidence, nodeRuns, projects, questions, runs, usageRecords, workflows } from '@/db/schema'
+import { claims, events, evidence, nodeRuns, projects, questions, runs, usageRecords, workflows } from '@/db/schema'
 import type { AskMode } from '@/domain/ask-mode'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
@@ -1058,6 +1058,85 @@ describe('the plan follows the project\'s ask mode', () => {
       expect(kept[0]!.text).toContain('About the builder\'s question')
       expect(kept[0]!.text).toContain('the blue of the logo')
       expect(kept[0]!.paths).toEqual(['src/ui/footer/'])
+    })
+  })
+
+  describe('direct edit', () => {
+    /** A task started in direct edit. */
+    async function directRun(): Promise<string> {
+      const { runId } = await projectRun()
+      const created = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.created'))))[0]!
+      await db.update(events).set({ payloadJson: JSON.stringify({ ...JSON.parse(created.payloadJson), direct: true }) }).where(eq(events.id, created.id))
+      return runId
+    }
+    /** Every block passes; what each one was given is kept. */
+    function recorder(): AgentProvider & { kinds: string[]; notes: (string | undefined)[] } {
+      const kinds: string[] = []
+      const notes: (string | undefined)[] = []
+      return {
+        id: 'files', isDemo: false, needsWorkspace: true, kinds, notes,
+        async *execute(input) {
+          kinds.push(input.blockKind)
+          if (input.blockKind === 'build') notes.push(input.revisionNote)
+          if (input.blockKind === 'review') {
+            yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+            return
+          }
+          yield { type: 'done', summary: input.blockKind === 'build' ? `built ${notes.length}` : 'ok', source: input.blockKind === 'build' ? 'provider' : 'system' }
+        },
+      }
+    }
+    /** Answers each pause with the next of `words`; once they run out, says it is done. */
+    const talking = (runId: string, words: string[], seen: Question[] = []) =>
+      recordingStep(async event => {
+        if (event !== QUESTION_ANSWERED) return false
+        const q = (await openQuestion(runId))!
+        seen.push(q)
+        const next = words.shift()
+        await answerQuestion(q.id, next ? { option: 'other', text: next } : { option: 'leave' }, { send: async () => undefined })
+        return true
+      })
+
+    test('nothing is planned, each request is only built, and the checks run once after "it is done"', async () => {
+      const runId = await directRun()
+      const provider = recorder()
+      const seen: Question[] = []
+      await go(runId, provider, talking(runId, ['make the title bigger', 'and blue'], seen))
+      expect((await node(runId, 'plan')).state).toBe('skipped')
+      // Three builds (the request and two more), and only then anything else.
+      expect(provider.notes).toEqual([undefined, 'make the title bigger', 'and blue'])
+      expect(provider.kinds.filter(k => k !== 'input').slice(0, 3)).toEqual(['build', 'build', 'build'])
+      expect(provider.kinds.filter(k => k === 'tests' || k === 'review').length).toBeGreaterThan(0)
+      expect(provider.kinds.indexOf('review')).toBeGreaterThan(provider.kinds.lastIndexOf('build'))
+      expect(seen.map(q => [q.kind, q.findingId, q.detail])).toEqual([['direct', 'direct-1', 'built 1'], ['direct', 'direct-2', 'built 2'], ['direct', 'direct-3', 'built 3']])
+      expect(seen[0]!.options).toEqual([{ id: 'leave', label: strings.direct.doneLabel, means: strings.direct.doneMeans }])
+      expect((await node(runId, 'build')).state).toBe('passed')
+      expect(await payloadOf(runId, 'node.completed', 'build')).toMatchObject([{ summary: strings.direct.finished(3), summarySource: 'system' }])
+    })
+
+    test('the task waits on the person between requests, with nothing tested yet', async () => {
+      const runId = await directRun()
+      const provider = recorder()
+      await go(runId, provider, recordingStep())
+      expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('waiting_approval')
+      expect((await node(runId, 'build')).state).toBe('waiting_approval')
+      expect(provider.kinds).not.toContain('tests')
+      expect(provider.kinds).not.toContain('review')
+    })
+
+    test('what is asked next is a request, never kept as a decision of the project', async () => {
+      const runId = await directRun()
+      const projectId = (await db.select().from(runs).where(eq(runs.id, runId)))[0]!.projectId
+      await go(runId, recorder(), talking(runId, ['make the title bigger']))
+      expect((await listRegister(projectId)).filter(e => e.kind === 'decision')).toEqual([])
+    })
+
+    test('a task not started in direct edit is planned and built once, as always', async () => {
+      const { runId } = await projectRun()
+      const provider = planner([{ jobs: footer }])
+      await go(runId, provider, recordingStep())
+      expect((await node(runId, 'plan')).state).toBe('passed')
+      expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(0)
     })
   })
 

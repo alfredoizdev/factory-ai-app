@@ -23,7 +23,8 @@ export type Question = {
   findingId: string | null
   /** 'plan': the planner's own question, asked before it plans again; it is about no finding. */
   /** 'build': the builder's own question, asked in the middle of its work; `findingId` then only numbers it (no finding). */
-  kind: 'finding' | 'fix_held' | 'plan' | 'build'
+  /** 'direct': direct edit's pause after each request ("what next, or is it done?"); `findingId` numbers it too. Never kept as a decision. */
+  kind: 'finding' | 'fix_held' | 'plan' | 'build' | 'direct'
   text: string
   why: string
   /** What the AI reviewer said, in its own words: shown one click away and labelled as the AI's. */
@@ -221,7 +222,8 @@ export async function consumeAnswer(questionId: string): Promise<Question | null
  */
 export function decisionText(q: Question, finding?: { type: 'logic' | 'security' | 'effect'; file?: string }): string | null {
   const words = q.answerText?.trim() ?? ''
-  if (!words) return null
+  // What is asked next in direct edit is a request, not something the project agreed on.
+  if (!words || q.kind === 'direct') return null
   const label = q.options.find(o => o.id === q.answerOption)?.label
   const choice = q.answerOption === OTHER || !q.answerOption ? null : strings.question.chose(q.kind, q.answerOption, label)
   return strings.question.decision({ about: strings.question.about(q.kind, finding, q.text), choice, words })
@@ -269,7 +271,7 @@ export async function answerQuestion(questionId: string, a: { option: string; te
     await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, run.id))
     await appendEventSync({ runId: run.id, type: 'run.started', payload: { resumed: true } }, tx)
     const done = toQuestion({ ...row, ...fields })
-    const about = row.findingId && row.kind !== 'build' ? (await tx.select({ type: findings.type, file: findings.file }).from(findings).where(eq(findings.id, row.findingId)))[0] : undefined
+    const about = row.findingId && row.kind !== 'build' && row.kind !== 'direct' ? (await tx.select({ type: findings.type, file: findings.file }).from(findings).where(eq(findings.id, row.findingId)))[0] : undefined
     const text = decisionText(done, about ? { type: about.type as 'logic' | 'security' | 'effect', ...(about.file ? { file: about.file } : {}) } : undefined)
     // The decision stays on the files it was about, so a later change to them stops for the person: the finding's
     // file (only one inside the working copy: anything else could never match a change), or what the planner's question named.

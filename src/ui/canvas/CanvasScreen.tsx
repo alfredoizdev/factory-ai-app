@@ -249,6 +249,7 @@ export function CanvasScreen({
           provider: agent,
           attachments: readyImageIds(images),
           ...(stopForMe ? { stopForMe: true } : {}),
+          ...(direct && agent === CLAUDE_PROVIDER_ID ? { direct: true } : {}),
           ...(taskName.trim() ? { title: taskName.trim() } : {}),
           ...(agent === CLAUDE_PROVIDER_ID && chosenStart ? { startFrom: chosenStart } : {}),
         }),
@@ -715,6 +716,7 @@ export function CanvasScreen({
         </TasksDrawer>
         <CommandCard
           docked
+          direct={direct && agent === CLAUDE_PROVIDER_ID}
           key={`${run?.runId ?? 'none'}-${loading ? 'loading' : mode}`}
           ref={cardRef}
           mode={mode}

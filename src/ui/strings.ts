@@ -540,7 +540,7 @@ export const strings = {
     // The decision the project keeps when the person answered in their own words: what it was about, in the app's words,
     // what they chose, and their words. A choice with no words of their own is kept with the problem only.
     decision: (o: { about: string; choice: string | null; words: string }) => `${o.about}${o.choice ? `: ${o.choice}.` : '.'} In your words: ${o.words}`,
-    about: (kind: 'finding' | 'fix_held' | 'plan' | 'build', f?: { type: 'logic' | 'security' | 'effect'; file?: string }, planText?: string) => {
+    about: (kind: 'finding' | 'fix_held' | 'plan' | 'build' | 'direct', f?: { type: 'logic' | 'security' | 'effect'; file?: string }, planText?: string) => {
       if (kind === 'plan') return `About the planner's question \u201c${planText}\u201d`
       if (kind === 'build') return `About the builder's question \u201c${planText}\u201d`
       const where = f?.file ? ` in ${f.file}` : ''
@@ -550,7 +550,7 @@ export const strings = {
     },
     // What they chose, said in full; null when they answered in their own words only.
     // For the planner's question the options are its own, so the choice is said by its label.
-    chose: (kind: 'finding' | 'fix_held' | 'plan' | 'build', option: string, label?: string) =>
+    chose: (kind: 'finding' | 'fix_held' | 'plan' | 'build' | 'direct', option: string, label?: string) =>
       kind === 'plan' || kind === 'build'
         ? (label ? `you chose \u201c${label}\u201d` : null)
         : kind === 'fix_held'
@@ -723,6 +723,28 @@ export const strings = {
     failed: 'Your site did not start',
     stopped: 'Your site is not running',
     tryAgain: 'Start it',
+    // The task's side of it: every request only builds, and the checks run once, at the end.
+    noPlan: 'Direct edit: no plan. Each thing you ask is built straight away, and you see it on your site.',
+    startHint: 'Direct edit is on: what you ask is built straight away and shows on your site. The tests and the review run once, when you say it is done.',
+    built: 'Built. Look at your site.',
+    pauseText: 'Your change is on your site. Ask for the next thing, or say it is done.',
+    pauseWhy: 'Nothing has been tested or reviewed yet. That happens once, when you say it is done.',
+    doneLabel: 'It is done',
+    doneMeans: 'The tests and the review run on everything you asked for, and then it can go to GitHub as usual.',
+    lastText: 'This task has taken as many requests as one task can hold. Say it is done to check it and send it; ask for the rest in a new task.',
+    finished: (n: number) => `You said it is done after ${n} ${n === 1 ? 'request' : 'requests'}. The checks run now.`,
+    // The panel while it waits between requests.
+    pauseTitle: 'Your change is in',
+    look: 'Look at your site in the middle of the screen.',
+    lastBuilt: 'What was just done',
+    nextLabel: 'Ask for the next thing',
+    nextPlaceholder: 'For example: make the title bigger. Press Enter to send it (Shift+Enter for a new line).',
+    send: 'Send it',
+    done: 'Done: check it and send it',
+    doneHint: 'Runs the tests and the review once, on everything.',
+    count: (n: number) => `${n} ${n === 1 ? 'request' : 'requests'} in this task so far`,
+    many: 'This task is getting big. A big task is harder to check and to undo. It is a good moment to say it is done, and ask for the rest in a new task.',
+    sending: 'Sending…',
   },
   // The task as a row of steps with the chosen step's details under it: the other way to look at the same task.
   steps: {

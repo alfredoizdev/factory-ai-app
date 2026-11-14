@@ -52,3 +52,38 @@ describe('direct edit', () => {
     expect(screen.getByText(strings.direct.tryAgain)).toBeTruthy()
   })
 })
+
+import { fireEvent } from '@testing-library/react'
+import type { Question } from '@/engine/questions'
+import { DirectPause, MANY_REQUESTS } from '@/ui/canvas/QuestionPanel'
+
+const pause = (n: number, text: string = strings.direct.pauseText): Question => ({
+  id: 'q1', runId: 'r1', nodeRunId: 'n1', findingId: `direct-${n}`, kind: 'direct', text, why: strings.direct.pauseWhy, detail: 'Made the title blue.',
+  options: [{ id: 'leave', label: strings.direct.doneLabel, means: strings.direct.doneMeans }], recommended: null, touches: [], state: 'open', answerOption: null, answerText: null, actor: null, answeredAt: null,
+})
+
+describe('direct edit between two requests', () => {
+  it('shows what was built, sends the next request in the person\'s words, and "done" ends it', async () => {
+    const sent: [string, string | undefined][] = []
+    const view = render(<DirectPause question={pause(1)} onAnswer={async (o, t) => void sent.push([o, t])} />)
+    expect(screen.getByText('Made the title blue.')).toBeTruthy()
+    expect(screen.queryByTestId('direct-many')).toBeNull()
+    fireEvent.change(screen.getByLabelText(strings.direct.nextLabel), { target: { value: ' make it bigger ' } })
+    fireEvent.click(screen.getByText(strings.direct.send))
+    await waitFor(() => expect(sent).toEqual([['other', 'make it bigger']]))
+    view.unmount()
+    render(<DirectPause question={pause(2)} onAnswer={async (o, t) => void sent.push([o, t])} />)
+    fireEvent.click(screen.getByTestId('direct-done'))
+    await waitFor(() => expect(sent[1]).toEqual(['leave', undefined]))
+  })
+
+  it('says the task is getting big after several requests, and only offers to finish on the last one', () => {
+    const view = render(<DirectPause question={pause(MANY_REQUESTS)} onAnswer={async () => undefined} />)
+    expect(screen.getByTestId('direct-many').textContent).toBe(strings.direct.many)
+    view.unmount()
+    render(<DirectPause question={pause(12, strings.direct.lastText)} onAnswer={async () => undefined} />)
+    expect(screen.getByTestId('direct-many').textContent).toBe(strings.direct.lastText)
+    expect(screen.queryByLabelText(strings.direct.nextLabel)).toBeNull()
+    expect(screen.getByTestId('direct-done')).toBeTruthy()
+  })
+})

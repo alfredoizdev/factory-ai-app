@@ -112,6 +112,8 @@ export type PlannedBlock = {
 export type Plan = {
   providerId: string
   request: string
+  /** Direct edit: no plan, and the builder's work waits for the next request until the person says it is done. */
+  direct?: boolean
   blocks: PlannedBlock[]
   repoPath: string | null
   testCommand: string | null
@@ -141,7 +143,8 @@ export type Workspace = {
   /** Rules, decisions and core areas this task was given when it started. */
   standing?: Standing[]
   /** The builder's own questions: whether it may still ask, and what it asked and was answered so far in this task. */
-  build?: { canAsk: boolean; answers: string[] }
+  /** `hold`: direct edit. The finished work is not the end of the step: the person is asked what next. */
+  build?: { canAsk: boolean; answers: string[]; hold?: boolean }
   /** A review block: which reader this call is, and what it is told besides the request. */
   /** `reminder`: this reader is asked again after an answer the app could not read. */
   review?: { focus: Focus; builderSummary?: string; since?: { paths: string[]; diff: string; more?: number }; reminder?: true }
@@ -150,7 +153,7 @@ export type Workspace = {
  * `asking`: the planner asked the person something; the plan node is still running and nothing is written yet.
  * `jobs`: the plan a passed plan block hands to Build. `question`: what the planner asked.
  */
-export type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked' | 'asking'; review?: Review; jobs?: Job[]; question?: PlanQuestion }
+export type Outcome = { outcome: 'passed' | 'failed' | 'cancelled' | 'skipped' | 'parked' | 'asking'; review?: Review; jobs?: Job[]; question?: PlanQuestion; /** Direct edit: the builder finished a request and the step stays open; what it said it did. */ held?: string }
 
 /**
  * The run's setting. A run whose plan was read before the mode existed has only the old switch: on was "small changes
@@ -577,6 +580,17 @@ async function runProviderNode(
         if (node.state !== 'running') return { outcome: 'cancelled' }
         await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: strings.builder.asked } }, tx)
         return { outcome: 'asking', question }
+      })
+    }
+
+    if (result.kind === 'done' && block.kind === 'build' && workspace.build?.hold) {
+      // Direct edit: the request is built and on the site. The step stays open for the next request.
+      return withTx(runId, async (tx): Promise<Outcome> => {
+        const node = (await freshNode(opened.id, tx))
+        if (node.state !== 'running') return { outcome: 'cancelled' }
+        await recordDoneFacts(tx, node, result)
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: clip(redact(result.summary), STEP_MAX) } }, tx)
+        return { outcome: 'asking', held: result.summary }
       })
     }
 
@@ -1018,6 +1032,36 @@ async function askBuildQuestion(runId: string, block: PlannedBlock, q: PlanQuest
   })
 }
 
+/** Direct edit's pause: the last request is on the site; what next, or is it done? `n`: how many requests were built. `last`: no more fit. */
+async function askDirect(runId: string, block: PlannedBlock, n: number, built: string, last: boolean): Promise<Question | null> {
+  if (await isCancelled(runId)) return null
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(x => x.blockId === block.id)
+  if (!node) return null
+  return askPerson(runId, node.id, {
+    kind: 'direct',
+    findingId: `direct-${n}`,
+    text: last ? strings.direct.lastText : strings.direct.pauseText,
+    why: strings.direct.pauseWhy,
+    detail: built,
+    // One choice, "it is done"; anything else is the next request, in the person's own words.
+    options: [{ id: LEAVE, label: strings.direct.doneLabel, means: strings.direct.doneMeans }],
+    recommended: null,
+    touches: [],
+  })
+}
+
+/** Direct edit, once the person said it is done: the build step passes, with what was built last. */
+async function finishHeldBuild(runId: string, block: PlannedBlock, n: number): Promise<Outcome> {
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(x => x.blockId === block.id)
+  if (!node) return { outcome: 'cancelled' }
+  const summary = strings.direct.finished(n)
+  const ok = await withTx(runId, async tx => transitionNode(tx, (await freshNode(node.id, tx)), 'passed', { type: 'node.completed', payload: { summary, summarySource: 'system' } }, { summary }))
+  return ok ? { outcome: 'passed' } : { outcome: 'cancelled' }
+}
+
+/** How many requests one direct-edit task holds; the pause after the last one only offers to finish. */
+export const MAX_DIRECT_REQUESTS = 12
+
 /** How many times the builder may stop to ask the person in one pass of its work. */
 export const MAX_BUILD_QUESTIONS = 2
 
@@ -1064,9 +1108,15 @@ async function loadPlan(runId: string): Promise<Plan> {
     // A project that cannot be read asks about everything: the safest setting.
     askMode: project ? askModeOf(project) : 'everything',
     stopForMe: run.stopForMe,
+    ...((await startedDirect(runId)) ? { direct: true } : {}),
     previousRequest: run.parentRunId ? ((await db.select({ r: runs.request }).from(runs).where(eq(runs.id, run.parentRunId)))[0]?.r ?? null) : null,
     skipPlan: await planAlreadyMade(runId),
   }
+}
+
+async function startedDirect(runId: string): Promise<boolean> {
+  const row = (await db.select().from(events).where(and(eq(events.runId, runId), eq(events.type, 'run.created'))).limit(1))[0]
+  return row ? (JSON.parse(row.payloadJson) as { direct?: unknown }).direct === true : false
 }
 
 async function planAlreadyMade(runId: string): Promise<boolean> {
@@ -1213,6 +1263,9 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     } else if (block.kind === 'plan' && plan.skipPlan) {
       // Picking up a failed task: its plan was checked and built already, so the work goes straight on.
       result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block, strings.plan.alreadyMade))
+    } else if (block.kind === 'plan' && plan.direct && provider.needsWorkspace) {
+      // Direct edit: nothing is planned; each request is built as it is asked.
+      result = await step.run(id(`node-${block.id}`), () => skipNode(runId, block, strings.direct.noPlan))
     } else if (block.kind === 'plan' && provider.needsWorkspace) {
       // The planner proposes; the person checks, edits, and says build it — or asks for another plan with a note.
       let note: string | null = null
@@ -1353,14 +1406,21 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
     } else if (block.kind === 'build' && provider.needsWorkspace) {
       // The builder works; when it meets something only the person can decide it stops and asks, and with the answer
       // it goes on in the same copy, from what it already did. A couple of questions at most, then it must finish.
-      const note = revisionNote
-      const images = revisionImages
-      const answers: string[] = []
+      // Direct edit (the first pass only): each request is built and shown, then the person says what next; the step
+      // ends when they say it is done. Later passes (changes asked at the final check) are built the usual way.
+      const hold = plan.direct === true && round === 1
+      let note = revisionNote
+      let images = revisionImages
       result = { outcome: 'cancelled' }
+      for (let n = 1; ; n++) {
+      const did = (name: string) => (n === 1 ? name : `${name}-d${n}`)
+      const answers: string[] = []
       for (let k = 0; k <= MAX_BUILD_QUESTIONS; k++) {
-        const bid = (name: string) => id(k === 0 ? name : `${name}-ask${k}`)
-        const ws: Workspace = { ...prepared, build: { canAsk: k < MAX_BUILD_QUESTIONS, answers: [...answers] } }
-        result = await step.run(bid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, ws, note, images))
+        const bid = (name: string) => id(did(k === 0 ? name : `${name}-ask${k}`))
+        const ws: Workspace = { ...prepared, build: { canAsk: k < MAX_BUILD_QUESTIONS, answers: [...answers], ...(hold ? { hold: true } : {}) } }
+        const nt = note
+        const imgs = images
+        result = await step.run(bid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, ws, nt, imgs))
         if (result.outcome !== 'asking' || !result.question) break
         const q = result.question
         const asked = await step.run(bid(`ask-build-${block.id}`), () => askBuildQuestion(runId, block, q, `build-r${round}-${k + 1}`))
@@ -1370,6 +1430,21 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         const label = answer.answerOption === OTHER || answer.answerOption === LEAVE ? undefined : answer.options.find(o => o.id === answer.answerOption)?.label
         const how = answer.answerOption === LEAVE ? { option: 'leave' as const } : label !== undefined ? { option: 'chosen' as const, label } : { option: 'own' as const }
         answers.push(strings.providers.claude.answerNote(q.text, how, answer.answerText ? clip(redact(answer.answerText), 500) : null, 'builder'))
+      }
+      if (result.outcome !== 'asking' || result.held === undefined) break // built the usual way, failed or cancelled
+      const built = result.held
+      const count = n
+      const pause = await step.run(id(did(`ask-direct-${block.id}`)), () => askDirect(runId, block, count, built, count >= MAX_DIRECT_REQUESTS))
+      if (pause === null) return // cancelled meanwhile
+      const word = await waitForAnswer(step, name => id(did(name)), runId, pause, 'direct-')
+      if (word === 'parked' || word === 'cancelled') return
+      const next = word.answerOption === OTHER && word.answerText ? clip(redact(word.answerText), 2000) : null
+      if (next === null || count >= MAX_DIRECT_REQUESTS) {
+        result = await step.run(id(did(`finish-direct-${block.id}`)), () => finishHeldBuild(runId, block, count))
+        break
+      }
+      note = next
+      images = []
       }
     } else {
       const note = revisionNote

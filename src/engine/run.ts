@@ -174,6 +174,8 @@ export async function createRun(input: {
   title?: string
   /** The person asked to be stopped for this task whatever the project's ask mode says. Absent: no. */
   stopForMe?: boolean
+  /** Direct edit: each request only builds, with the site in view; the checks run once, when the person says it is done. */
+  direct?: boolean
 }): Promise<{ runId: string; versionId: string }> {
   const wf = (await requireWorkflow(input.workflowId))
   const providerId = input.providerId ?? DEMO_PROVIDER_ID
@@ -227,7 +229,7 @@ export async function createRun(input: {
           createdAt: now(),
         })
         
-      await appendEventSync({ runId, type: 'run.created', payload: { versionId: version.id } }, tx)
+      await appendEventSync({ runId, type: 'run.created', payload: { versionId: version.id, ...(input.direct === true && providerId === CLAUDE_PROVIDER_ID ? { direct: true } : {}) } }, tx)
       // Every block of the frozen version becomes a queued node run now (the design's section 7, step 2), so a block
       // a run never reaches can be ended as cancelled instead of reading "Queued" for ever.
       const graph = JSON.parse(version.graphJson) as Graph

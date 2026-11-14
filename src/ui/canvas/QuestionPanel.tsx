@@ -291,6 +291,8 @@ export function QuestionSection({
     }
     onChanged()
   }
+  // Direct edit's pause is not a question about a problem: it is "what next, or is it done?", with its own panel.
+  if (question.kind === 'direct') return <>{failed && retry}<DirectPause key={question.id} question={question} onAnswer={answer} /></>
   const order = displayOrder(record!.findings)
   const at = order.findIndex(f => f.id === question.findingId)
   return (
@@ -298,5 +300,86 @@ export function QuestionSection({
       {failed && retry}
       <QuestionPanel key={question.id} question={question} touched={record!.touched} onAnswer={answer} position={at >= 0 ? { n: at + 1, of: order.length } : undefined} {...(at >= 0 ? { finding: order[at]!.detail } : {})} />
     </>
+  )
+}
+
+const d = strings.direct
+/** After how many requests the panel says the task is getting big. */
+export const MANY_REQUESTS = 5
+
+/**
+ * Direct edit between two requests: what was just built, a box for the next thing, and the button that ends it (the
+ * tests and the review then run once, on everything). Says so when the task is getting big.
+ */
+export function DirectPause({ question, onAnswer }: { question: Question; onAnswer: (option: string, text?: string) => Promise<void> }) {
+  const [words, setWords] = useState('')
+  const [sending, setSending] = useState<'next' | 'done' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const inFlight = useRef(false)
+  const boxId = useId()
+  const n = Number(/^direct-(\d+)$/.exec(question.findingId ?? '')?.[1] ?? 1)
+  // The last request a task holds: the app only offers to finish.
+  const last = question.text === d.lastText
+  async function send(what: 'next' | 'done') {
+    if (inFlight.current || (what === 'next' && words.trim() === '')) return
+    inFlight.current = true
+    setSending(what)
+    setError(null)
+    try {
+      await (what === 'done' ? onAnswer('leave') : onAnswer(OTHER, words.trim()))
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : strings.question.failed)
+      inFlight.current = false
+      setSending(null)
+    }
+  }
+  const busy = sending !== null
+  return (
+    <div data-testid="direct-pause" style={{ display: 'grid', gap: 12 }}>
+      <div style={{ display: 'grid', gap: 4 }}>
+        <div className="factory-display" style={{ fontSize: 17, fontWeight: 700 }}>{d.pauseTitle}</div>
+        <div style={{ fontSize: 13, color: theme.dim, lineHeight: 1.45 }}>{d.look} {d.pauseWhy}</div>
+      </div>
+      {question.detail && (
+        <div style={{ display: 'grid', gap: 4, padding: '10px 12px', borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0f141c' }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: theme.dim }}>{d.lastBuilt}</span>
+          <span style={{ fontSize: 13.5, lineHeight: 1.45, overflowWrap: 'anywhere' }}>{cut(question.detail)}</span>
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: theme.dim }}>{d.count(n)}</div>
+      {(n >= MANY_REQUESTS || last) && (
+        <div role="note" data-testid="direct-many" style={{ padding: '9px 12px', borderRadius: 10, border: `1px solid ${theme.waiting}`, color: '#f3d9a4', fontSize: 13, lineHeight: 1.45 }}>{last ? d.lastText : d.many}</div>
+      )}
+      {!last && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          <label htmlFor={boxId} style={{ fontSize: 13, fontWeight: 700 }}>{d.nextLabel}</label>
+          <textarea
+            id={boxId}
+            value={words}
+            disabled={busy}
+            onChange={e => setWords(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send('next')
+              }
+            }}
+            placeholder={d.nextPlaceholder}
+            rows={4}
+            style={{ resize: 'vertical', padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0f141c', color: theme.ink, font: 'inherit', fontSize: 14, lineHeight: 1.45 }}
+          />
+          <button type="button" className="factory-action" disabled={busy || words.trim() === ''} onClick={() => void send('next')} style={{ justifySelf: 'end', minHeight: 34, padding: '7px 16px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: theme.ink, fontWeight: 700, cursor: busy || words.trim() === '' ? 'default' : 'pointer', opacity: words.trim() === '' ? 0.5 : 1 }}>
+            {sending === 'next' ? d.sending : d.send}
+          </button>
+        </div>
+      )}
+      <div style={{ display: 'grid', gap: 5, paddingTop: 12, borderTop: `1px solid ${theme.border}` }}>
+        <button type="button" className="factory-action" data-testid="direct-done" disabled={busy} onClick={() => void send('done')} style={{ minHeight: 40, padding: '9px 16px', borderRadius: 9, border: 'none', background: theme.passed, color: '#0d1f12', fontWeight: 800, fontSize: 14.5, cursor: busy ? 'default' : 'pointer' }}>
+          {sending === 'done' ? d.sending : d.done}
+        </button>
+        <span style={{ fontSize: 12, color: theme.dim, textAlign: 'center' }}>{d.doneHint}</span>
+      </div>
+      {error && <div role="alert" style={{ fontSize: 13, color: theme.failed }}>{error}</div>}
+    </div>
   )
 }

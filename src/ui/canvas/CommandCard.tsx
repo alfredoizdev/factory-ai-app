@@ -40,6 +40,8 @@ export const CommandCard = forwardRef<
   {
     /** Fixed to the right edge, the full height of the screen, instead of floating in the corner (the steps layout). */
     docked?: boolean
+    /** Direct edit is on: a fresh task says how it will work. */
+    direct?: boolean
     mode: CardMode
     runId: string | null
     risk?: { level: 'low' | 'high'; reasons: string[]; stopForMe?: true }
@@ -92,7 +94,7 @@ export const CommandCard = forwardRef<
     /** The browser's notices: whether to offer them, and what pressing the offer does. Shown while the task works. */
     notice?: { offer: 'ask' | 'on' | 'blocked' | 'none'; onAllow: () => void }
   }
->(function CommandCard({ docked = false, planMeasure, stopForMe = false, onStopForMe, onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, notice, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
+>(function CommandCard({ docked = false, direct = false, planMeasure, stopForMe = false, onStopForMe, onSeeChanges, record = null, recordFailed = false, recordMark = 0, recordReadMark = 0, askedId = null, onRecordChanged, showFindings = false, notice, mode, runId, risk, text, onText, images, onImages, onRun, canRun, onFollowUp, onSent, startOptions = [], startFrom, onStartFrom, onShipState, loading = false, taskName, onTaskName, away = null, onRecorded, failureActions, onCanContinue }, ref) {
   const frame = FRAME[mode]
   const label = mode === 'plan' ? strings.plan.replanLabel : mode === 'waiting' ? strings.gate.reasonLabel : mode === 'done' ? strings.followUp.title : mode === 'failed' ? strings.failure.label : strings.run.requestLabel
   const placeholder = mode === 'plan' ? strings.plan.replanPlaceholder : mode === 'waiting' ? strings.gate.reasonPlaceholder : mode === 'done' ? strings.followUp.placeholder : mode === 'failed' ? strings.failure.placeholder : strings.run.requestPlaceholder
@@ -146,6 +148,7 @@ export const CommandCard = forwardRef<
       {!loading && mode === 'idle' && (
         <>
           <div className="factory-display" style={{ fontSize: 17, fontWeight: 700 }}>{strings.sidebar.runTitle}</div>
+          {direct && <div data-testid="direct-start-hint" role="note" style={{ padding: '9px 12px', borderRadius: 10, border: `1px solid ${theme.tint('passed', 0.5)}`, color: theme.passed, fontSize: 13, lineHeight: 1.45 }}>{strings.direct.startHint}</div>}
           {startOptions.length === 1 && (
             <div data-testid="starts-from" style={{ fontSize: 12, color: theme.dim, marginTop: -6, overflowWrap: 'anywhere' }}>
               {strings.delivery.startsFrom(startOptions[0]!)}
