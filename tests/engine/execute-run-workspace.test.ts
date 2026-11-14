@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { and, eq } from 'drizzle-orm'
@@ -1108,7 +1108,7 @@ describe('the plan follows the project\'s ask mode', () => {
       expect(provider.kinds.filter(k => k !== 'input').slice(0, 3)).toEqual(['build', 'build', 'build'])
       expect(provider.kinds.filter(k => k === 'tests' || k === 'review').length).toBeGreaterThan(0)
       expect(provider.kinds.indexOf('review')).toBeGreaterThan(provider.kinds.lastIndexOf('build'))
-      expect(seen.map(q => [q.kind, q.findingId, q.detail])).toEqual([['direct', 'direct-1', 'built 1'], ['direct', 'direct-2', 'built 2'], ['direct', 'direct-3', 'built 3']])
+      expect(seen.map(q => [q.kind, q.findingId, q.detail])).toEqual([['direct', 'direct-1-1', 'built 1'], ['direct', 'direct-2-2', 'built 2'], ['direct', 'direct-3-3', 'built 3']])
       expect(seen[0]!.options).toEqual([{ id: 'leave', label: strings.direct.doneLabel, means: strings.direct.doneMeans }])
       expect((await node(runId, 'build')).state).toBe('passed')
       expect(await payloadOf(runId, 'node.completed', 'build')).toMatchObject([{ summary: strings.direct.finished(3), summarySource: 'system' }])
@@ -1122,6 +1122,45 @@ describe('the plan follows the project\'s ask mode', () => {
       expect((await node(runId, 'build')).state).toBe('waiting_approval')
       expect(provider.kinds).not.toContain('tests')
       expect(provider.kinds).not.toContain('review')
+    })
+
+    test('the last request can be taken back: the copy is as it was before it, and the count goes down', async () => {
+      const runId = await directRun()
+      const dir = mkdtempSync(join(tmpdir(), 'factory-direct-'))
+      execFileSync('git', ['init', '-q'], { cwd: dir })
+      writeFileSync(join(dir, 'page.txt'), 'base\n')
+      execFileSync('git', ['add', '-A'], { cwd: dir })
+      execFileSync('git', ['-c', 'user.email=t@e.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'base'], { cwd: dir })
+      let builds = 0
+      const provider: AgentProvider = {
+        id: 'files', isDemo: false, needsWorkspace: true,
+        async *execute(input) {
+          if (input.blockKind === 'build') writeFileSync(join(dir, 'page.txt'), `request ${++builds}\n`)
+          if (input.blockKind === 'review') {
+            yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+            return
+          }
+          yield { type: 'done', summary: 'ok', source: 'provider' }
+        },
+      }
+      const seen: Question[] = []
+      const replies = [{ option: 'other', text: 'a second thing' }, { option: 'undo' }, { option: 'leave' }]
+      const s = recordingStep(async event => {
+        if (event !== QUESTION_ANSWERED) return false
+        const q = (await openQuestion(runId))!
+        seen.push(q)
+        if (seen.length === 3) expect(readFileSync(join(dir, 'page.txt'), 'utf8')).toBe('request 1\n')
+        await answerQuestion(q.id, replies.shift()!, { send: async () => undefined })
+        return true
+      })
+      await go(runId, provider, s, () => ({ path: dir, branch: 'factory/x', baseCommit: 'abc' }))
+      expect(builds).toBe(2)
+      expect(seen.map(q => q.findingId)).toEqual(['direct-1-1', 'direct-2-2', 'direct-1-2u'])
+      // The first request cannot be taken back (that is cancelling the task); from the second on, that one alone can.
+      expect(seen.slice(0, 2).map(q => q.options.map(o => o.id))).toEqual([['leave'], ['undo', 'leave']])
+      expect(seen[2]!.detail).toBe(strings.direct.undone)
+      expect(seen[2]!.options.map(o => o.id)).toEqual(['leave'])
+      expect(await payloadOf(runId, 'node.completed', 'build')).toMatchObject([{ summary: strings.direct.finished(1) }])
     })
 
     test('what is asked next is a request, never kept as a decision of the project', async () => {

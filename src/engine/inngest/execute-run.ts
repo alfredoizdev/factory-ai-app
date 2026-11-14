@@ -10,6 +10,7 @@ import { currentPlan, planDecision, type Job, type PlanDecision, type PlanQuesti
 import { measurePlan } from '@/engine/plan-measure'
 import { askModeOf, passesLowRisk, shipsOnItsOwn, type AskMode } from '@/domain/ask-mode'
 import { LEAVE, OTHER, askPerson, type Question } from '@/engine/questions'
+import { restoreTree, snapshotTree } from '@/engine/tree-snapshot'
 import { waitForAnswer } from '@/engine/inngest/answers'
 import { and, eq } from 'drizzle-orm'
 import { NonRetriableError } from 'inngest'
@@ -1033,21 +1034,37 @@ async function askBuildQuestion(runId: string, block: PlannedBlock, q: PlanQuest
 }
 
 /** Direct edit's pause: the last request is on the site; what next, or is it done? `n`: how many requests were built. `last`: no more fit. */
-async function askDirect(runId: string, block: PlannedBlock, n: number, built: string, last: boolean): Promise<Question | null> {
+async function askDirect(runId: string, block: PlannedBlock, n: number, tag: string, built: string, last: boolean, canUndo: boolean): Promise<Question | null> {
   if (await isCancelled(runId)) return null
   const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(x => x.blockId === block.id)
   if (!node) return null
   return askPerson(runId, node.id, {
     kind: 'direct',
-    findingId: `direct-${n}`,
+    // How many requests stand, then which pause this is: a repeated step finds its own question, never an earlier one.
+    findingId: `direct-${n}-${tag}`,
     text: last ? strings.direct.lastText : strings.direct.pauseText,
     why: strings.direct.pauseWhy,
     detail: built,
     // One choice, "it is done"; anything else is the next request, in the person's own words.
-    options: [{ id: LEAVE, label: strings.direct.doneLabel, means: strings.direct.doneMeans }],
+    options: [...(canUndo ? [{ id: 'undo', label: strings.direct.undoLabel, means: strings.direct.undoMeans }] : []), { id: LEAVE, label: strings.direct.doneLabel, means: strings.direct.doneMeans }],
     recommended: null,
     touches: [],
   })
+}
+
+/** The copy as it is now; null when it cannot be read (the request then cannot be taken back, and nothing else changes). */
+function treeOrNull(workdir: string): string | null {
+  try {
+    return snapshotTree(workdir)
+  } catch {
+    return null
+  }
+}
+
+/** Direct edit: the last request is taken back. The copy goes back to how it was before it, and the step says so. */
+async function undoDirect(runId: string, block: PlannedBlock, workdir: string, tree: string): Promise<void> {
+  restoreTree(workdir, tree)
+  await sayOnNode(runId, block, strings.direct.undone)
 }
 
 /** Direct edit, once the person said it is done: the build step passes, with what was built last. */
@@ -1412,8 +1429,15 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
       let note = revisionNote
       let images = revisionImages
       result = { outcome: 'cancelled' }
+      // How many requests stand in the copy (one taken back no longer counts).
+      let count = 0
       for (let n = 1; ; n++) {
       const did = (name: string) => (n === 1 ? name : `${name}-d${n}`)
+      count += 1
+      // The copy as it is before this request, so the request alone can be taken back. Not for the first: taking that
+      // one back is cancelling the task.
+      const dir = prepared.workdir
+      const before = hold && n > 1 && dir ? await step.run(id(did(`before-direct-${block.id}`)), () => treeOrNull(dir)) : null
       const answers: string[] = []
       for (let k = 0; k <= MAX_BUILD_QUESTIONS; k++) {
         const bid = (name: string) => id(did(k === 0 ? name : `${name}-ask${k}`))
@@ -1433,14 +1457,26 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
       }
       if (result.outcome !== 'asking' || result.held === undefined) break // built the usual way, failed or cancelled
       const built = result.held
-      const count = n
-      const pause = await step.run(id(did(`ask-direct-${block.id}`)), () => askDirect(runId, block, count, built, count >= MAX_DIRECT_REQUESTS))
+      const full = n >= MAX_DIRECT_REQUESTS
+      const standing = count
+      const pause = await step.run(id(did(`ask-direct-${block.id}`)), () => askDirect(runId, block, standing, `${n}`, built, full, before !== null))
       if (pause === null) return // cancelled meanwhile
-      const word = await waitForAnswer(step, name => id(did(name)), runId, pause, 'direct-')
+      let word = await waitForAnswer(step, name => id(did(name)), runId, pause, 'direct-')
       if (word === 'parked' || word === 'cancelled') return
+      if (word.answerOption === 'undo' && before !== null && dir) {
+        // The last request is taken back: the copy is as it was before it, and the person is asked again.
+        await step.run(id(did(`undo-direct-${block.id}`)), () => undoDirect(runId, block, dir, before))
+        count -= 1
+        const left = count
+        const again = await step.run(id(did(`ask-direct-undone-${block.id}`)), () => askDirect(runId, block, left, `${n}u`, strings.direct.undone, full, false))
+        if (again === null) return
+        word = await waitForAnswer(step, name => id(did(`${name}-undone`)), runId, again, 'direct-')
+        if (word === 'parked' || word === 'cancelled') return
+      }
       const next = word.answerOption === OTHER && word.answerText ? clip(redact(word.answerText), 2000) : null
-      if (next === null || count >= MAX_DIRECT_REQUESTS) {
-        result = await step.run(id(did(`finish-direct-${block.id}`)), () => finishHeldBuild(runId, block, count))
+      if (next === null || full) {
+        const stood = count
+        result = await step.run(id(did(`finish-direct-${block.id}`)), () => finishHeldBuild(runId, block, stood))
         break
       }
       note = next

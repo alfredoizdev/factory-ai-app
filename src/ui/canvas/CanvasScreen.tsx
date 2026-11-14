@@ -139,7 +139,12 @@ export function CanvasScreen({
   }
 
   // The blocks are always passed: without them the hook cannot say what a block did in its own words.
+  const [directOn, setDirectOn] = useState(false)
+  // The open task was started in direct edit: it opens that way, unless the person left it for this task.
+  const [directLeft, setDirectLeft] = useState<string | null>(null)
   const { views, events, runStatus, connected, loaded, reopen } = useRunStream(run?.runId ?? null, run?.blocks)
+  const startedDirect = !!run && events.some(e => e.type === 'run.created' && (e.payload as Record<string, unknown> | null)?.direct === true)
+  const direct = directOn || (startedDirect && directLeft !== run?.runId)
 
   // Saves go one at a time, each naming the draft version it builds on, so a page left open from earlier can never
   // overwrite a newer flow: the server refuses, and the page says to reload. keepalive lets a save started as the
@@ -178,7 +183,6 @@ export function CanvasScreen({
 
   const [tasksOpen, setTasksOpen] = useState(false)
   // Direct edit: the steps in a column and the project's site beside them, on this same screen.
-  const [direct, setDirect] = useState(false)
   // What GitHub says about shipping this run, as the result card last read it; the Ship card shows the same thing.
   const [shipFor, setShipFor] = useState<{ runId: string; state: ShipState } | null>(null)
   const runIdNow = run?.runId ?? null
@@ -577,7 +581,10 @@ export function CanvasScreen({
           )
         )}
         {settings?.repoPath && (
-          <button type="button" data-testid="direct-edit-toggle" aria-pressed={direct} title={strings.direct.hint} onClick={() => setDirect(v => !v)} style={{ ...headerButton, marginLeft: 'auto', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8, ...(direct ? { borderColor: theme.passed, color: theme.passed } : {}) }}>
+          <button type="button" data-testid="direct-edit-toggle" aria-pressed={direct} title={strings.direct.hint} onClick={() => {
+            setDirectOn(!direct)
+            setDirectLeft(direct ? (run?.runId ?? null) : null)
+          }} style={{ ...headerButton, marginLeft: 'auto', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8, ...(direct ? { borderColor: theme.passed, color: theme.passed } : {}) }}>
             {/* A screen split in two. */}
             <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="3" y="4" width="18" height="16" rx="2" />

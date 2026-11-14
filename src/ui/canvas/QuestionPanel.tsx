@@ -313,20 +313,21 @@ export const MANY_REQUESTS = 5
  */
 export function DirectPause({ question, onAnswer }: { question: Question; onAnswer: (option: string, text?: string) => Promise<void> }) {
   const [words, setWords] = useState('')
-  const [sending, setSending] = useState<'next' | 'done' | null>(null)
+  const [sending, setSending] = useState<'next' | 'done' | 'undo' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef(false)
   const boxId = useId()
-  const n = Number(/^direct-(\d+)$/.exec(question.findingId ?? '')?.[1] ?? 1)
+  const n = Number(/^direct-(\d+)/.exec(question.findingId ?? '')?.[1] ?? 1)
   // The last request a task holds: the app only offers to finish.
   const last = question.text === d.lastText
-  async function send(what: 'next' | 'done') {
+  const canUndo = question.options.some(o => o.id === 'undo')
+  async function send(what: 'next' | 'done' | 'undo') {
     if (inFlight.current || (what === 'next' && words.trim() === '')) return
     inFlight.current = true
     setSending(what)
     setError(null)
     try {
-      await (what === 'done' ? onAnswer('leave') : onAnswer(OTHER, words.trim()))
+      await (what === 'done' ? onAnswer('leave') : what === 'undo' ? onAnswer('undo') : onAnswer(OTHER, words.trim()))
     } catch (e) {
       setError(e instanceof Error && e.message ? e.message : strings.question.failed)
       inFlight.current = false
@@ -346,7 +347,14 @@ export function DirectPause({ question, onAnswer }: { question: Question; onAnsw
           <span style={{ fontSize: 13.5, lineHeight: 1.45, overflowWrap: 'anywhere' }}>{cut(question.detail)}</span>
         </div>
       )}
-      <div style={{ fontSize: 12, color: theme.dim }}>{d.count(n)}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 12, color: theme.dim }}>
+        <span>{d.count(n)}</span>
+        {canUndo && (
+          <button type="button" className="factory-action" data-testid="direct-undo" disabled={busy} title={d.undoMeans} onClick={() => void send('undo')} style={{ background: 'none', border: 'none', padding: 0, color: '#cfe0ff', font: 'inherit', fontWeight: 700, cursor: busy ? 'default' : 'pointer' }}>
+            ↩ {sending === 'undo' ? d.sending : d.undo}
+          </button>
+        )}
+      </div>
       {(n >= MANY_REQUESTS || last) && (
         <div role="note" data-testid="direct-many" style={{ padding: '9px 12px', borderRadius: 10, border: `1px solid ${theme.waiting}`, color: '#f3d9a4', fontSize: 13, lineHeight: 1.45 }}>{last ? d.lastText : d.many}</div>
       )}

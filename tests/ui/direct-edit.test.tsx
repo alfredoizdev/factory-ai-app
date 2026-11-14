@@ -68,6 +68,7 @@ describe('direct edit between two requests', () => {
     const view = render(<DirectPause question={pause(1)} onAnswer={async (o, t) => void sent.push([o, t])} />)
     expect(screen.getByText('Made the title blue.')).toBeTruthy()
     expect(screen.queryByTestId('direct-many')).toBeNull()
+    expect(screen.queryByTestId('direct-undo')).toBeNull()
     fireEvent.change(screen.getByLabelText(strings.direct.nextLabel), { target: { value: ' make it bigger ' } })
     fireEvent.click(screen.getByText(strings.direct.send))
     await waitFor(() => expect(sent).toEqual([['other', 'make it bigger']]))
@@ -85,5 +86,13 @@ describe('direct edit between two requests', () => {
     expect(screen.getByTestId('direct-many').textContent).toBe(strings.direct.lastText)
     expect(screen.queryByLabelText(strings.direct.nextLabel)).toBeNull()
     expect(screen.getByTestId('direct-done')).toBeTruthy()
+  })
+
+  it('offers to take back the last request when the app says it can', async () => {
+    const sent: string[] = []
+    const q = pause(2)
+    render(<DirectPause question={{ ...q, options: [{ id: 'undo', label: strings.direct.undoLabel, means: strings.direct.undoMeans }, ...q.options] }} onAnswer={async o => void sent.push(o)} />)
+    fireEvent.click(screen.getByTestId('direct-undo'))
+    await waitFor(() => expect(sent).toEqual(['undo']))
   })
 })
