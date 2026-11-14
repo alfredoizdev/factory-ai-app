@@ -64,7 +64,10 @@ export function StepsLane({
   detail,
   blank = false,
   loading = false,
+  side,
 }: {
+  /** Direct edit: the steps go one under another in a narrow column, and this fills the rest (the live site). */
+  side?: ReactNode
   blocks: readonly Block[]
   /** Where a block stands in the task on screen; null when it is not part of it, or there is no task. */
   stateOf: (id: string) => NodeState | null
@@ -88,13 +91,15 @@ export function StepsLane({
     return ORDER.find(o => states.includes(o)) ?? null
   }
   const label = (state: NodeState | null, off: boolean) => (off ? s.off : state ? strings.canvas.stateLabel[state] : hasRun ? s.notInTask : '')
-  return (
-    <div data-testid="steps-view" style={{ position: 'absolute', inset: 0, overflowY: 'auto', padding: `28px ${DOCKED_WIDTH + 36}px 56px 36px`, display: 'grid', gap: 28, alignContent: 'start', backgroundColor: brand.bg, backgroundImage: 'radial-gradient(circle, #2b2b2b 1px, transparent 1.5px)', backgroundSize: '24px 24px', backgroundAttachment: 'local', color: brand.text, fontFamily: brand.sans, scrollbarWidth: 'thin', scrollbarColor: `${brand.line} transparent`, opacity: loading ? 0.4 : 1 }}>
+  const column = side !== undefined
+  const dotted: CSSProperties = column ? { flex: 'none', width: 300, overflowY: 'auto', padding: '28px 20px 40px 24px', display: 'grid', gap: 22, alignContent: 'start' } : { position: 'absolute', inset: 0, overflowY: 'auto', padding: `28px ${DOCKED_WIDTH + 36}px 56px 36px`, display: 'grid', gap: 28, alignContent: 'start' }
+  const lane = (
+    <div data-testid="steps-view" data-column={column ? 'true' : undefined} style={{ ...dotted, backgroundColor: brand.bg, backgroundImage: 'radial-gradient(circle, #2b2b2b 1px, transparent 1.5px)', backgroundSize: '24px 24px', backgroundAttachment: 'local', color: brand.text, fontFamily: brand.sans, scrollbarWidth: 'thin', scrollbarColor: `${brand.line} transparent`, opacity: loading ? 0.4 : 1 }}>
       {/* The title places itself for the canvas (from the top left corner): this box is the corner it starts from here. */}
       {title && <div style={{ position: 'relative', height: 44, margin: '-18px 0 14px -24px' }}>{title}</div>}
       {!blank && (
         // The row wraps onto a second line on a narrow screen, so no step is ever cut off.
-        <ol data-testid="steps-row" aria-label={s.rowLabel} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexWrap: 'wrap', rowGap: 12, alignItems: 'flex-start' }}>
+        <ol data-testid="steps-row" aria-label={s.rowLabel} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', ...(column ? { flexDirection: 'column', alignItems: 'stretch' } : { flexWrap: 'wrap', rowGap: 12, alignItems: 'flex-start' }) }}>
           {steps.map((st, i) => {
             const state = stepState(st)
             const off = st.blocks.every(b => !b.enabled)
@@ -108,8 +113,8 @@ export function StepsLane({
             const latest = work && state === 'running' ? work.steps[work.steps.length - 1] : undefined
             return (
               <Fragment key={st.id}>
-                {i > 0 && <li aria-hidden="true" className={state === 'running' ? 'factory-step-flow' : undefined} style={{ flex: '0 1 22px', minWidth: 8, height: 2, marginTop: 34, ...(state === 'running' ? ({ '--pulse': pulse } as CSSProperties) : { background: before === 'passed' ? brand.green : brand.line, opacity: before === 'passed' ? 0.55 : 1 }) }} />}
-                <li style={{ flex: work ? '2 1 230px' : '1 1 104px', maxWidth: work ? 320 : 170, minWidth: 104, display: 'grid', opacity: off ? 0.5 : 1 }}>
+                {i > 0 && <li aria-hidden="true" className={state === 'running' ? 'factory-step-flow' : undefined} style={{ ...(column ? { flex: 'none', width: 2, height: 16, marginLeft: 30 } : { flex: '0 1 22px', minWidth: 8, height: 2, marginTop: 34 }), ...(state === 'running' ? ({ '--pulse': pulse } as CSSProperties) : { background: before === 'passed' ? brand.green : brand.line, opacity: before === 'passed' ? 0.55 : 1 }) }} />}
+                <li style={{ ...(column ? { flex: 'none' } : { flex: work ? '2 1 230px' : '1 1 104px', maxWidth: work ? 320 : 170, minWidth: 104 }), display: 'grid', opacity: off ? 0.5 : 1 }}>
                   <div data-live={pulse ? 'true' : undefined} className={pulse ? 'factory-step-live' : undefined} style={{ display: 'grid', gap: 12, alignContent: 'start', padding: 14, borderRadius: 14, border: `1px solid ${pulse ? `rgb(${pulse})` : on ? brand.green : brand.line}`, background: on ? '#1c1f1c' : brand.card, ...(pulse ? ({ '--pulse': pulse } as CSSProperties) : { boxShadow: on ? '0 0 0 3px rgba(121, 220, 139, 0.12)' : 'none' }) }}>
                     <button
                       type="button"
@@ -164,7 +169,15 @@ export function StepsLane({
           })}
         </ol>
       )}
-      {!blank && (detail ?? <p style={{ margin: 0, maxWidth: '60ch', fontSize: 14.5, lineHeight: 1.55, color: brand.quiet }}>{hasRun ? s.notInTaskHint : s.beforeRun}</p>)}
+      {!blank && !column && (detail ?? <p style={{ margin: 0, maxWidth: '60ch', fontSize: 14.5, lineHeight: 1.55, color: brand.quiet }}>{hasRun ? s.notInTaskHint : s.beforeRun}</p>)}
+    </div>
+  )
+  if (!column) return lane
+  // The steps on the left, the site in the rest, clear of the command panel on the right edge.
+  return (
+    <div data-testid="direct-edit" style={{ position: 'absolute', inset: 0, display: 'flex', paddingRight: DOCKED_WIDTH, background: brand.bg }}>
+      {lane}
+      <div style={{ flex: 1, minWidth: 0 }}>{side}</div>
     </div>
   )
 }

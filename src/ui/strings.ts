@@ -707,6 +707,23 @@ export const strings = {
     passedWithoutCounts: 'Passed, but no test counts were recorded.',
     failedWithoutCounts: 'Failed. No test counts were recorded.',
   },
+  // Direct edit: another way to work on the same screen. The steps in a column, and the project's own site beside them.
+  direct: {
+    on: 'Direct edit',
+    off: 'Leave direct edit',
+    hint: 'Work with your site in view: the steps on the left, your site in the middle, updating as the change is made.',
+    title: 'Your site',
+    live: 'Live from this task\u2019s copy. Only you can see it.',
+    frameTitle: 'Your site, with this task\u2019s change',
+    starting: 'Starting your site\u2026',
+    reload: 'Reload',
+    newTab: 'Open in a new tab',
+    emptyTitle: 'Your site shows here',
+    emptyText: 'Write what you want changed in the card on the right. Once the task starts, your site opens here and you see the change as it is made.',
+    failed: 'Your site did not start',
+    stopped: 'Your site is not running',
+    tryAgain: 'Start it',
+  },
   // The task as a row of steps with the chosen step's details under it: the other way to look at the same task.
   steps: {
     checks: 'Checks',

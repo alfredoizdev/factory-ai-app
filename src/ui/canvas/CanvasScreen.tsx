@@ -4,6 +4,7 @@ import { PastTasks } from './PastTasks'
 import { attentionOf, useAttention } from './attention'
 import { readyToPublish } from './shipReady'
 import { TasksDrawer } from './TasksDrawer'
+import { LiveSite } from './LiveSite'
 import { TaskTitle } from './TaskTitle'
 import type { FailureActions } from './FailurePanel'
 import { PROMPT_BLOCK, usePrompts } from './PromptCards'
@@ -176,6 +177,8 @@ export function CanvasScreen({
   const chosenStart = startFrom !== null && startOptions.includes(startFrom) ? startFrom : (startOptions[0] ?? null)
 
   const [tasksOpen, setTasksOpen] = useState(false)
+  // Direct edit: the steps in a column and the project's site beside them, on this same screen.
+  const [direct, setDirect] = useState(false)
   // What GitHub says about shipping this run, as the result card last read it; the Ship card shows the same thing.
   const [shipFor, setShipFor] = useState<{ runId: string; state: ShipState } | null>(null)
   const runIdNow = run?.runId ?? null
@@ -425,7 +428,7 @@ export function CanvasScreen({
 
   // The list of tasks, in the top bar: the right edge of the screen is the command panel's.
   const tasksButton = (
-    <button type="button" aria-expanded={tasksOpen} onClick={() => setTasksOpen(o => !o)} style={{ ...headerButton, marginLeft: 'auto', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+    <button type="button" aria-expanded={tasksOpen} onClick={() => setTasksOpen(o => !o)} style={{ ...headerButton, marginLeft: settings?.repoPath ? 0 : 'auto', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
       {/* Three lines: a list that opens. */}
       <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
         <path d="M5 7h14M5 12h14M5 17h14" />
@@ -571,6 +574,16 @@ export function CanvasScreen({
               {statusText}
             </span>
           )
+        )}
+        {settings?.repoPath && (
+          <button type="button" data-testid="direct-edit-toggle" aria-pressed={direct} title={strings.direct.hint} onClick={() => setDirect(v => !v)} style={{ ...headerButton, marginLeft: 'auto', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8, ...(direct ? { borderColor: theme.passed, color: theme.passed } : {}) }}>
+            {/* A screen split in two. */}
+            <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M10 4v16" />
+            </svg>
+            {direct ? strings.direct.off : strings.direct.on}
+          </button>
         )}
         {tasksButton}
       </header>
@@ -743,6 +756,8 @@ export function CanvasScreen({
           notice={{ offer: noticeOffer, onAllow: allowNotice }}
         />
         <Canvas
+          layout={direct ? 'steps' : 'canvas'}
+          site={direct ? <LiveSite key={run?.runId ?? 'none'} runId={run && run.here !== false && agent === CLAUDE_PROVIDER_ID ? run.runId : null} /> : undefined}
           stepDetails={id =>
             run ? (
               <BlockDetailsDialog key={`inline-${run.runId}-${id}`} inline runId={run.runId} blockId={id} label={run.blocks.find(b => b.id === id)?.label ?? id} view={withAsked(withShip)[id]} pr={shipFor?.runId === run.runId ? (shipFor.state.pr ?? null) : null} away={run.here === false ? { machine: run.machine ?? null } : null} onClose={() => undefined} />
@@ -763,7 +778,7 @@ export function CanvasScreen({
           overlay={
             run && !loading ? (
               <>
-                <TaskTitle key={run.runId} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} />
+                <TaskTitle key={run.runId} roomy={direct} runId={run.runId} initial={run.title ?? ''} onRenamed={title => setRun(r => (r && r.runId === run.runId ? { ...r, title } : r))} />
               </>
             ) : undefined
           }

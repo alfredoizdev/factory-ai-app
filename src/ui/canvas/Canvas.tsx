@@ -238,7 +238,10 @@ export function Canvas({
   canRetry = false,
   layout = 'canvas',
   stepDetails,
+  site,
 }: {
+  /** Direct edit: shown beside the steps, which then go one under another (a step's details open in their window). */
+  site?: ReactNode
   /** 'steps': the flow is drawn as one row of steps with the picked step's details under it, instead of as a canvas. */
   layout?: 'canvas' | 'steps'
   /** In the steps layout: the details of one block of the run on screen. */
@@ -816,7 +819,10 @@ export function Canvas({
             onPick={id => {
               setSelectedId(id)
               if (hasRun) setFocusOverride(id)
+              // Beside the site there is no room under the steps: the step's details open in their own window.
+              if (site !== undefined && stateIn(id) !== null) onDetails?.(id)
             }}
+            side={site}
             title={overlay}
             detail={stepPick && stateIn(stepPick) !== null ? stepDetails?.(stepPick) : undefined}
             blank={blank}
