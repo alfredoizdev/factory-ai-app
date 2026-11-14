@@ -229,6 +229,8 @@ export const attachments = pgTable(
     runId: text('run_id').references(() => runs.id, { onDelete: 'cascade' }),
     /** Set when it came with a request for changes, so it reaches that round and no other. */
     approvalId: text('approval_id').references(() => approvals.id, { onDelete: 'cascade' }),
+    /** Set when it came with a request made in direct edit (the answer to that pause), so it reaches that request and no other. */
+    questionId: text('question_id'),
     path: text('path').notNull(),
     name: text('name').notNull(),
     mime: text('mime').notNull(),

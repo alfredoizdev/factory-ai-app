@@ -66,11 +66,13 @@ describe('direct edit between two requests', () => {
   it('shows what was built, sends the next request in the person\'s words, and "done" ends it', async () => {
     const sent: [string, string | undefined][] = []
     const view = render(<DirectPause question={pause(1)} onAnswer={async (o, t) => void sent.push([o, t])} />)
+    // The same box as everywhere else, so a picture can go with the request.
+    expect(screen.getByLabelText(strings.attachments.add)).toBeTruthy()
     expect(screen.getByText('Made the title blue.')).toBeTruthy()
     expect(screen.queryByTestId('direct-many')).toBeNull()
     expect(screen.queryByTestId('direct-undo')).toBeNull()
-    fireEvent.change(screen.getByLabelText(strings.direct.nextLabel), { target: { value: ' make it bigger ' } })
-    fireEvent.click(screen.getByText(strings.direct.send))
+    fireEvent.change(screen.getByRole('textbox', { name: strings.direct.nextLabel }), { target: { value: ' make it bigger ' } })
+    fireEvent.click(screen.getByRole('button', { name: strings.direct.send }))
     await waitFor(() => expect(sent).toEqual([['other', 'make it bigger']]))
     view.unmount()
     render(<DirectPause question={pause(2)} onAnswer={async (o, t) => void sent.push([o, t])} />)
@@ -84,7 +86,7 @@ describe('direct edit between two requests', () => {
     view.unmount()
     render(<DirectPause question={pause(12, strings.direct.lastText)} onAnswer={async () => undefined} />)
     expect(screen.getByTestId('direct-many').textContent).toBe(strings.direct.lastText)
-    expect(screen.queryByLabelText(strings.direct.nextLabel)).toBeNull()
+    expect(screen.queryByRole('textbox', { name: strings.direct.nextLabel })).toBeNull()
     expect(screen.getByTestId('direct-done')).toBeTruthy()
   })
 

@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { and, eq } from 'drizzle-orm'
 import { ulid } from 'ulid'
 import { db, migrateDb } from '@/db/client'
-import { claims, events, evidence, nodeRuns, projects, questions, runs, usageRecords, workflows } from '@/db/schema'
+import { attachments, claims, events, evidence, nodeRuns, projects, questions, runs, usageRecords, workflows } from '@/db/schema'
 import type { AskMode } from '@/domain/ask-mode'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
@@ -16,6 +16,7 @@ import { PLAN_DECIDED, QUESTION_ANSWERED } from '@/engine/inngest/client'
 import { decidePlan, type Job, type PlanQuestion } from '@/engine/plan'
 import { answerQuestion, openQuestion, type Question } from '@/engine/questions'
 import { recordDecision } from '@/engine/approvals'
+import { claimAttachments } from '@/engine/attachments'
 import { addEntry, gateInputs, listRegister } from '@/engine/register'
 import { clip, redact } from '@/engine/redact'
 import { depthOf } from '@/engine/inngest/review-stage'
@@ -1161,6 +1162,38 @@ describe('the plan follows the project\'s ask mode', () => {
       expect(seen[2]!.detail).toBe(strings.direct.undone)
       expect(seen[2]!.options.map(o => o.id)).toEqual(['leave'])
       expect(await payloadOf(runId, 'node.completed', 'build')).toMatchObject([{ summary: strings.direct.finished(1) }])
+    })
+
+    test('a picture sent with a request reaches that request and no other', async () => {
+      const runId = await directRun()
+      const got: (string[] | undefined)[] = []
+      const provider: AgentProvider = {
+        id: 'files', isDemo: false, needsWorkspace: true,
+        async *execute(input) {
+          if (input.blockKind === 'build') got.push(input.images)
+          if (input.blockKind === 'review') {
+            yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+            return
+          }
+          yield { type: 'done', summary: 'ok', source: 'provider' }
+        },
+      }
+      const picture = join(mkdtempSync(join(tmpdir(), 'factory-pic-')), 'a.png')
+      writeFileSync(picture, 'png')
+      const replies: ({ option: string; text?: string; picture?: true })[] = [{ option: 'other', text: 'like this picture', picture: true }, { option: 'other', text: 'and bigger' }, { option: 'leave' }]
+      const s = recordingStep(async event => {
+        if (event !== QUESTION_ANSWERED) return false
+        const q = (await openQuestion(runId))!
+        const { picture: withPicture, ...reply } = replies.shift()!
+        if (withPicture) {
+          await db.insert(attachments).values({ id: 'pic1', path: picture, name: 'a.png', mime: 'image/png', size: 3, createdAt: new Date().toISOString() })
+          expect(await claimAttachments(['pic1'], runId, null, q.id)).toBe(1)
+        }
+        await answerQuestion(q.id, reply, { send: async () => undefined })
+        return true
+      })
+      await go(runId, provider, s)
+      expect(got).toEqual([undefined, [picture], undefined])
     })
 
     test('what is asked next is a request, never kept as a decision of the project', async () => {

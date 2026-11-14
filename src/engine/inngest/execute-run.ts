@@ -1480,7 +1480,9 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
         break
       }
       note = next
-      images = []
+      // The pictures sent with this request, and no others.
+      const answeredId = word.id
+      images = await step.run(id(did(`images-direct-${block.id}`)), () => imagePathsFor(runId, { question: answeredId }))
       }
     } else {
       const note = revisionNote

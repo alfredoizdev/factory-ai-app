@@ -47,20 +47,23 @@ export async function saveAttachment(name: string, bytes: Buffer, dir: string = 
 }
 
 /** Gives not-yet-used attachments to a run (and, for a request for changes, to that decision). Others are ignored. */
-export async function claimAttachments(ids: readonly string[], runId: string, approvalId: string | null = null): Promise<number> {
+export async function claimAttachments(ids: readonly string[], runId: string, approvalId: string | null = null, questionId: string | null = null): Promise<number> {
   const wanted = [...new Set(ids)].slice(0, MAX_IMAGES)
   if (wanted.length === 0) return 0
   const free = (await db.select().from(attachments).where(and(inArray(attachments.id, wanted), isNull(attachments.runId))))
-  for (const a of free) await db.update(attachments).set({ runId, approvalId }).where(eq(attachments.id, a.id))
+  for (const a of free) await db.update(attachments).set({ runId, approvalId, questionId }).where(eq(attachments.id, a.id))
   return free.length
 }
 
 /** The image paths for a run's first round (none attached to a decision), or for one request for changes. */
-export async function imagePathsFor(runId: string, approvalId: string | null = null, dir: string = ATTACHMENT_DIR): Promise<string[]> {
+export async function imagePathsFor(runId: string, of: string | { question: string } | null = null, dir: string = ATTACHMENT_DIR): Promise<string[]> {
+  // `of`: a decision's id (a request for changes), or the pause of direct edit a request answered.
+  const approvalId = typeof of === 'string' ? of : null
+  const mine = of !== null && typeof of === 'object' ? eq(attachments.questionId, of.question) : and(approvalId ? eq(attachments.approvalId, approvalId) : isNull(attachments.approvalId), isNull(attachments.questionId))
   const rows = await db
     .select()
     .from(attachments)
-    .where(and(eq(attachments.runId, runId), approvalId ? eq(attachments.approvalId, approvalId) : isNull(attachments.approvalId)))
+    .where(and(eq(attachments.runId, runId), mine))
   const paths: string[] = []
   for (const a of rows) {
     // This computer's copy, fetched from R2 when the image was attached on another computer.

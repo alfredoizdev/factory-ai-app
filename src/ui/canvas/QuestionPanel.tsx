@@ -8,6 +8,7 @@ import { explained, type Touched } from '@/ui/explain'
 import { theme } from '@/ui/theme'
 import { displayOrder } from './FindingsList'
 import { Bone } from './Skeleton'
+import { Composer, imagesBusy, readyImageIds, type ComposerImage } from './Composer'
 import type { ReviewRecord } from './useReviewRecord'
 
 export type { Touched }
@@ -271,13 +272,13 @@ export function QuestionSection({
       </div>
     )
   }
-  async function answer(option: string, text?: string): Promise<void> {
+  async function answer(option: string, text?: string, attachments?: readonly string[]): Promise<void> {
     let res: Response
     try {
       res = await fetch(`/api/runs/${encodeURIComponent(runId)}/questions/${encodeURIComponent(question!.id)}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ option, ...(text !== undefined ? { text } : {}) }),
+        body: JSON.stringify({ option, ...(text !== undefined ? { text } : {}), ...(attachments && attachments.length > 0 ? { attachments } : {}) }),
       })
     } catch {
       throw new Error(strings.question.failed)
@@ -311,8 +312,9 @@ export const MANY_REQUESTS = 5
  * Direct edit between two requests: what was just built, a box for the next thing, and the button that ends it (the
  * tests and the review then run once, on everything). Says so when the task is getting big.
  */
-export function DirectPause({ question, onAnswer }: { question: Question; onAnswer: (option: string, text?: string) => Promise<void> }) {
+export function DirectPause({ question, onAnswer }: { question: Question; onAnswer: (option: string, text?: string, attachments?: readonly string[]) => Promise<void> }) {
   const [words, setWords] = useState('')
+  const [images, setImages] = useState<ComposerImage[]>([])
   const [sending, setSending] = useState<'next' | 'done' | 'undo' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef(false)
@@ -322,12 +324,12 @@ export function DirectPause({ question, onAnswer }: { question: Question; onAnsw
   const last = question.text === d.lastText
   const canUndo = question.options.some(o => o.id === 'undo')
   async function send(what: 'next' | 'done' | 'undo') {
-    if (inFlight.current || (what === 'next' && words.trim() === '')) return
+    if (inFlight.current || (what === 'next' && (words.trim() === '' || imagesBusy(images)))) return
     inFlight.current = true
     setSending(what)
     setError(null)
     try {
-      await (what === 'done' ? onAnswer('leave') : what === 'undo' ? onAnswer('undo') : onAnswer(OTHER, words.trim()))
+      await (what === 'done' ? onAnswer('leave') : what === 'undo' ? onAnswer('undo') : onAnswer(OTHER, words.trim(), readyImageIds(images)))
     } catch (e) {
       setError(e instanceof Error && e.message ? e.message : strings.question.failed)
       inFlight.current = false
@@ -359,27 +361,19 @@ export function DirectPause({ question, onAnswer }: { question: Question; onAnsw
         <div role="note" data-testid="direct-many" style={{ padding: '9px 12px', borderRadius: 10, border: `1px solid ${theme.waiting}`, color: '#f3d9a4', fontSize: 13, lineHeight: 1.45 }}>{last ? d.lastText : d.many}</div>
       )}
       {!last && (
-        <div style={{ display: 'grid', gap: 6 }}>
-          <label htmlFor={boxId} style={{ fontSize: 13, fontWeight: 700 }}>{d.nextLabel}</label>
-          <textarea
-            id={boxId}
-            value={words}
-            disabled={busy}
-            onChange={e => setWords(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                void send('next')
-              }
-            }}
-            placeholder={d.nextPlaceholder}
-            rows={4}
-            style={{ resize: 'vertical', padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: '#0f141c', color: theme.ink, font: 'inherit', fontSize: 14, lineHeight: 1.45 }}
-          />
-          <button type="button" className="factory-action" disabled={busy || words.trim() === ''} onClick={() => void send('next')} style={{ justifySelf: 'end', minHeight: 34, padding: '7px 16px', borderRadius: 8, border: `1px solid ${theme.border}`, background: '#0f141c', color: theme.ink, fontWeight: 700, cursor: busy || words.trim() === '' ? 'default' : 'pointer', opacity: words.trim() === '' ? 0.5 : 1 }}>
-            {sending === 'next' ? d.sending : d.send}
-          </button>
-        </div>
+        <Composer
+          inputId={boxId}
+          label={d.nextLabel}
+          placeholder={d.nextPlaceholder}
+          text={words}
+          onText={setWords}
+          images={images}
+          onImages={setImages}
+          minHeight={96}
+          disabled={busy}
+          onSubmit={() => void send('next')}
+          send={{ label: d.send, onSend: () => void send('next'), enabled: !busy && words.trim() !== '' && !imagesBusy(images), busy: sending === 'next' }}
+        />
       )}
       <div style={{ display: 'grid', gap: 5, paddingTop: 12, borderTop: `1px solid ${theme.border}` }}>
         <button type="button" className="factory-action" data-testid="direct-done" disabled={busy} onClick={() => void send('done')} style={{ minHeight: 40, padding: '9px 16px', borderRadius: 9, border: 'none', background: theme.passed, color: '#0d1f12', fontWeight: 800, fontSize: 14.5, cursor: busy ? 'default' : 'pointer' }}>
