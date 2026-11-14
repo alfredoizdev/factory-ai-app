@@ -11,7 +11,7 @@ import { claims, evidence, nodeRuns, projects, questions, runs, usageRecords, wo
 import type { AskMode } from '@/domain/ask-mode'
 import { defaultGraph } from '@/domain/graph'
 import { eventsSince } from '@/engine/events'
-import { MAX_REPLANS, modeOf, orchestrateRun, type ExecutorDeps, type Plan, type StepApi } from '@/engine/inngest/execute-run'
+import { MAX_BUILD_QUESTIONS, MAX_REPLANS, modeOf, orchestrateRun, type ExecutorDeps, type Plan, type StepApi } from '@/engine/inngest/execute-run'
 import { PLAN_DECIDED, QUESTION_ANSWERED } from '@/engine/inngest/client'
 import { decidePlan, type Job, type PlanQuestion } from '@/engine/plan'
 import { answerQuestion, openQuestion, type Question } from '@/engine/questions'
@@ -968,6 +968,97 @@ describe('the plan follows the project\'s ask mode', () => {
     expect((await node(runId, 'plan')).state).toBe('waiting_approval')
     expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(0)
     expect(((await measured(runId))[0]!.reasons as string[])[0]).toBe(strings.plan.reasons.questionUnreadable)
+  })
+
+  describe('the builder asks in the middle of its work', () => {
+    const colour: PlanQuestion = { text: 'Which blue?', why: '', paths: ['src/ui/footer/'], options: [{ id: 'a', label: 'Navy', means: 'Dark.' }, { id: 'b', label: 'Sky', means: 'Light.' }], recommended: 'b' }
+    /** The plan passes on its own; the builder asks `asks` times (when it may), then reports its work. */
+    function asker(asks: number): AgentProvider & { calls: { canAsk?: boolean; answers?: string[] }[] } {
+      const calls: { canAsk?: boolean; answers?: string[] }[] = []
+      let left = asks
+      return {
+        id: 'files', isDemo: false, needsWorkspace: true, calls,
+        async *execute(input) {
+          if (input.blockKind === 'plan') {
+            yield { type: 'done', summary: 'p', source: 'provider', plan: footer }
+            return
+          }
+          if (input.blockKind === 'review') {
+            yield { type: 'done', summary: 'ok', source: 'provider', review: { verdict: 'ok', findings: [] } }
+            return
+          }
+          if (input.blockKind === 'build') {
+            calls.push({ canAsk: input.canAsk, answers: input.answers })
+            if (left-- > 0) {
+              yield { type: 'done', summary: strings.builder.asked, source: 'system', buildQuestion: colour }
+              return
+            }
+          }
+          yield { type: 'done', summary: 'ok', source: 'system' }
+        },
+      }
+    }
+    const answering = (runId: string, a: { option: string; text?: string }, seen: Question[] = []) =>
+      recordingStep(async event => {
+        if (event !== QUESTION_ANSWERED) return false
+        const q = (await openQuestion(runId))!
+        seen.push(q)
+        await answerQuestion(q.id, a, { send: async () => undefined })
+        return true
+      })
+
+    test('the question reaches the person, and with the answer the builder goes on in the same step', async () => {
+      const { runId } = await projectRun()
+      const seen: Question[] = []
+      const s = answering(runId, { option: 'a' }, seen)
+      const provider = asker(1)
+      await go(runId, provider, s)
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ kind: 'build', text: 'Which blue?', why: strings.builder.questionWhy, recommended: 'b' })
+      expect(seen[0]!.options.map(o => o.id)).toEqual(['a', 'b', 'leave'])
+      expect(seen[0]!.options.at(-1)).toEqual({ id: 'leave', label: strings.builder.leaveLabel, means: strings.builder.leaveMeans })
+      expect(await payloadOf(runId, 'node.question_asked', 'build')).toMatchObject([{ kind: 'build', questionId: seen[0]!.id }])
+      // Asked once, then run again with the answer, in the same node: it was never finished or failed in between.
+      expect(provider.calls).toEqual([
+        { canAsk: true, answers: undefined },
+        { canAsk: true, answers: [strings.providers.claude.answerNote('Which blue?', { option: 'chosen', label: 'Navy' }, null, 'builder')] },
+      ])
+      expect((await payloadOf(runId, 'node.step', 'build')).map(p => p.text)).toContain(strings.builder.asked)
+      expect(await payloadOf(runId, 'node.completed', 'build')).toHaveLength(1)
+      expect((await node(runId, 'build')).state).toBe('passed')
+      expect((await db.select().from(questions).where(eq(questions.id, seen[0]!.id)))[0]!.consumedAt).not.toBeNull()
+      expect(s.ids).toEqual(expect.arrayContaining(['node-build', 'ask-build-build', 'node-build-ask1']))
+      expect(s.waits[0]).toBe(`question-build-${seen[0]!.id}-0`)
+    })
+
+    test('the run waits on the person while the question is open', async () => {
+      const { runId } = await projectRun()
+      await go(runId, asker(1), recordingStep())
+      expect((await db.select().from(runs).where(eq(runs.id, runId)))[0]!.status).toBe('waiting_approval')
+      expect((await node(runId, 'build')).state).toBe('waiting_approval')
+      expect(await openQuestion(runId)).toMatchObject({ kind: 'build' })
+    })
+
+    test('a builder that keeps asking is told it may not after two questions, and what it says then is its report', async () => {
+      const { runId } = await projectRun()
+      const provider = asker(99)
+      await go(runId, provider, answering(runId, { option: 'leave', text: 'the brand one' }))
+      expect(provider.calls.map(c => c.canAsk)).toEqual([true, true, false])
+      expect(provider.calls[2]!.answers).toHaveLength(2)
+      expect(provider.calls[2]!.answers![0]).toBe(strings.providers.claude.answerNote('Which blue?', { option: 'leave' }, 'the brand one', 'builder'))
+      expect(await db.select().from(questions).where(eq(questions.runId, runId))).toHaveLength(MAX_BUILD_QUESTIONS)
+      expect((await node(runId, 'build')).state).toBe('passed')
+    })
+
+    test('an answer in the person\'s own words is kept as a decision on the files the question named', async () => {
+      const { runId, projectId } = await projectRun()
+      await go(runId, asker(1), answering(runId, { option: 'other', text: 'the blue of the logo' }))
+      const kept = (await listRegister(projectId)).filter(e => e.kind === 'decision')
+      expect(kept).toHaveLength(1)
+      expect(kept[0]!.text).toContain('About the builder\'s question')
+      expect(kept[0]!.text).toContain('the blue of the logo')
+      expect(kept[0]!.paths).toEqual(['src/ui/footer/'])
+    })
   })
 
   test('a planner answer with no usable plan is not measured: Build works from the request, as before', async () => {

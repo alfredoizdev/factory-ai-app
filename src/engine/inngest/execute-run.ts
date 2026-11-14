@@ -140,6 +140,8 @@ export type Workspace = {
   notes?: string[]
   /** Rules, decisions and core areas this task was given when it started. */
   standing?: Standing[]
+  /** The builder's own questions: whether it may still ask, and what it asked and was answered so far in this task. */
+  build?: { canAsk: boolean; answers: string[] }
   /** A review block: which reader this call is, and what it is told besides the request. */
   /** `reminder`: this reader is asked again after an answer the app could not read. */
   review?: { focus: Focus; builderSummary?: string; since?: { paths: string[]; diff: string; more?: number }; reminder?: true }
@@ -276,7 +278,7 @@ export function outcomeOf(state: string): 'passed' | 'failed' | 'cancelled' | 's
 
 // ---- one provider attempt, raced against the timeout and against cancellation ----------------------------------
 
-export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; planQuestion?: PlanQuestion | 'unreadable'; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
+export type Done = { summary: string; source: 'provider' | 'system'; tokens: number | null | undefined; review?: Review; plan?: Job[]; planQuestion?: PlanQuestion | 'unreadable'; buildQuestion?: PlanQuestion; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
 export type AttemptResult =
   | ({ kind: 'done' } & Done)
   | { kind: 'error'; message: string; source: 'provider' | 'system'; noRetry: boolean }
@@ -326,6 +328,7 @@ export async function runAttempt(
         images: images.length > 0 ? [...images] : undefined,
         model: block.model,
         ...(block.kind === 'build' && workspace.jobs ? { jobs: workspace.jobs } : {}),
+        ...(block.kind === 'build' && !job && workspace.build ? { canAsk: workspace.build.canAsk, ...(workspace.build.answers.length > 0 ? { answers: workspace.build.answers } : {}) } : {}),
         ...((block.kind === 'build' || block.kind === 'plan') && workspace.notes && workspace.notes.length > 0 ? { notes: workspace.notes } : {}),
         // What the task stands on goes to every agent: the planner, the builder, each reviewer, the checker and the fixer.
         ...(workspace.standing && workspace.standing.length > 0 ? { standing: workspace.standing } : {}),
@@ -345,7 +348,7 @@ export async function runAttempt(
         if (closed) return { kind: 'ended' } // the node already ended; a late step must not be recorded
         if (ev.type === 'step') await onStep(ev.text)
         else if (ev.type === 'evidence') onEvidence(ev.data)
-        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.planQuestion ? { planQuestion: ev.planQuestion } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}), ...(ev.noRepro ? { noRepro: ev.noRepro } : {}), ...(ev.unreadable ? { unreadable: ev.unreadable } : {}) }
+        else if (ev.type === 'done') return { kind: 'done', summary: ev.summary, source: ev.source ?? 'provider', tokens: ev.usage?.tokens, ...(ev.review ? { review: ev.review } : {}), ...(ev.plan ? { plan: ev.plan } : {}), ...(ev.planQuestion ? { planQuestion: ev.planQuestion } : {}), ...(ev.buildQuestion ? { buildQuestion: ev.buildQuestion } : {}), ...(ev.repro !== undefined ? { repro: ev.repro } : {}), ...(ev.refuted ? { refuted: ev.refuted } : {}), ...(ev.noRepro ? { noRepro: ev.noRepro } : {}), ...(ev.unreadable ? { unreadable: ev.unreadable } : {}) }
         else return { kind: 'error', message: ev.message, source: ev.source ?? 'provider', noRetry: ev.cause === 'tests_failed' }
       }
       return { kind: 'ended' }
@@ -562,6 +565,18 @@ async function runProviderNode(
         await tx.update(nodeRuns).set({ summary: result.summary }).where(eq(nodeRuns.id, node.id))
         const parked = await transitionNode(tx, node, 'waiting_approval', { type: 'node.waiting_approval', payload: { summary: result.summary, summarySource: result.source } })
         return parked ? { outcome: 'parked' } : { outcome: 'cancelled' }
+      })
+    }
+
+    if (result.kind === 'done' && block.kind === 'build' && result.buildQuestion && workspace.build?.canAsk) {
+      // The builder stopped to ask. Its work so far stays in the copy and the node stays running: the build loop puts
+      // the question to the person and runs the builder again with the answer.
+      const question = result.buildQuestion
+      return withTx(runId, async (tx): Promise<Outcome> => {
+        const node = (await freshNode(opened.id, tx))
+        if (node.state !== 'running') return { outcome: 'cancelled' }
+        await appendEventSync({ runId, nodeRunId: node.id, type: 'node.step', payload: { blockId: block.id, attempt, text: strings.builder.asked } }, tx)
+        return { outcome: 'asking', question }
       })
     }
 
@@ -985,6 +1000,27 @@ async function askPlanQuestion(runId: string, block: PlannedBlock, q: PlanQuesti
   })
 }
 
+/** Puts the builder's question to the person, with the choice to leave it to the builder. Null once the run was cancelled. `n`: which question of the task this is. */
+async function askBuildQuestion(runId: string, block: PlannedBlock, q: PlanQuestion, n: string): Promise<Question | null> {
+  if (await isCancelled(runId)) return null
+  const node = (await db.select().from(nodeRuns).where(eq(nodeRuns.runId, runId))).find(x => x.blockId === block.id)
+  if (!node) return null
+  return askPerson(runId, node.id, {
+    kind: 'build',
+    // No finding: this only tells one question of the builder's from the next, so a repeated step finds its own.
+    findingId: n,
+    text: q.text,
+    why: q.why || strings.builder.questionWhy,
+    options: [...q.options.map(o => ({ id: o.id, label: o.label, means: o.means })), { id: LEAVE, label: strings.builder.leaveLabel, means: strings.builder.leaveMeans }],
+    recommended: q.recommended ?? null,
+    touches: [],
+    paths: q.paths,
+  })
+}
+
+/** How many times the builder may stop to ask the person in one pass of its work. */
+export const MAX_BUILD_QUESTIONS = 2
+
 /** How many times the person may ask for a new plan on one task (the planner's own questions count too). */
 export const MAX_REPLANS = 5
 
@@ -1313,6 +1349,27 @@ export async function orchestrateRun(runId: string, step: StepApi, deps: Executo
           from = again.start
           continue rounds
         }
+      }
+    } else if (block.kind === 'build' && provider.needsWorkspace) {
+      // The builder works; when it meets something only the person can decide it stops and asks, and with the answer
+      // it goes on in the same copy, from what it already did. A couple of questions at most, then it must finish.
+      const note = revisionNote
+      const images = revisionImages
+      const answers: string[] = []
+      result = { outcome: 'cancelled' }
+      for (let k = 0; k <= MAX_BUILD_QUESTIONS; k++) {
+        const bid = (name: string) => id(k === 0 ? name : `${name}-ask${k}`)
+        const ws: Workspace = { ...prepared, build: { canAsk: k < MAX_BUILD_QUESTIONS, answers: [...answers] } }
+        result = await step.run(bid(`node-${block.id}`), () => runProviderNode(runId, plan, block, deps, ws, note, images))
+        if (result.outcome !== 'asking' || !result.question) break
+        const q = result.question
+        const asked = await step.run(bid(`ask-build-${block.id}`), () => askBuildQuestion(runId, block, q, `build-r${round}-${k + 1}`))
+        if (asked === null) return // cancelled meanwhile
+        const answer = await waitForAnswer(step, bid, runId, asked, 'build-')
+        if (answer === 'parked' || answer === 'cancelled') return
+        const label = answer.answerOption === OTHER || answer.answerOption === LEAVE ? undefined : answer.options.find(o => o.id === answer.answerOption)?.label
+        const how = answer.answerOption === LEAVE ? { option: 'leave' as const } : label !== undefined ? { option: 'chosen' as const, label } : { option: 'own' as const }
+        answers.push(strings.providers.claude.answerNote(q.text, how, answer.answerText ? clip(redact(answer.answerText), 500) : null, 'builder'))
       }
     } else {
       const note = revisionNote

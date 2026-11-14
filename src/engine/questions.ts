@@ -22,7 +22,8 @@ export type Question = {
   nodeRunId: string
   findingId: string | null
   /** 'plan': the planner's own question, asked before it plans again; it is about no finding. */
-  kind: 'finding' | 'fix_held' | 'plan'
+  /** 'build': the builder's own question, asked in the middle of its work; `findingId` then only numbers it (no finding). */
+  kind: 'finding' | 'fix_held' | 'plan' | 'build'
   text: string
   why: string
   /** What the AI reviewer said, in its own words: shown one click away and labelled as the AI's. */
@@ -133,7 +134,7 @@ export async function askPerson(
   if (!text) throw new Error('A question needs its words.')
   const { options, recommended } = normaliseOptions(q.options, q.recommended)
   const touches = [...new Set(q.touches.filter(n => Number.isInteger(n) && n > 0))]
-  const paths = q.kind === 'plan' ? JSON.stringify([...new Set((q.paths ?? []).map(p => p.trim().slice(0, MAX_PATH)).filter(Boolean))].slice(0, MAX_PATHS)) : null
+  const paths = q.kind === 'plan' || q.kind === 'build' ? JSON.stringify([...new Set((q.paths ?? []).map(p => p.trim().slice(0, MAX_PATH)).filter(Boolean))].slice(0, MAX_PATHS)) : null
   const asked = await db.transaction(async tx => {
     await lockRun(tx, runId)
     const run = (await tx.select().from(runs).where(eq(runs.id, runId)))[0]
@@ -268,11 +269,11 @@ export async function answerQuestion(questionId: string, a: { option: string; te
     await tx.update(runs).set({ status: 'running' }).where(eq(runs.id, run.id))
     await appendEventSync({ runId: run.id, type: 'run.started', payload: { resumed: true } }, tx)
     const done = toQuestion({ ...row, ...fields })
-    const about = row.findingId ? (await tx.select({ type: findings.type, file: findings.file }).from(findings).where(eq(findings.id, row.findingId)))[0] : undefined
+    const about = row.findingId && row.kind !== 'build' ? (await tx.select({ type: findings.type, file: findings.file }).from(findings).where(eq(findings.id, row.findingId)))[0] : undefined
     const text = decisionText(done, about ? { type: about.type as 'logic' | 'security' | 'effect', ...(about.file ? { file: about.file } : {}) } : undefined)
     // The decision stays on the files it was about, so a later change to them stops for the person: the finding's
     // file (only one inside the working copy: anything else could never match a change), or what the planner's question named.
-    const paths = row.kind === 'plan' ? parse<string[]>(row.paths ?? '[]', []).filter((p): p is string => typeof p === 'string') : about?.file && isPlain(about.file) ? [about.file] : []
+    const paths = row.kind === 'plan' || row.kind === 'build' ? parse<string[]>(row.paths ?? '[]', []).filter((p): p is string => typeof p === 'string') : about?.file && isPlain(about.file) ? [about.file] : []
     // An answer that said not to change it stops even the run it was given on, if that run changes those files after all.
     const held = heldBack(row.kind as Question['kind'], option)
     if (text) await addEntry(run.projectId, { kind: 'decision', text, paths, source: 'question', runId: run.id, ...(held ? { outcome: 'asked_no' as const } : {}) }, tx)

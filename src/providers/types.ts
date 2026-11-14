@@ -22,11 +22,12 @@ export type AgentEvent =
   // redacted: whatever is read from it is redacted field by field before it travels further; it is never stored. `review`: a reviewer's
   // verdict and findings, read from that answer — still the model's claim, never a measurement.
   // `plan`: a planner's jobs, read from its answer — its proposal, which the person checks before anything is built.
+  // `buildQuestion`: the builder stopped to ask the person something; its work so far stays in the folder.
   // `repro`: a verifier's reproduction (null: it did not reproduce the problem); `refuted`: it showed the cited code
   // does not do what the finding says. Both are the model's claims until the app runs the repro itself.
   // `noRepro`: why a verifier's answer gave no repro, with the end of that answer; for a developer, never shown to the person.
   // `unreadable`: the same for a reviewer's answer that gave no verdict.
-  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; planQuestion?: PlanQuestion | 'unreadable'; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
+  | { type: 'done'; summary: string; source?: 'provider' | 'system'; usage?: { tokens: number | null }; fullText?: string; review?: Review; plan?: Job[]; planQuestion?: PlanQuestion | 'unreadable'; buildQuestion?: PlanQuestion; repro?: Repro | null; refuted?: { why: string }; noRepro?: VerifierMiss; unreadable?: ReviewMiss }
   // Same rule for a failure: 'system' marks a sentence the app composed from facts. `cause` names a failure the
   // executor must not retry (re-running failing tests twice proves nothing new).
   | { type: 'error'; message: string; source?: 'provider' | 'system'; cause?: 'tests_failed' }
@@ -72,6 +73,10 @@ export type AgentExecutionInput = {
   repro?: Repro
   /** A review block after fixes were made: the paths that changed since the first review (at most 200, `more` counts the rest) and that change as a unified diff. */
   reviewSince?: { paths: string[]; diff: string; more?: number }
+  /** The builder may stop and ask the person one thing it cannot decide alone. Absent: it may not. */
+  canAsk?: boolean
+  /** The builder asked earlier in this same task: what it asked and what the person answered, oldest first. */
+  answers?: string[]
   /** A review block, asked again after an answer the app could not read: the prompt ends with a reminder of the form it reads. */
   reviewReminder?: boolean
 }

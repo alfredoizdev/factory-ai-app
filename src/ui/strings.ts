@@ -540,8 +540,9 @@ export const strings = {
     // The decision the project keeps when the person answered in their own words: what it was about, in the app's words,
     // what they chose, and their words. A choice with no words of their own is kept with the problem only.
     decision: (o: { about: string; choice: string | null; words: string }) => `${o.about}${o.choice ? `: ${o.choice}.` : '.'} In your words: ${o.words}`,
-    about: (kind: 'finding' | 'fix_held' | 'plan', f?: { type: 'logic' | 'security' | 'effect'; file?: string }, planText?: string) => {
+    about: (kind: 'finding' | 'fix_held' | 'plan' | 'build', f?: { type: 'logic' | 'security' | 'effect'; file?: string }, planText?: string) => {
       if (kind === 'plan') return `About the planner's question \u201c${planText}\u201d`
+      if (kind === 'build') return `About the builder's question \u201c${planText}\u201d`
       const where = f?.file ? ` in ${f.file}` : ''
       if (kind === 'fix_held') return `About a fix${where} that changed an important part of the project`
       const what = f ? { logic: 'a problem with what the change does', security: 'a safety problem', effect: 'a problem with what else the change affects' }[f.type] : 'a problem the reviewers reported'
@@ -549,8 +550,8 @@ export const strings = {
     },
     // What they chose, said in full; null when they answered in their own words only.
     // For the planner's question the options are its own, so the choice is said by its label.
-    chose: (kind: 'finding' | 'fix_held' | 'plan', option: string, label?: string) =>
-      kind === 'plan'
+    chose: (kind: 'finding' | 'fix_held' | 'plan' | 'build', option: string, label?: string) =>
+      kind === 'plan' || kind === 'build'
         ? (label ? `you chose \u201c${label}\u201d` : null)
         : kind === 'fix_held'
           ? ({ keep: 'you chose to keep the fix', undo: 'you chose to undo the fix', leave: 'you were not sure, so the fix was undone' } as Record<string, string>)[option] ?? null
@@ -1081,6 +1082,14 @@ export const strings = {
       rejectedNote: 'Turned down, saying',
     },
   },
+  builder: {
+    // The builder stopped in the middle of its work to ask the person one thing; the work so far stays as it is.
+    asked: 'The builder has a question for you. It goes on from where it was once you answer.',
+    questionWhy: 'The builder cannot tell which way you want this, and guessing could mean doing it again.',
+    leaveLabel: 'Let the builder choose',
+    leaveMeans: 'The builder does what it thinks is best. You still see the whole change before anything is sent.',
+    answered: 'You answered. The builder goes on from where it was.',
+  },
   plan: {
     alreadyMade: 'You already checked the plan for this task, so the work carries on from where it stopped.',
     notWaiting: 'There is no plan waiting for you on this task.',
@@ -1497,7 +1506,7 @@ export const strings = {
         ].join('\n'),
       // The person's answer to the planner's question, handed to the planner for its next plan: what they chose, or that
       // they left it to the planner, or (with no option chosen) their own words, which are then the whole answer.
-      answerNote: (q: string, a: { option: 'chosen'; label: string } | { option: 'leave' } | { option: 'own' }, words: string | null) => {
+      answerNote: (q: string, a: { option: 'chosen'; label: string } | { option: 'leave' } | { option: 'own' }, words: string | null, to: 'planner' | 'builder' = 'planner') => {
         const added = words ? ` They added, in their own words: ${words}` : ''
         const answer =
           a.option === 'chosen'
@@ -1505,8 +1514,22 @@ export const strings = {
             : a.option === 'leave'
               ? `The person answered your question "${q}": they left it to you: choose what you think is best.${added}`
               : `The person answered your question "${q}" in their own words: ${words ?? ''}`
-        return `${answer} Plan the work with that.`
+        return `${answer} ${to === 'builder' ? 'Finish the work with that.' : 'Plan the work with that.'}`
       },
+      // The builder, told it may stop for one real doubt, and the only form the app reads a question in.
+      builderMayAsk: [
+        'If you reach something only the person can decide (two reasonable ways to do it that they would notice, and nothing in the request, the plan or the project says which), you may stop and ask instead of guessing.',
+        'Ask only when a wrong guess would mean redoing real work or would change what they see. Never ask about code style, names, or anything you can settle by reading the project. Most tasks need no question.',
+        'To ask, stop working, leave what you already changed as it is, and end your reply with one JSON object and nothing after it, in this form:',
+        '{"question":{"text":"what to decide, in plain words for someone who does not program","why":"why it matters","paths":["path/to/file.ts"],"options":[{"id":"a","label":"short choice","means":"what happens then"},{"id":"b","label":"another choice","means":"what happens then"}],"recommended":"a"}}',
+        'Give two to four options and name in "recommended" the one you would take. If you do not need to ask, do not write any JSON.',
+      ].join('\n'),
+      // What the builder asked earlier in this task and what the person said: it goes on, it does not start over.
+      builderAnswers: (answers: readonly string[]) =>
+        [
+          'Earlier in this same task you stopped to ask the person. The work you did before asking is still in this directory: keep it and go on from where you were. Do not start over.',
+          ...answers.map(a => `- ${a}`),
+        ].join('\n'),
       // The answer in the planner's prompt: an answer to its own question, not a request to change a plan nobody saw.
       answerLine: (note: string) => answerLine(note),
       notFound: 'The claude command was not found on this computer.',

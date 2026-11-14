@@ -935,3 +935,42 @@ describe('the planner asks for paths and may ask one question', () => {
     expect(done.plan![0]!.paths).toEqual(['src/Ui/Footer.tsx'])
   })
 })
+
+describe('the builder may stop to ask', () => {
+  const ask = '{"question":{"text":"Which blue?","why":"There are two in the project","paths":["src/ui/"],"options":[{"id":"a","label":"Navy","means":"Dark."},{"id":"b","label":"Sky","means":"Light."}],"recommended":"b"}}'
+  const run = async (input: object, result: string) => {
+    const child = fakeChild()
+    const spawn = vi.fn(() => child)
+    const pending = collect(createClaudeProvider({ spawn: spawn as never }).execute({ ...build, ...input } as never, { signal: signal() }))
+    finish(child, [{ type: 'result', is_error: false, result }])
+    const events = await pending
+    const args = (spawn.mock.calls[0] as unknown as [string, string[]])[1]
+    return { events, prompt: args[args.indexOf('-p') + 1]! }
+  }
+
+  test('told how to ask only while it may, and its question comes out as one, not as its report', async () => {
+    const { events, prompt } = await run({ canAsk: true }, `I changed the header so far.\n${ask}`)
+    expect(prompt).toContain(strings.providers.claude.builderMayAsk)
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      source: 'system',
+      summary: strings.builder.asked,
+      buildQuestion: { text: 'Which blue?', paths: ['src/ui/'], recommended: 'b', options: [{ id: 'a', label: 'Navy' }, { id: 'b', label: 'Sky' }] },
+    })
+  })
+
+  test('a plain report is a report, and a builder that may not ask is never read as asking', async () => {
+    const plain = await run({ canAsk: true }, 'Made the footer blue.')
+    expect(plain.events.at(-1)).toMatchObject({ type: 'done', summary: 'Made the footer blue.' })
+    expect('buildQuestion' in plain.events.at(-1)!).toBe(false)
+    const closed = await run({}, ask)
+    expect(closed.prompt).not.toContain(strings.providers.claude.builderMayAsk)
+    expect('buildQuestion' in closed.events.at(-1)!).toBe(false)
+  })
+
+  test('with an answer it is told to go on from what it did, not to start over', async () => {
+    const { prompt } = await run({ canAsk: false, answers: ['The person answered your question "Which blue?": they chose "Navy". Finish the work with that.'] }, 'Done.')
+    expect(prompt).toContain('Do not start over')
+    expect(prompt).toContain('they chose "Navy"')
+  })
+})

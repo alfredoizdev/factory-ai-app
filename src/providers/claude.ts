@@ -6,7 +6,7 @@ import { dirname, join, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { BlockKind } from '@/domain/graph'
 import { clip, redact } from '@/engine/redact'
-import { readPlannerAnswer, workList } from '@/engine/plan'
+import { readBuilderQuestion, readPlannerAnswer, workList } from '@/engine/plan'
 import { MAX_REPRO_BYTES, checkRepro, parseVerifierAnswer, type NoRepro } from '@/engine/repro'
 import { checkReview } from '@/engine/review'
 import { changedTestFiles as gitChangedTestFiles, runTestCommand as nodeRunTests } from '@/engine/test-runner'
@@ -315,7 +315,17 @@ async function* runBuilder(input: AgentExecutionInput, controls: ExecutionContro
   const planned = input.jobs && input.jobs.length > 0 && !input.revisionNote ? `${ruled}\n\n${strings.providers.claude.workListNote(workList(input.jobs))}` : ruled
   const images = input.images ?? []
   const withImages = images.length > 0 ? `${planned}\n\n${strings.providers.claude.imagesNote(images)}` : planned
-  yield* runClaude(deps, workdir, claudeArgs(withImages, images.length > 0 ? dirname(images[0]!) : undefined, input.model), controls)
+  // Answers to what it asked earlier in this task, then (while it may still ask) how to ask.
+  const answered = input.answers && input.answers.length > 0 ? `${withImages}\n\n${strings.providers.claude.builderAnswers(input.answers)}` : withImages
+  const full = input.canAsk ? `${answered}\n\n${strings.providers.claude.builderMayAsk}` : answered
+  for await (const ev of runClaude(deps, workdir, claudeArgs(full, images.length > 0 ? dirname(images[0]!) : undefined, input.model), controls)) {
+    if (ev.type !== 'done' || !input.canAsk) {
+      yield ev
+      continue
+    }
+    const question = readBuilderQuestion(ev.fullText ?? ev.summary)
+    yield question ? { type: 'done', source: 'system', summary: strings.builder.asked, usage: ev.usage, buildQuestion: question } : ev
+  }
 }
 
 /** Runs the claude CLI in the worktree with the given arguments and turns its stream into agent events. */

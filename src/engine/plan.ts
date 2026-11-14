@@ -12,7 +12,8 @@ import { strings } from '@/ui/strings'
 
 export type Job = { title: string; done: string[]; paths?: string[] } // paths absent: the planner gave none
 export type PlanOption = { id: string; label: string; means: string }
-export type PlanQuestion = { text: string; why: string; paths: string[]; options: PlanOption[] }
+/** `recommended`: the option the agent itself would take, when it named one of its own. */
+export type PlanQuestion = { text: string; why: string; paths: string[]; options: PlanOption[]; recommended?: string }
 export type PlannerAnswer = { jobs: Job[]; question: PlanQuestion | 'unreadable' | null }
 
 export const MAX_JOBS = 8
@@ -61,7 +62,7 @@ const asText = (v: unknown, max: number): string => (typeof v === 'string' ? cli
 function cleanQuestion(raw: unknown): PlanQuestion | 'unreadable' | null {
   if (raw === undefined || raw === null) return null
   if (typeof raw !== 'object' || Array.isArray(raw)) return 'unreadable'
-  const q = raw as { text?: unknown; why?: unknown; paths?: unknown; options?: unknown }
+  const q = raw as { text?: unknown; why?: unknown; paths?: unknown; options?: unknown; recommended?: unknown }
   const text = asText(q.text, 500)
   const options: PlanOption[] = []
   for (const o of (Array.isArray(q.options) ? q.options : []) as { id?: unknown; label?: unknown; means?: unknown }[]) {
@@ -71,7 +72,9 @@ function cleanQuestion(raw: unknown): PlanQuestion | 'unreadable' | null {
     options.push({ id, label, means: asText(o.means, 300) })
   }
   if (text === '' || options.length < 2) return 'unreadable'
-  return { text, why: asText(q.why, 1000), paths: cleanPaths(q.paths) ?? [], options: options.slice(0, MAX_PLAN_OPTIONS) }
+  const kept = options.slice(0, MAX_PLAN_OPTIONS)
+  const recommended = typeof q.recommended === 'string' && kept.some(o => o.id === q.recommended) ? q.recommended : undefined
+  return { text, why: asText(q.why, 1000), paths: cleanPaths(q.paths) ?? [], options: kept, ...(recommended ? { recommended } : {}) }
 }
 
 /** The planner's answer: jobs and question, both from the last JSON object with usable "jobs"; null when there is none. */
@@ -79,6 +82,20 @@ export function readPlannerAnswer(text: string): PlannerAnswer | null {
   for (const value of jsonObjectsFromEnd(text)) {
     const jobs = cleanJobs(value.jobs)
     if (jobs) return { jobs, question: cleanQuestion(value.question) }
+  }
+  return null
+}
+
+/**
+ * The builder's question, when its answer ends on one: the last JSON object of the answer, holding a usable "question".
+ * Null when it asked nothing the person can be given (the answer is then its report of the work, as always).
+ */
+export function readBuilderQuestion(text: string): PlanQuestion | null {
+  for (const value of jsonObjectsFromEnd(text)) {
+    // Objects come innermost first (an option, then the question itself): the one that counts has "question".
+    if (value.question === undefined) continue
+    const q = cleanQuestion(value.question)
+    return q !== null && q !== 'unreadable' ? q : null
   }
   return null
 }
